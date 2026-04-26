@@ -177,4 +177,56 @@ contract ThatsRektTest is Test {
         vm.prank(alice);
         reg.post(atk, vic, "");
     }
+
+    /*//////////////////////////////////////////////////////////////
+                       PHASE 4 - AGGREGATES
+    //////////////////////////////////////////////////////////////*/
+
+    function test_post_incrementsAttackerAppearances() public {
+        _whitelist(alice);
+        address[] memory atk = new address[](2); atk[0] = bob; atk[1] = carol;
+        address[] memory vic = new address[](0);
+
+        vm.prank(alice);
+        reg.post(atk, vic, "");
+
+        assertEq(reg.attackerAppearances(bob), 1);
+        assertEq(reg.attackerAppearances(carol), 1);
+        assertEq(reg.attackerScore(bob), 0);
+    }
+
+    function test_post_duplicateAttackers_doubleCount() public {
+        _whitelist(alice);
+        address[] memory atk = new address[](2); atk[0] = bob; atk[1] = bob;
+        address[] memory vic = new address[](0);
+
+        vm.prank(alice);
+        reg.post(atk, vic, "");
+
+        assertEq(reg.attackerAppearances(bob), 2);
+    }
+
+    function test_post_setsIsVictimTrue() public {
+        _whitelist(alice);
+        address[] memory atk = new address[](0);
+        address[] memory vic = new address[](1); vic[0] = bob;
+
+        vm.prank(alice);
+        reg.post(atk, vic, "");
+
+        assertTrue(reg.isVictim(bob));
+    }
+
+    function test_post_isVictim_remainsTrueAcrossMultiplePosts() public {
+        _whitelist(alice);
+        address[] memory atk = new address[](0);
+        address[] memory vic = new address[](1); vic[0] = bob;
+
+        vm.startPrank(alice);
+        reg.post(atk, vic, "");
+        reg.post(atk, vic, "");
+        vm.stopPrank();
+
+        assertTrue(reg.isVictim(bob));
+    }
 }
