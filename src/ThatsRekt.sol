@@ -281,15 +281,38 @@ contract ThatsRekt is Ownable2Step {
         return (p.poster, p.timestamp, p.upvotes, p.downvotes, p.removed, p.attackers, p.victims);
     }
 
-    function attackerReport(address /*a*/) external view returns (int256 /*score*/, uint256 /*appearances*/) {
-        // implemented in Phase 9
+    function attackerReport(address a) external view returns (int256 score, uint256 appearances) {
+        return (attackerScore[a], attackerAppearances[a]);
     }
 
-    function recentActivePosts(uint256 /*limit*/) external view returns (uint256[] memory /*ids*/) {
-        // implemented in Phase 9
+    function recentActivePosts(uint256 limit) external view returns (uint256[] memory ids) {
+        if (limit > MAX_VIEW_LIMIT) limit = MAX_VIEW_LIMIT;
+        uint256[] memory tmp = new uint256[](limit);
+        uint256 cur = tailPostId;
+        uint256 i;
+        while (cur != 0 && i < limit) {
+            tmp[i] = cur;
+            cur = prevPostId[cur];
+            unchecked { ++i; }
+        }
+        ids = new uint256[](i);
+        for (uint256 j; j < i; ++j) ids[j] = tmp[j];
     }
 
-    function activePostsBefore(uint256 /*beforeId*/, uint256 /*limit*/) external view returns (uint256[] memory /*ids*/) {
-        // implemented in Phase 9
+    function activePostsBefore(uint256 beforeId, uint256 limit) external view returns (uint256[] memory ids) {
+        Post storage anchor = _posts[beforeId];
+        if (anchor.poster == address(0) || anchor.removed) revert PostNotFound();
+        if (limit > MAX_VIEW_LIMIT) limit = MAX_VIEW_LIMIT;
+
+        uint256[] memory tmp = new uint256[](limit);
+        uint256 cur = prevPostId[beforeId];
+        uint256 i;
+        while (cur != 0 && i < limit) {
+            tmp[i] = cur;
+            cur = prevPostId[cur];
+            unchecked { ++i; }
+        }
+        ids = new uint256[](i);
+        for (uint256 j; j < i; ++j) ids[j] = tmp[j];
     }
 }

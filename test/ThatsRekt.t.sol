@@ -637,4 +637,93 @@ contract ThatsRektTest is Test {
         assertEq(reg.headPostId(), 0);
         assertEq(reg.tailPostId(), 0);
     }
+
+    /*//////////////////////////////////////////////////////////////
+                        PHASE 9 - VIEW HELPERS
+    //////////////////////////////////////////////////////////////*/
+
+    function test_attackerReport_returnsScoreAndAppearances() public {
+        _whitelist(alice);
+        _whitelist(bob);
+        address atk = makeAddr("attacker");
+        uint256 id = _post(alice, atk, address(0));
+
+        vm.prank(bob);
+        reg.vote(id, 1);
+
+        (int256 score, uint256 appearances) = reg.attackerReport(atk);
+        assertEq(score, 1);
+        assertEq(appearances, 1);
+    }
+
+    function test_recentActivePosts_walksTailBackward() public {
+        _whitelist(alice);
+        uint256 id1 = _post(alice, makeAddr("a1"), address(0));
+        uint256 id2 = _post(alice, makeAddr("a2"), address(0));
+        uint256 id3 = _post(alice, makeAddr("a3"), address(0));
+
+        uint256[] memory recent = reg.recentActivePosts(10);
+        assertEq(recent.length, 3);
+        assertEq(recent[0], id3);
+        assertEq(recent[1], id2);
+        assertEq(recent[2], id1);
+    }
+
+    function test_recentActivePosts_respectsLimit() public {
+        _whitelist(alice);
+        _post(alice, makeAddr("a1"), address(0));
+        uint256 id2 = _post(alice, makeAddr("a2"), address(0));
+        uint256 id3 = _post(alice, makeAddr("a3"), address(0));
+
+        uint256[] memory recent = reg.recentActivePosts(2);
+        assertEq(recent.length, 2);
+        assertEq(recent[0], id3);
+        assertEq(recent[1], id2);
+    }
+
+    function test_recentActivePosts_capsAtMaxView() public {
+        _whitelist(alice);
+        for (uint256 i; i < 150; ++i) {
+            _post(alice, address(uint160(0x1000 + i)), address(0));
+        }
+        uint256[] memory recent = reg.recentActivePosts(200);
+        assertEq(recent.length, reg.MAX_VIEW_LIMIT());
+    }
+
+    function test_recentActivePosts_skipsRemoved() public {
+        _whitelist(alice);
+        uint256 id1 = _post(alice, makeAddr("a1"), address(0));
+        uint256 id2 = _post(alice, makeAddr("a2"), address(0));
+        uint256 id3 = _post(alice, makeAddr("a3"), address(0));
+
+        vm.prank(alice);
+        reg.retract(id2);
+
+        uint256[] memory recent = reg.recentActivePosts(10);
+        assertEq(recent.length, 2);
+        assertEq(recent[0], id3);
+        assertEq(recent[1], id1);
+    }
+
+    function test_activePostsBefore_paginates() public {
+        _whitelist(alice);
+        uint256 id1 = _post(alice, makeAddr("a1"), address(0));
+        uint256 id2 = _post(alice, makeAddr("a2"), address(0));
+        uint256 id3 = _post(alice, makeAddr("a3"), address(0));
+
+        uint256[] memory page = reg.activePostsBefore(id3, 10);
+        assertEq(page.length, 2);
+        assertEq(page[0], id2);
+        assertEq(page[1], id1);
+    }
+
+    function test_activePostsBefore_revertsIfRemoved() public {
+        _whitelist(alice);
+        uint256 id1 = _post(alice, makeAddr("a1"), address(0));
+        vm.prank(alice);
+        reg.retract(id1);
+
+        vm.expectRevert(ThatsRekt.PostNotFound.selector);
+        reg.activePostsBefore(id1, 10);
+    }
 }
