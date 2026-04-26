@@ -184,8 +184,40 @@ contract ThatsRekt is Ownable2Step {
         }
     }
 
-    function vote(uint256 /*postId*/, int8 /*direction*/) external onlyWhitelisted {
-        // implemented in Phase 5
+    function vote(uint256 postId, int8 direction) external onlyWhitelisted {
+        if (direction < -1 || direction > 1) revert InvalidDirection();
+
+        Post storage p = _posts[postId];
+        if (p.poster == address(0))   revert PostNotFound();
+        if (p.removed)                revert PostIsRemoved();
+        if (p.poster == msg.sender)   revert PosterCannotVote();
+
+        int8 oldDir = voteOf[postId][msg.sender];
+        if (oldDir == direction)      revert NoVoteChange();
+
+        if (oldDir == 1)        { p.upvotes   -= 1; }
+        else if (oldDir == -1)  { p.downvotes -= 1; }
+        if (direction == 1)     { p.upvotes   += 1; }
+        else if (direction == -1) { p.downvotes += 1; }
+
+        int256 delta = int256(direction) - int256(oldDir);
+
+        uint256 aLen = p.attackers.length;
+        for (uint256 i; i < aLen; ++i) {
+            attackerScore[p.attackers[i]] += delta;
+        }
+
+        voteOf[postId][msg.sender] = direction;
+
+        emit Voted(postId, msg.sender, oldDir, direction);
+
+        if (int256(uint256(p.downvotes)) - int256(uint256(p.upvotes)) >= int256(REMOVAL_THRESHOLD)) {
+            _removePost(postId, RemovalReason.AutoDownvote);
+        }
+    }
+
+    function _removePost(uint256 /*id*/, RemovalReason /*reason*/) internal {
+        // implemented in Phase 6
     }
 
     /*//////////////////////////////////////////////////////////////

@@ -27,6 +27,16 @@ contract ThatsRektTest is Test {
         reg.addWhitelisted(a);
     }
 
+    /// helper - create a basic post with at most one attacker and/or one victim.
+    function _post(address poster, address atk0, address vic0) internal returns (uint256 id) {
+        address[] memory atk = new address[](atk0 == address(0) ? 0 : 1);
+        address[] memory vic = new address[](vic0 == address(0) ? 0 : 1);
+        if (atk0 != address(0)) atk[0] = atk0;
+        if (vic0 != address(0)) vic[0] = vic0;
+        vm.prank(poster);
+        id = reg.post(atk, vic, "");
+    }
+
     /*//////////////////////////////////////////////////////////////
                           PHASE 2 - WHITELIST
     //////////////////////////////////////////////////////////////*/
@@ -228,5 +238,153 @@ contract ThatsRektTest is Test {
         vm.stopPrank();
 
         assertTrue(reg.isVictim(bob));
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                            PHASE 5 - vote()
+    //////////////////////////////////////////////////////////////*/
+
+    function test_vote_revertsOnInvalidDirection_2() public {
+        _whitelist(alice);
+        _whitelist(bob);
+        uint256 id = _post(alice, carol, address(0));
+
+        vm.expectRevert(ThatsRekt.InvalidDirection.selector);
+        vm.prank(bob);
+        reg.vote(id, 2);
+    }
+
+    function test_vote_revertsOnInvalidDirection_neg2() public {
+        _whitelist(alice);
+        _whitelist(bob);
+        uint256 id = _post(alice, carol, address(0));
+
+        vm.expectRevert(ThatsRekt.InvalidDirection.selector);
+        vm.prank(bob);
+        reg.vote(id, -2);
+    }
+
+    function test_vote_revertsOnPostNotFound() public {
+        _whitelist(alice);
+        vm.expectRevert(ThatsRekt.PostNotFound.selector);
+        vm.prank(alice);
+        reg.vote(99, 1);
+    }
+
+    function test_vote_posterCannotVoteOwnPost() public {
+        _whitelist(alice);
+        uint256 id = _post(alice, carol, address(0));
+
+        vm.expectRevert(ThatsRekt.PosterCannotVote.selector);
+        vm.prank(alice);
+        reg.vote(id, 1);
+    }
+
+    function test_vote_revertsIfSameDirection() public {
+        _whitelist(alice);
+        _whitelist(bob);
+        uint256 id = _post(alice, carol, address(0));
+
+        vm.prank(bob);
+        reg.vote(id, 1);
+
+        vm.expectRevert(ThatsRekt.NoVoteChange.selector);
+        vm.prank(bob);
+        reg.vote(id, 1);
+    }
+
+    function test_vote_onlyWhitelisted() public {
+        _whitelist(alice);
+        uint256 id = _post(alice, carol, address(0));
+
+        vm.expectRevert(ThatsRekt.NotWhitelisted.selector);
+        vm.prank(bob);
+        reg.vote(id, 1);
+    }
+
+    function test_vote_upvote_incrementsCounters() public {
+        _whitelist(alice);
+        _whitelist(bob);
+        uint256 id = _post(alice, carol, address(0));
+
+        vm.prank(bob);
+        reg.vote(id, 1);
+
+        (, , uint32 up, uint32 down, , , ) = reg.getPost(id);
+        assertEq(up, 1);
+        assertEq(down, 0);
+        assertEq(reg.attackerScore(carol), 1);
+        assertEq(reg.voteOf(id, bob), 1);
+    }
+
+    function test_vote_downvote_incrementsCounters() public {
+        _whitelist(alice);
+        _whitelist(bob);
+        uint256 id = _post(alice, carol, address(0));
+
+        vm.prank(bob);
+        reg.vote(id, -1);
+
+        (, , uint32 up, uint32 down, , , ) = reg.getPost(id);
+        assertEq(up, 0);
+        assertEq(down, 1);
+        assertEq(reg.attackerScore(carol), -1);
+        assertEq(reg.voteOf(id, bob), -1);
+    }
+
+    function test_vote_flip_upToDown() public {
+        _whitelist(alice);
+        _whitelist(bob);
+        uint256 id = _post(alice, carol, address(0));
+
+        vm.startPrank(bob);
+        reg.vote(id, 1);
+        reg.vote(id, -1);
+        vm.stopPrank();
+
+        (, , uint32 up, uint32 down, , , ) = reg.getPost(id);
+        assertEq(up, 0);
+        assertEq(down, 1);
+        assertEq(reg.attackerScore(carol), -1);
+    }
+
+    function test_vote_retract_upToZero() public {
+        _whitelist(alice);
+        _whitelist(bob);
+        uint256 id = _post(alice, carol, address(0));
+
+        vm.startPrank(bob);
+        reg.vote(id, 1);
+        reg.vote(id, 0);
+        vm.stopPrank();
+
+        (, , uint32 up, uint32 down, , , ) = reg.getPost(id);
+        assertEq(up, 0);
+        assertEq(down, 0);
+        assertEq(reg.attackerScore(carol), 0);
+        assertEq(reg.voteOf(id, bob), 0);
+    }
+
+    function test_vote_emitsVotedWithOldAndNew() public {
+        _whitelist(alice);
+        _whitelist(bob);
+        uint256 id = _post(alice, carol, address(0));
+
+        vm.expectEmit(true, true, false, true);
+        emit ThatsRekt.Voted(id, bob, int8(0), int8(1));
+        vm.prank(bob);
+        reg.vote(id, 1);
+    }
+
+    function test_vote_multipleVoters_aggregateScore() public {
+        _whitelist(alice);
+        _whitelist(bob);
+        _whitelist(carol);
+        uint256 id = _post(alice, dave, address(0));
+
+        vm.prank(bob);   reg.vote(id, 1);
+        vm.prank(carol); reg.vote(id, 1);
+
+        assertEq(reg.attackerScore(dave), 2);
     }
 }
