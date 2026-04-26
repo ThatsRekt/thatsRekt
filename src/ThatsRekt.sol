@@ -1,150 +1,116 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.25;
+pragma solidity 0.8.25;
 
-/// @title  ThatsRekt
-/// @notice Public register of rekt addresses.
-///         Any whitelisted address can add entries or manage the whitelist.
-///         Removal is a two-step process: one whitelisted address proposes,
-///         a different whitelisted address executes.
-contract ThatsRekt {
+import {Ownable2Step, Ownable} from "@openzeppelin/contracts/access/Ownable2Step.sol";
+
+/// @title  ThatsRekt - On-chain hack-alert registry (v0)
+/// @notice Whitelisted operators post structured alerts identifying attacker
+///         addresses, victim contracts, and free-form context. Other whitelisters
+///         vouch (upvote) or refute (downvote). Aggregates exposed as O(1) reads
+///         so any contract can plug in and inline-blacklist.
+/// @dev    Single immutable contract. Cross-chain identical-address deploy via
+///         the singleton CREATE2 factory. See tasks/v0-impl-plan.md and the
+///         design spec in DAMMfi-knowledge-base for the full architecture.
+contract ThatsRekt is Ownable2Step {
     /*//////////////////////////////////////////////////////////////
-                                CONSTANTS
+                                 CONSTANTS
     //////////////////////////////////////////////////////////////*/
 
-    address public constant JERRYTHEKID = 0x9E8680dbBcA1127add812abE209A10E621b385dF;
-    address public constant BAUTI       = 0xda1b9dFA299d655135C1ECdc4f0b4c9aED9a7f45;
+    /// @notice Governance Safe multisig. Hardcoded for cross-chain bytecode
+    ///         determinism. THIS PLACEHOLDER MUST BE REPLACED WITH THE REAL
+    ///         SAFE ADDRESS BEFORE ANY MAINNET / L2 DEPLOY. The deploy script
+    ///         enforces this with a runtime check.
+    address public constant GOVERNANCE = 0x000000000000000000000000000000000000ABcD;
+
+    /// @notice (downvotes - upvotes) >= this triggers auto-removal at end of vote().
+    uint256 public constant REMOVAL_THRESHOLD = 3;
+
+    /// @notice Hard cap on attackers.length + victims.length per post.
+    uint256 public constant MAX_ADDRESSES_PER_POST = 32;
+
+    /// @notice Pagination cap for view helpers (eth_call gas budget).
+    uint256 public constant MAX_VIEW_LIMIT = 100;
 
     /*//////////////////////////////////////////////////////////////
-                                 STORAGE
+                                  STRUCTS
+    //////////////////////////////////////////////////////////////*/
+
+    struct Post {
+        address  poster;
+        uint64   timestamp;
+        uint32   upvotes;
+        uint32   downvotes;
+        bool     removed;
+        address[] attackers;
+        address[] victims;
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                                  STORAGE
     //////////////////////////////////////////////////////////////*/
 
     mapping(address => bool) public isWhitelisted;
 
-    address[] private _rektList;
-    mapping(address => bool)    private _isRekt;
-    mapping(address => uint256) private _rektIndex; // 1-indexed; 0 = absent
+    uint256 public postCount;
+    mapping(uint256 => Post) private _posts;
+    mapping(uint256 => mapping(address => int8)) public voteOf;
 
-    struct RemovalProposal {
-        address   proposer;
-        bool      executed;
-        address[] targets;
-    }
+    mapping(address => int256)  public attackerScore;
+    mapping(address => uint256) public attackerAppearances;
 
-    uint256 public proposalCount;
-    mapping(uint256 => RemovalProposal) private _proposals;
+    mapping(address => bool)    public isVictim;
+    mapping(address => uint256) private _victimActivePosts;
+
+    uint256 public headPostId;
+    uint256 public tailPostId;
+    mapping(uint256 => uint256) public nextPostId;
+    mapping(uint256 => uint256) public prevPostId;
 
     /*//////////////////////////////////////////////////////////////
-                                 EVENTS
+                                  EVENTS
     //////////////////////////////////////////////////////////////*/
 
     event WhitelistUpdated(address indexed account, bool status);
-    event AddedRekt(address indexed account);
-    event RemovedRekt(address indexed account);
-    event RemovalProposed(uint256 indexed id, address indexed proposer, address[] targets);
-    event RemovalExecuted(uint256 indexed id, address indexed executor);
+    event PostCreated(
+        uint256 indexed id,
+        address indexed poster,
+        uint64          timestamp,
+        address[]       attackers,
+        address[]       victims,
+        string          note
+    );
+    event Voted(
+        uint256 indexed postId,
+        address indexed voter,
+        int8            oldDirection,
+        int8            newDirection
+    );
+
+    enum RemovalReason { AutoDownvote, PosterRetract }
+    event PostRemoved(uint256 indexed postId, RemovalReason reason);
 
     /*//////////////////////////////////////////////////////////////
-                                 ERRORS
+                                  ERRORS
     //////////////////////////////////////////////////////////////*/
 
     error NotWhitelisted();
-    error ProposalNotFound();
-    error CannotSelfExecute();
-    error AlreadyExecuted();
+    error PosterCannotVote();
+    error PostIsRemoved();
+    error PostNotFound();
+    error InvalidDirection();
+    error NoVoteChange();
+    error EmptyPost();
+    error PostTooLarge();
+    error NotPoster();
 
     /*//////////////////////////////////////////////////////////////
-                               CONSTRUCTOR
+                                CONSTRUCTOR
     //////////////////////////////////////////////////////////////*/
 
-    constructor() {
-        _setWhitelisted(JERRYTHEKID, true);
-        _setWhitelisted(BAUTI, true);
-    }
+    constructor() Ownable(GOVERNANCE) {}
 
     /*//////////////////////////////////////////////////////////////
-                            WHITELIST MANAGEMENT
-                         (any whitelisted address)
-    //////////////////////////////////////////////////////////////*/
-
-    function addWhitelisted(address account) external onlyWhitelisted {
-        _setWhitelisted(account, true);
-    }
-
-    function removeWhitelisted(address account) external onlyWhitelisted {
-        _setWhitelisted(account, false);
-    }
-
-    /*//////////////////////////////////////////////////////////////
-                              READ FUNCTIONS
-    //////////////////////////////////////////////////////////////*/
-
-    /// @notice Returns every address currently in the rekt list.
-    function isRekt() external view returns (address[] memory) {
-        return _rektList;
-    }
-
-    /// @notice Returns the full details of a removal proposal.
-    function getProposal(uint256 id)
-        external
-        view
-        returns (address proposer, bool executed, address[] memory targets)
-    {
-        RemovalProposal storage p = _proposals[id];
-        return (p.proposer, p.executed, p.targets);
-    }
-
-    /*//////////////////////////////////////////////////////////////
-                             WRITE FUNCTIONS
-    //////////////////////////////////////////////////////////////*/
-
-    /// @notice Add addresses to the rekt list. Caller must be whitelisted.
-    ///         Duplicates (within the call or already present) are silently skipped.
-    function addRekt(address[] calldata targets) external onlyWhitelisted {
-        uint256 len = targets.length;
-        for (uint256 i; i < len; ++i) {
-            _addToRekt(targets[i]);
-        }
-    }
-
-    /// @notice Propose the removal of one or more addresses from the rekt list.
-    ///         A different whitelisted address must call executeRemoval() to carry it out.
-    /// @return id  The proposal ID to pass to executeRemoval().
-    function proposeRemoval(address[] calldata targets) external onlyWhitelisted returns (uint256 id) {
-        id = proposalCount;
-        unchecked { ++proposalCount; }
-
-        RemovalProposal storage p = _proposals[id];
-        p.proposer = msg.sender;
-
-        uint256 len = targets.length;
-        for (uint256 i; i < len; ++i) {
-            p.targets.push(targets[i]);
-        }
-
-        emit RemovalProposed(id, msg.sender, targets);
-    }
-
-    /// @notice Execute a pending removal proposal. Caller must be whitelisted and
-    ///         must not be the same address that proposed it.
-    ///         Addresses no longer in the rekt list are silently skipped.
-    function executeRemoval(uint256 id) external onlyWhitelisted {
-        RemovalProposal storage p = _proposals[id];
-        if (p.proposer == address(0)) revert ProposalNotFound();
-        if (p.proposer == msg.sender) revert CannotSelfExecute();
-        if (p.executed)               revert AlreadyExecuted();
-
-        p.executed = true;
-
-        uint256 len = p.targets.length;
-        for (uint256 i; i < len; ++i) {
-            _removeFromRekt(p.targets[i]);
-        }
-
-        emit RemovalExecuted(id, msg.sender);
-    }
-
-    /*//////////////////////////////////////////////////////////////
-                               MODIFIERS
+                                MODIFIERS
     //////////////////////////////////////////////////////////////*/
 
     modifier onlyWhitelisted() {
@@ -153,36 +119,66 @@ contract ThatsRekt {
     }
 
     /*//////////////////////////////////////////////////////////////
-                            INTERNAL HELPERS
+                          OWNER (whitelist mgmt)
     //////////////////////////////////////////////////////////////*/
 
-    function _setWhitelisted(address account, bool status) internal {
-        isWhitelisted[account] = status;
-        emit WhitelistUpdated(account, status);
+    function addWhitelisted(address /*account*/) external onlyOwner {
+        // implemented in Phase 2
     }
 
-    function _addToRekt(address target) internal {
-        if (_isRekt[target]) return;
-        _isRekt[target] = true;
-        _rektList.push(target);
-        _rektIndex[target] = _rektList.length; // 1-indexed
-        emit AddedRekt(target);
+    function removeWhitelisted(address /*account*/) external onlyOwner {
+        // implemented in Phase 2
     }
 
-    /// @dev O(1) removal via swap-and-pop using the 1-indexed _rektIndex mapping.
-    function _removeFromRekt(address target) internal {
-        uint256 idx = _rektIndex[target]; // 1-indexed; 0 = not present
-        if (idx == 0) return;
+    /*//////////////////////////////////////////////////////////////
+                          WHITELISTED (post + vote)
+    //////////////////////////////////////////////////////////////*/
 
-        uint256 lastIdx = _rektList.length;
-        if (idx != lastIdx) {
-            address last = _rektList[lastIdx - 1];
-            _rektList[idx - 1] = last;
-            _rektIndex[last]   = idx;
-        }
-        _rektList.pop();
-        delete _rektIndex[target];
-        delete _isRekt[target];
-        emit RemovedRekt(target);
+    function post(
+        address[] calldata /*attackers_*/,
+        address[] calldata /*victims_*/,
+        string   calldata /*note*/
+    ) external onlyWhitelisted returns (uint256 /*id*/) {
+        // implemented in Phase 3
+    }
+
+    function vote(uint256 /*postId*/, int8 /*direction*/) external onlyWhitelisted {
+        // implemented in Phase 5
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                          POSTER (retract)
+    //////////////////////////////////////////////////////////////*/
+
+    function retract(uint256 /*postId*/) external {
+        // implemented in Phase 7
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                                  READS
+    //////////////////////////////////////////////////////////////*/
+
+    function getPost(uint256 /*id*/) external view returns (
+        address  /*poster*/,
+        uint64   /*timestamp*/,
+        uint32   /*upvotes*/,
+        uint32   /*downvotes*/,
+        bool     /*removed*/,
+        address[] memory /*attackers_*/,
+        address[] memory /*victims_*/
+    ) {
+        // implemented in Phase 3 (storage read) and Phase 9 (full surface)
+    }
+
+    function attackerReport(address /*a*/) external view returns (int256 /*score*/, uint256 /*appearances*/) {
+        // implemented in Phase 9
+    }
+
+    function recentActivePosts(uint256 /*limit*/) external view returns (uint256[] memory /*ids*/) {
+        // implemented in Phase 9
+    }
+
+    function activePostsBefore(uint256 /*beforeId*/, uint256 /*limit*/) external view returns (uint256[] memory /*ids*/) {
+        // implemented in Phase 9
     }
 }
