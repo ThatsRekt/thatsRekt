@@ -122,12 +122,18 @@ contract ThatsRekt is Ownable2Step {
                           OWNER (whitelist mgmt)
     //////////////////////////////////////////////////////////////*/
 
-    function addWhitelisted(address /*account*/) external onlyOwner {
-        // implemented in Phase 2
+    function addWhitelisted(address account) external onlyOwner {
+        if (!isWhitelisted[account]) {
+            isWhitelisted[account] = true;
+            emit WhitelistUpdated(account, true);
+        }
     }
 
-    function removeWhitelisted(address /*account*/) external onlyOwner {
-        // implemented in Phase 2
+    function removeWhitelisted(address account) external onlyOwner {
+        if (isWhitelisted[account]) {
+            isWhitelisted[account] = false;
+            emit WhitelistUpdated(account, false);
+        }
     }
 
     /*//////////////////////////////////////////////////////////////

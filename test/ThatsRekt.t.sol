@@ -26,4 +26,44 @@ contract ThatsRektTest is Test {
         vm.prank(governance);
         reg.addWhitelisted(a);
     }
+
+    /*//////////////////////////////////////////////////////////////
+                          PHASE 2 - WHITELIST
+    //////////////////////////////////////////////////////////////*/
+
+    function test_owner_can_addWhitelisted() public {
+        vm.expectEmit(true, false, false, true);
+        emit ThatsRekt.WhitelistUpdated(alice, true);
+
+        vm.prank(governance);
+        reg.addWhitelisted(alice);
+
+        assertTrue(reg.isWhitelisted(alice));
+    }
+
+    function test_owner_can_removeWhitelisted() public {
+        _whitelist(alice);
+        assertTrue(reg.isWhitelisted(alice));
+
+        vm.expectEmit(true, false, false, true);
+        emit ThatsRekt.WhitelistUpdated(alice, false);
+
+        vm.prank(governance);
+        reg.removeWhitelisted(alice);
+
+        assertFalse(reg.isWhitelisted(alice));
+    }
+
+    function test_nonOwner_cannot_addWhitelisted() public {
+        vm.expectRevert();
+        vm.prank(alice);
+        reg.addWhitelisted(bob);
+    }
+
+    function test_nonOwner_cannot_removeWhitelisted() public {
+        _whitelist(bob);
+        vm.expectRevert();
+        vm.prank(alice);
+        reg.removeWhitelisted(bob);
+    }
 }
