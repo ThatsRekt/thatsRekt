@@ -547,4 +547,94 @@ contract ThatsRektTest is Test {
         vm.prank(alice);
         reg.retract(99);
     }
+
+    /*//////////////////////////////////////////////////////////////
+                       PHASE 8 - LINKED LIST
+    //////////////////////////////////////////////////////////////*/
+
+    function test_linkedList_emptyAtStart() public view {
+        assertEq(reg.headPostId(), 0);
+        assertEq(reg.tailPostId(), 0);
+    }
+
+    function test_linkedList_singlePost() public {
+        _whitelist(alice);
+        uint256 id = _post(alice, carol, address(0));
+
+        assertEq(reg.headPostId(), id);
+        assertEq(reg.tailPostId(), id);
+        assertEq(reg.prevPostId(id), 0);
+        assertEq(reg.nextPostId(id), 0);
+    }
+
+    function test_linkedList_threePosts_creationOrder() public {
+        _whitelist(alice);
+        uint256 id1 = _post(alice, makeAddr("a1"), address(0));
+        uint256 id2 = _post(alice, makeAddr("a2"), address(0));
+        uint256 id3 = _post(alice, makeAddr("a3"), address(0));
+
+        assertEq(reg.headPostId(), id1);
+        assertEq(reg.tailPostId(), id3);
+        assertEq(reg.nextPostId(id1), id2);
+        assertEq(reg.nextPostId(id2), id3);
+        assertEq(reg.prevPostId(id3), id2);
+        assertEq(reg.prevPostId(id2), id1);
+    }
+
+    function test_linkedList_removeHead() public {
+        _whitelist(alice);
+        uint256 id1 = _post(alice, makeAddr("a1"), address(0));
+        uint256 id2 = _post(alice, makeAddr("a2"), address(0));
+
+        vm.prank(alice);
+        reg.retract(id1);
+
+        assertEq(reg.headPostId(), id2);
+        assertEq(reg.tailPostId(), id2);
+        assertEq(reg.prevPostId(id2), 0);
+        assertEq(reg.nextPostId(id1), 0);
+        assertEq(reg.prevPostId(id1), 0);
+    }
+
+    function test_linkedList_removeTail() public {
+        _whitelist(alice);
+        uint256 id1 = _post(alice, makeAddr("a1"), address(0));
+        uint256 id2 = _post(alice, makeAddr("a2"), address(0));
+
+        vm.prank(alice);
+        reg.retract(id2);
+
+        assertEq(reg.headPostId(), id1);
+        assertEq(reg.tailPostId(), id1);
+        assertEq(reg.nextPostId(id1), 0);
+    }
+
+    function test_linkedList_removeMiddle() public {
+        _whitelist(alice);
+        uint256 id1 = _post(alice, makeAddr("a1"), address(0));
+        uint256 id2 = _post(alice, makeAddr("a2"), address(0));
+        uint256 id3 = _post(alice, makeAddr("a3"), address(0));
+
+        vm.prank(alice);
+        reg.retract(id2);
+
+        assertEq(reg.headPostId(), id1);
+        assertEq(reg.tailPostId(), id3);
+        assertEq(reg.nextPostId(id1), id3);
+        assertEq(reg.prevPostId(id3), id1);
+    }
+
+    function test_linkedList_removeAll() public {
+        _whitelist(alice);
+        uint256 id1 = _post(alice, makeAddr("a1"), address(0));
+        uint256 id2 = _post(alice, makeAddr("a2"), address(0));
+
+        vm.startPrank(alice);
+        reg.retract(id1);
+        reg.retract(id2);
+        vm.stopPrank();
+
+        assertEq(reg.headPostId(), 0);
+        assertEq(reg.tailPostId(), 0);
+    }
 }
