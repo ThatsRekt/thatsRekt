@@ -20,7 +20,11 @@ contract ThatsRekt is Ownable2Step {
     //////////////////////////////////////////////////////////////*/
 
     /// @notice Hard cap on attackers.length + victims.length per post.
-    uint256 public constant MAX_ADDRESSES_PER_POST = 32;
+    /// @dev Sized to accommodate large multi-wallet investigations
+    ///      (e.g. attacker wallets + victim contracts across protocol legs)
+    ///      while staying within a single tx's gas budget on every supported
+    ///      chain — even at the max-size 100/100 boundary the cost is bounded.
+    uint256 public constant MAX_ADDRESSES_PER_POST = 100;
 
     /// @notice Pagination cap for view helpers (eth_call gas budget).
     uint256 public constant MAX_VIEW_LIMIT = 100;
@@ -52,6 +56,13 @@ contract ThatsRekt is Ownable2Step {
         uint32   upvotes;
         uint32   downvotes;
         bool     removed;
+        /// @dev Block-time freshness signal. Set to `block.timestamp` at
+        ///      post creation and bumped on every poster-driven edit
+        ///      (`amendNote`, `addAttackers`, `addVictims`). Indexers and
+        ///      consumers can use this to surface "recently edited" posts
+        ///      without scanning the event log. Packs into the same storage
+        ///      slot as `downvotes` (u32) + `removed` (bool) + this u64.
+        uint64   lastUpdatedAt;
         address[] attackers;
         address[] victims;
     }
@@ -197,8 +208,9 @@ contract ThatsRekt is Ownable2Step {
         unchecked { id = ++postCount; }
 
         Post storage p = _posts[id];
-        p.poster     = msg.sender;
-        p.attackedAt = attackedAt;
+        p.poster        = msg.sender;
+        p.attackedAt    = attackedAt;
+        p.lastUpdatedAt = uint64(block.timestamp);
 
         uint256 aLen = attackers_.length;
         for (uint256 i; i < aLen; ++i) {
@@ -381,11 +393,21 @@ contract ThatsRekt is Ownable2Step {
         uint32   downvotes,
         bool     removed,
         address[] memory attackers_,
-        address[] memory victims_
+        address[] memory victims_,
+        uint64   lastUpdatedAt
     ) {
         Post storage p = _posts[id];
         if (p.poster == address(0)) revert PostNotFound();
-        return (p.poster, p.attackedAt, p.upvotes, p.downvotes, p.removed, p.attackers, p.victims);
+        return (
+            p.poster,
+            p.attackedAt,
+            p.upvotes,
+            p.downvotes,
+            p.removed,
+            p.attackers,
+            p.victims,
+            p.lastUpdatedAt
+        );
     }
 
     function attackerReport(address a) external view returns (int256 score, uint256 appearances) {

@@ -130,7 +130,8 @@ contract ThatsRektTest is Test {
             uint32 down,
             bool removed,
             address[] memory storedAtk,
-            address[] memory storedVic
+            address[] memory storedVic,
+            /* uint64 lastUpdatedAt */
         ) = reg.getPost(id);
 
         assertEq(poster, alice);
@@ -197,6 +198,58 @@ contract ThatsRektTest is Test {
         reg.post(atk, vic, "", uint64(block.timestamp));
     }
 
+    /// v1: cap bumped from 32 -> 100. Pin the new value explicitly so
+    /// any future change is a deliberate test update.
+    function test_post_maxAddressesPerPostIs100() public view {
+        assertEq(reg.MAX_ADDRESSES_PER_POST(), 100);
+    }
+
+    /// v1: 101 attackers must revert; 100 attackers must succeed.
+    function test_post_revertsAt101Attackers() public {
+        _whitelist(alice);
+        address[] memory atk = new address[](101);
+        for (uint256 i; i < 101; ++i) atk[i] = address(uint160(0x1000 + i));
+        address[] memory vic = new address[](0);
+
+        vm.expectRevert(ThatsRekt.PostTooLarge.selector);
+        vm.prank(alice);
+        reg.post(atk, vic, "", uint64(block.timestamp));
+    }
+
+    function test_post_acceptsExactly100Attackers() public {
+        _whitelist(alice);
+        address[] memory atk = new address[](100);
+        for (uint256 i; i < 100; ++i) atk[i] = address(uint160(0x1000 + i));
+        address[] memory vic = new address[](0);
+
+        vm.prank(alice);
+        reg.post(atk, vic, "", uint64(block.timestamp));
+    }
+
+    /*//////////////////////////////////////////////////////////////
+              PHASE 3.6 - lastUpdatedAt (v1 edit primitive)
+    //////////////////////////////////////////////////////////////*/
+
+    /// `lastUpdatedAt` is initialized to `block.timestamp` at post creation.
+    /// It is the freshness signal that `amendNote` / `addAttackers` /
+    /// `addVictims` will bump in subsequent commits.
+    function test_post_lastUpdatedAtEqualsBlockTimestampAtCreation() public {
+        _whitelist(alice);
+        address[] memory atk = new address[](1); atk[0] = bob;
+        address[] memory vic = new address[](0);
+
+        vm.warp(1_700_000_000);
+        // attackedAt explicitly < block.timestamp so the two values are
+        // distinct in the assertions below.
+        uint64 attacked = uint64(1_699_999_000);
+
+        vm.prank(alice);
+        uint256 id = reg.post(atk, vic, "", attacked);
+
+        (, , , , , , , uint64 lastUpdatedAt) = reg.getPost(id);
+        assertEq(lastUpdatedAt, uint64(1_700_000_000));
+    }
+
     /*//////////////////////////////////////////////////////////////
                   PHASE 3.5 - attackedAt VALIDATION
     //////////////////////////////////////////////////////////////*/
@@ -245,7 +298,7 @@ contract ThatsRektTest is Test {
         uint256 id = reg.post(atk, vic, "", 1);
         assertEq(id, 1);
 
-        (, uint64 attackedAt, , , , , ) = reg.getPost(id);
+        (, uint64 attackedAt, , , , , , ) = reg.getPost(id);
         assertEq(attackedAt, 1);
     }
 
@@ -260,7 +313,7 @@ contract ThatsRektTest is Test {
         vm.prank(alice);
         uint256 id = reg.post(atk, vic, "", attacked);
 
-        (, uint64 stored, , , , , ) = reg.getPost(id);
+        (, uint64 stored, , , , , , ) = reg.getPost(id);
         assertEq(stored, attacked);
     }
 
@@ -376,7 +429,7 @@ contract ThatsRektTest is Test {
         vm.prank(bob);
         reg.vote(id, ThatsRekt.VoteDirection.Upvote);
 
-        (, , uint32 up, uint32 down, , , ) = reg.getPost(id);
+        (, , uint32 up, uint32 down, , , , ) = reg.getPost(id);
         assertEq(up, 1);
         assertEq(down, 0);
         assertEq(reg.attackerScore(carol), 1);
@@ -391,7 +444,7 @@ contract ThatsRektTest is Test {
         vm.prank(bob);
         reg.vote(id, ThatsRekt.VoteDirection.Downvote);
 
-        (, , uint32 up, uint32 down, , , ) = reg.getPost(id);
+        (, , uint32 up, uint32 down, , , , ) = reg.getPost(id);
         assertEq(up, 0);
         assertEq(down, 1);
         assertEq(reg.attackerScore(carol), -1);
@@ -408,7 +461,7 @@ contract ThatsRektTest is Test {
         reg.vote(id, ThatsRekt.VoteDirection.Downvote);
         vm.stopPrank();
 
-        (, , uint32 up, uint32 down, , , ) = reg.getPost(id);
+        (, , uint32 up, uint32 down, , , , ) = reg.getPost(id);
         assertEq(up, 0);
         assertEq(down, 1);
         assertEq(reg.attackerScore(carol), -1);
@@ -460,7 +513,7 @@ contract ThatsRektTest is Test {
         reg.unvote(id);
         vm.stopPrank();
 
-        (, , uint32 up, uint32 down, , , ) = reg.getPost(id);
+        (, , uint32 up, uint32 down, , , , ) = reg.getPost(id);
         assertEq(up, 0);
         assertEq(down, 0);
         assertEq(reg.attackerScore(carol), 0);
@@ -478,7 +531,7 @@ contract ThatsRektTest is Test {
         reg.unvote(id);
         vm.stopPrank();
 
-        (, , uint32 up, uint32 down, , , ) = reg.getPost(id);
+        (, , uint32 up, uint32 down, , , , ) = reg.getPost(id);
         assertEq(up, 0);
         assertEq(down, 0);
         assertEq(reg.attackerScore(carol), 0);
@@ -537,21 +590,21 @@ contract ThatsRektTest is Test {
         vm.startPrank(bob);
 
         reg.vote(id, ThatsRekt.VoteDirection.Upvote);
-        (, , uint32 up1, uint32 down1, , , ) = reg.getPost(id);
+        (, , uint32 up1, uint32 down1, , , , ) = reg.getPost(id);
         assertEq(up1, 1);
         assertEq(down1, 0);
         assertEq(reg.attackerScore(carol), 1);
         assertTrue(reg.voteOf(id, bob) == ThatsRekt.VoteDirection.Upvote);
 
         reg.unvote(id);
-        (, , uint32 up2, uint32 down2, , , ) = reg.getPost(id);
+        (, , uint32 up2, uint32 down2, , , , ) = reg.getPost(id);
         assertEq(up2, 0);
         assertEq(down2, 0);
         assertEq(reg.attackerScore(carol), 0);
         assertTrue(reg.voteOf(id, bob) == ThatsRekt.VoteDirection.None);
 
         reg.vote(id, ThatsRekt.VoteDirection.Downvote);
-        (, , uint32 up3, uint32 down3, , , ) = reg.getPost(id);
+        (, , uint32 up3, uint32 down3, , , , ) = reg.getPost(id);
         assertEq(up3, 0);
         assertEq(down3, 1);
         assertEq(reg.attackerScore(carol), -1);
@@ -599,7 +652,7 @@ contract ThatsRektTest is Test {
             reg.vote(id, ThatsRekt.VoteDirection.Downvote);
         }
 
-        (, , uint32 up, uint32 down, bool removed, , ) = reg.getPost(id);
+        (, , uint32 up, uint32 down, bool removed, , , ) = reg.getPost(id);
         assertEq(up, 0);
         assertEq(down, 10);
         assertFalse(removed, "post must NOT be auto-removed by downvotes");
@@ -646,7 +699,7 @@ contract ThatsRektTest is Test {
         vm.prank(alice);
         reg.retract(id);
 
-        (, , , , bool removed, , ) = reg.getPost(id);
+        (, , , , bool removed, , , ) = reg.getPost(id);
         assertTrue(removed);
         assertEq(reg.attackerAppearances(attacker), 0);
     }
@@ -683,7 +736,7 @@ contract ThatsRektTest is Test {
         vm.prank(alice);
         reg.retract(id);
 
-        (, , , , bool removed, , ) = reg.getPost(id);
+        (, , , , bool removed, , , ) = reg.getPost(id);
         assertTrue(removed);
     }
 
