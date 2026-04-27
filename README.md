@@ -29,11 +29,13 @@ Integrators trust the multisig — and the 7-day delay — for upgrade authority
 
 ## Architecture
 
-- **Owner** (Safe multisig, set at deploy time via constructor) — only role with whitelist write authority. Fully rotatable via OpenZeppelin `Ownable2Step` (two-step `transferOwnership` -> `acceptOwnership`), so governance keys can be rotated as needed.
-- **Whitelisted addresses** — can post alerts and vote up/down on others' alerts. Cannot vote on own posts.
-- **Anyone** — can read posts, attacker scores, victim flags, and the active-post linked list.
+- **Owner** (the `TimelockController`, set on the proxy at `initialize`) — holds upgrade authority *and* whitelist write authority. The multisig drives both via the timelock: every owner-gated call (`addWhitelisted`, `removeWhitelisted`, `upgradeToAndCall`, etc.) is `schedule()` -> wait 7 days -> `execute()`. Owner is fully rotatable via the inherited OpenZeppelin `Ownable2StepUpgradeable` two-step (`transferOwnership` -> `acceptOwnership`), itself gated by the timelock.
+- **Whitelisted addresses** — can post alerts, vote up/down on others' alerts, retract / amend / extend their own posts. Cannot vote on own posts.
+- **Anyone** — can read posts, attacker scores, victim flags, voter sets, and the active-post linked list.
 
-Posts contain: `address[] attackers`, `address[] victims`, `string note`. At least one must be non-empty. Up to 32 addresses total per post. Notes live in `PostCreated` events, never in storage.
+Posts contain: `address[] attackers`, `address[] victims`, `string note`, `uint64 attackedAt`. At least one address array or the note must be non-empty. Up to **100 addresses total per post** (cap applies to `attackers.length + victims.length`). Notes live in `PostCreated` / `PostNoteAmended` events, never in storage.
+
+`attackedAt` is poster-supplied: the UTC second timestamp of the on-chain attack itself (e.g. the malicious tx's block timestamp), validated as `> 0` and `<= block.timestamp`. Operator detection time is implicit in the post tx's block timestamp, so it is not stored separately. Each post also tracks an on-chain `lastUpdatedAt` (set at creation, bumped on `amendNote` / `addAttackers` / `addVictims`) so consumers can surface "recently edited" posts without scanning logs.
 
 ## Public reads (for integrators)
 
@@ -49,16 +51,37 @@ A DEX router can `require(reg.attackerScore(user) <= 0)` before allowing a swap.
 ## Posting + voting
 
 ```solidity
-function post(address[] attackers, address[] victims, string note) external returns (uint256 id);
-function vote(uint256 postId, int8 direction) external;             // direction in {-1, 0, +1}; 0 = retract
+enum VoteDirection { None, Upvote, Downvote }
+
+function post(
+    address[] calldata attackers,
+    address[] calldata victims,
+    string   calldata note,
+    uint64            attackedAt
+) external returns (uint256 id);
+
+function vote(uint256 postId, VoteDirection direction) external;    // None is rejected — use unvote()
+function unvote(uint256 postId) external;                           // clears caller's vote on the post
 function retract(uint256 postId) external;                          // poster only
 ```
 
-`vote()` accepts `+1` (upvote), `-1` (downvote), or `0` (retract previous vote). The poster cannot vote on their own post. Same direction twice in a row reverts (`NoVoteChange`).
+`vote()` takes the `VoteDirection` enum (`Upvote` = +1, `Downvote` = -1; `None` is rejected — clearing back to "no vote" lives on `unvote()`). The poster cannot vote on their own post. Same direction twice in a row reverts (`NoVoteChange`). `unvote()` reverts if the caller never voted (`NoVoteToRetract`).
+
+## Editing posts (poster only)
+
+Posts are amend-only — addresses can be appended but never removed (anti bait-and-switch). Posters who need to drop an address must `retract()` and re-post.
+
+```solidity
+function amendNote(uint256 postId, string calldata newNote) external;          // event-only; bumps lastUpdatedAt
+function addAttackers(uint256 postId, address[] calldata newAttackers) external;
+function addVictims(uint256 postId, address[] calldata newVictims) external;
+```
+
+Notes live entirely in events (originally `PostCreated`, then `PostNoteAmended`); the on-chain side effect of `amendNote` is just bumping `lastUpdatedAt`. `addAttackers` / `addVictims` enforce strict no-duplicates within the input batch and across the post's existing attacker + victim arrays, reject `address(0)`, and respect the 100-address total cap. Newly added attackers inherit the post's *current* net karma (`upvotes - downvotes`) at the moment of addition.
 
 ## Removal
 
-A post is removed automatically when `downvotes - upvotes >= 3`, or by the poster calling `retract(id)`. Removal reverses all aggregate contributions and unlinks from the active-post list. Posts cannot be un-removed.
+The only path to removal is the poster calling `retract(id)`. Removal reverses all aggregate contributions (attacker scores, attacker appearances, victim flags) and unlinks the post from the active-post list. Posts cannot be un-removed. There is no automatic threshold-based removal — peer downvotes lower the post's score (and any listed attackers' scores) but do not delete the post.
 
 ## On-chain feed enumeration
 
@@ -67,13 +90,26 @@ function recentActivePosts(uint256 limit) external view returns (uint256[]);   /
 function activePostsBefore(uint256 beforeId, uint256 limit) external view returns (uint256[]);
 ```
 
-Walks a doubly-linked list of non-removed posts. `MAX_VIEW_LIMIT = 100` per call. For richer queries (full-text search on notes, per-attacker post lists), consume `PostCreated` / `Voted` / `PostRemoved` events via an off-chain indexer.
+Walks a doubly-linked list of non-removed posts. `MAX_VIEW_LIMIT = 100` per call. For richer queries (full-text search on notes, per-attacker post lists), consume `PostCreated` / `PostNoteAmended` / `AttackersAdded` / `VictimsAdded` / `Voted` / `PostRemoved` events via an off-chain indexer.
+
+## Voter set views
+
+Each post tracks its upvoter and downvoter sets on-chain (OZ `EnumerableSet`), enabling integrators to gate on a trusted subset of whitelisters rather than just the raw aggregate score:
+
+```solidity
+function getUpvoters(uint256 postId)     external view returns (address[]);
+function getDownvoters(uint256 postId)   external view returns (address[]);
+function getUpvoterCount(uint256 postId) external view returns (uint256);
+function getDownvoterCount(uint256 postId) external view returns (uint256);
+```
+
+Cardinalities are kept in lockstep with the per-post `upvotes` / `downvotes` counters as an invariant. The full-set views are unbounded by design — caller picks the gas budget at the eth_call layer; paginate at the consumer level for very large voter sets.
 
 ## Cross-chain deploy
 
-The contract is deployed at the same address on every supported EVM chain using the CREATE2 deployer at `0x4e59b44847b379578588920cA78FbF26c0B4956C`. Each chain has its own sovereign state — own whitelist, own posts, own karma. Cross-chain aggregation is an off-chain concern.
+All three contracts (impl, timelock, proxy) are deployed at the same address on every supported EVM chain using the CREATE2 deployer at `0x4e59b44847b379578588920cA78FbF26c0B4956C`. Each chain has its own sovereign state — own whitelist, own posts, own karma. Cross-chain aggregation is an off-chain concern.
 
-The governance owner is a constructor argument — pass the SAME owner address on every chain to get the SAME deployed address everywhere (the constructor arg is encoded into init code, so identical args + identical salt + identical factory = identical address). Typically that owner is a Safe multisig also deployed at the same address on every chain via the Safe Singleton Factory.
+Cross-chain identical addresses require identical init code on every chain. Concretely: the proxy's init code embeds the impl address and the `initialize(timelock)` calldata, and the timelock's init code embeds the multisig address as proposer / executor / canceller. So the multisig must live at the same address on every chain (typically deployed via the Safe Singleton Factory) — pass that same address everywhere and the impl, timelock, and proxy each land at one canonical cross-chain address.
 
 ## Build / test / deploy
 
