@@ -1,0 +1,24 @@
+# Build output (regenerated in builder stage)
+lib/
+node_modules/
+
+# Local env / secrets
+.env
+.env.local
+
+# Generated code (regenerated in builder stage)
+src/abi/
+src/model/generated/
+
+# Editor / OS / VCS
+.git/
+.gitignore
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.log
+
+# Docs / scratch
+README.md
+tasks/

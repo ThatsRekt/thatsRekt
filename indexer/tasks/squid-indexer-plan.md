@@ -293,10 +293,10 @@ This is a sketch — final form during Phase 2.
 
 This plan needs operator sign-off on the open questions before implementation begins. Ideal sign-off:
 
-- [ ] Initial target chain (Sepolia / Base Sepolia / wait for mainnet)
-- [ ] Hosting target (local + VPS / specific cloud / other)
-- [ ] GraphQL endpoint plan (api.thatsrekt.eth / .com / IP only)
-- [ ] Multi-chain from day 1 or deferred (lean: deferred)
+- [x] **Initial target chain — DECIDED 2026-04-27: Base mainnet.** Single-chain v0.1; Phase 6 adds multi-chain. Routeme.sh (chainId 8453) for RPC.
+- [x] **Hosting target — initial: local Docker stack** (compose). VPS / AWS deferred to Phase 7.
+- [ ] GraphQL endpoint plan (api.thatsrekt.eth / .com / IP only) — defer to Phase 7
+- [x] **Multi-chain from day 1 or deferred — DECIDED 2026-04-27: deferred to Phase 6.**
 
 Once signed off:
 - Spawn subagent for Phase 0 (monorepo restructure) → PR.

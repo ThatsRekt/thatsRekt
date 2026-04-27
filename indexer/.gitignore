@@ -1,0 +1,19 @@
+# Dependencies
+node_modules/
+
+# Build output (regenerated via `pnpm build`)
+lib/
+builds/
+
+# Local env / secrets
+.env
+.env.local
+
+# Editor / OS
+.DS_Store
+*.swp
+.idea/
+.vscode/
+
+# Misc
+*.log
