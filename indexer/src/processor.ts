@@ -10,12 +10,12 @@ import { Store } from '@subsquid/typeorm-store'
 import { events } from './abi/ThatsRekt'
 
 /**
- * Configured to index a single chain in v0.1. Multi-chain comes later (Phase 6
- * of the plan) — at that point each chain will have its own processor instance
- * or a shared one with chainId-aware data sources.
+ * Configured to index a single chain in v0.1 (Base mainnet). Multi-chain
+ * comes later (Phase 6 of the plan) — at that point each chain will have its
+ * own processor instance or a shared one with chainId-aware data sources.
  *
  * Required env vars (see .env.example):
- *   - RPC_SEPOLIA_HTTP    — chain RPC endpoint
+ *   - RPC_BASE_HTTP       — Base mainnet RPC endpoint (routeme.sh recommended)
  *   - CONTRACT_ADDRESS    — the proxy address (canonical, identical across chains)
  *   - START_BLOCK         — first block to index (typically deploy block)
  */
@@ -34,11 +34,11 @@ if (Number.isNaN(startBlock) || startBlock < 0) {
 export const CONTRACT_ADDRESS = contractAddress
 
 export const processor = new EvmBatchProcessor()
-  // Subsquid Network gateway for fast historical sync. Sepolia network endpoint.
-  // Override with another chain's gateway when deploying to other networks.
-  .setGateway('https://v2.archive.subsquid.io/network/ethereum-sepolia')
+  // Subsquid Network gateway for fast historical sync. Base mainnet endpoint.
+  // Switch to another chain's gateway when deploying to other networks.
+  .setGateway('https://v2.archive.subsquid.io/network/base-mainnet')
   .setRpcEndpoint({
-    url: requireEnv('RPC_SEPOLIA_HTTP'),
+    url: requireEnv('RPC_BASE_HTTP'),
     rateLimit: 10,
   })
   .setFinalityConfirmation(75)
