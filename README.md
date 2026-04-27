@@ -4,7 +4,28 @@ A public-good on-chain registry of in-progress and confirmed DeFi exploits.
 
 Whitelisted operators (typically Twitter-monitor bots watching threat-intel firms like SlowMist, BlockSec, PeckShield) post structured alerts naming attacker addresses, victim contracts, and free-form context. Other whitelisters race to vouch (upvote) or refute (downvote). Aggregates are exposed as O(1) reads so any contract — DEX router, wallet, stablecoin issuer, risk dashboard — can plug in and inline-blacklist live attacker addresses.
 
-Designed as a public good: no economic admin power, no upgradeability, no proxies. Cross-chain identical-address deploy via the singleton CREATE2 factory.
+Designed as a public good: no economic admin power. Cross-chain identical-address deploy via the singleton CREATE2 factory. Logic is upgradeable behind a UUPS proxy gated by a 7-day TimelockController (see [Deployment Architecture](#deployment-architecture)).
+
+## Deployment Architecture
+
+Three contracts are deployed per chain, all via CREATE2 with constant salts so the addresses are identical on every chain:
+
+1. **Implementation** (`ThatsRekt.sol`) — the logic contract. Held privately behind the proxy; integrators never call it directly. Salt is versioned per impl release (`thatsRekt.impl.v1.0.0`), so a new implementation gets a new address while the proxy stays put.
+2. **TimelockController** (OpenZeppelin) — gates every upgrade. Configured at deploy time with a **7-day delay**, the multisig as proposer + executor + canceller, and `admin = address(0)` so role changes can only happen via a timelocked proposal. Salt is versioned (`thatsRekt.timelock.v1`); only changes if the timelock contract itself is replaced.
+3. **ERC1967Proxy** — the canonical permanent address, what integrators bake in. Owned by the TimelockController. Salt is **not** versioned (`thatsRekt.proxy`) — this address must never change.
+
+The multisig has no direct upgrade authority. Every upgrade follows the OZ TimelockController flow: propose with `schedule(...)`, wait 7 days, then `execute(...)` with the same args. Pseudocode:
+
+```solidity
+bytes memory call = abi.encodeCall(ThatsRekt.upgradeToAndCall, (newImpl, ""));
+timelock.schedule(proxy, 0, call, bytes32(0), salt, 7 days);
+// ... wait 7 days ...
+timelock.execute(proxy, 0, call, bytes32(0), salt);
+```
+
+### Trust model
+
+Integrators trust the multisig — and the 7-day delay — for upgrade authority. The honest-case guarantee is that **a malicious upgrade cannot land in less than 7 days**: even with multisig keys compromised, integrators have a full week to disengage, monitor, and migrate before a hostile implementation is in force. The multisig can also call `proxy.renounceOwnership()` via the timelock when the design stabilizes, which permanently freezes upgrades and reduces the contract back to the immutable model of v0.
 
 ## Architecture
 
