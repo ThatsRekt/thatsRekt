@@ -122,6 +122,15 @@ contract ThatsRekt is Ownable2Step {
     enum RemovalReason { Retracted }
     event PostRemoved(uint256 indexed postId, RemovalReason reason);
 
+    /// @notice Emitted when the poster amends a post's free-form note.
+    /// @dev    Notes are intentionally not in storage — they live entirely
+    ///         in the event log (originally `PostCreated`, now also this
+    ///         event). The on-chain `lastUpdatedAt` field is bumped as a
+    ///         side effect. `lastUpdatedAt` is *not* in this event's
+    ///         params: it is implicitly equal to `block.timestamp` of the
+    ///         emit, so duplicating it would be dead weight for indexers.
+    event PostNoteAmended(uint256 indexed postId, address indexed amender, string newNote);
+
     /*//////////////////////////////////////////////////////////////
                                   ERRORS
     //////////////////////////////////////////////////////////////*/
@@ -380,6 +389,36 @@ contract ThatsRekt is Ownable2Step {
         if (p.poster != msg.sender)     revert NotPoster();
         if (p.removed)                  revert PostIsRemoved();
         _removePost(postId, RemovalReason.Retracted);
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                          POSTER (edits)
+    //////////////////////////////////////////////////////////////*/
+
+    /// @notice Amend the free-form note of a post the caller authored.
+    /// @dev    Notes never lived in storage (event-only design from v0):
+    ///         the new note is emitted in `PostNoteAmended` rather than
+    ///         written. The only on-chain side effect is bumping
+    ///         `lastUpdatedAt` so consumers can surface "recently
+    ///         amended" posts without scanning logs.
+    ///
+    ///         Address arrays are *not* mutable via this entry point —
+    ///         additive-only edits live on `addAttackers` / `addVictims`,
+    ///         and removal is fundamentally not supported (anti
+    ///         bait-and-switch). Posters who need to change addresses
+    ///         must `retract()` and re-post.
+    /// @param postId  Target post id (must exist and be live).
+    /// @param newNote New note contents. Empty string is allowed —
+    ///                clearing context is a legitimate amend.
+    function amendNote(uint256 postId, string calldata newNote) external onlyWhitelisted {
+        Post storage p = _posts[postId];
+        if (p.poster == address(0))   revert PostNotFound();
+        if (p.poster != msg.sender)   revert NotPoster();
+        if (p.removed)                revert PostIsRemoved();
+
+        p.lastUpdatedAt = uint64(block.timestamp);
+
+        emit PostNoteAmended(postId, msg.sender, newNote);
     }
 
     /*//////////////////////////////////////////////////////////////

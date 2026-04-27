@@ -1127,4 +1127,114 @@ contract ThatsRektTest is Test {
         vm.prank(governance);
         reg.addWhitelisted(bob);
     }
+
+    /*//////////////////////////////////////////////////////////////
+                          PHASE 12 - amendNote()
+    //////////////////////////////////////////////////////////////*/
+
+    /// Poster can amend the free-form note. Notes never lived in
+    /// storage (event-only design from v0); the only on-chain
+    /// side effect is the `lastUpdatedAt` bump.
+    function test_amendNote_posterCanAmend() public {
+        _whitelist(alice);
+        uint256 id = _post(alice, bob, address(0));
+
+        // jump forward so lastUpdatedAt strictly differs from creation
+        vm.warp(block.timestamp + 1 days);
+
+        vm.expectEmit(true, true, false, true);
+        emit ThatsRekt.PostNoteAmended(id, alice, "more context: tx 0xdeadbeef");
+
+        vm.prank(alice);
+        reg.amendNote(id, "more context: tx 0xdeadbeef");
+
+        (, , , , , , , uint64 lastUpdatedAt) = reg.getPost(id);
+        assertEq(lastUpdatedAt, uint64(block.timestamp));
+    }
+
+    function test_amendNote_revertsForNonPoster() public {
+        _whitelist(alice);
+        _whitelist(bob);
+        uint256 id = _post(alice, carol, address(0));
+
+        vm.expectRevert(ThatsRekt.NotPoster.selector);
+        vm.prank(bob);
+        reg.amendNote(id, "i didn't write this");
+    }
+
+    function test_amendNote_revertsForNonWhitelisted() public {
+        _whitelist(alice);
+        uint256 id = _post(alice, carol, address(0));
+
+        // alice is whitelisted but gets removed; she's no longer
+        // allowed to amend — `onlyWhitelisted` fires before `NotPoster`.
+        vm.prank(governance);
+        reg.removeWhitelisted(alice);
+
+        vm.expectRevert(ThatsRekt.NotWhitelisted.selector);
+        vm.prank(alice);
+        reg.amendNote(id, "anything");
+    }
+
+    function test_amendNote_revertsOnRemovedPost() public {
+        _whitelist(alice);
+        uint256 id = _post(alice, carol, address(0));
+
+        vm.prank(alice);
+        reg.retract(id);
+
+        vm.expectRevert(ThatsRekt.PostIsRemoved.selector);
+        vm.prank(alice);
+        reg.amendNote(id, "too late");
+    }
+
+    function test_amendNote_revertsOnNonExistentPost() public {
+        _whitelist(alice);
+
+        vm.expectRevert(ThatsRekt.PostNotFound.selector);
+        vm.prank(alice);
+        reg.amendNote(99, "ghost post");
+    }
+
+    /// Sequential amends each advance lastUpdatedAt to the new block.timestamp.
+    function test_amendNote_lastUpdatedAtAdvances() public {
+        _whitelist(alice);
+
+        // create at t = 1_000_000
+        vm.warp(1_000_000);
+        uint256 id = _post(alice, bob, address(0));
+
+        (, , , , , , , uint64 lu0) = reg.getPost(id);
+        assertEq(lu0, uint64(1_000_000));
+
+        // first amend at t = 1_000_500
+        vm.warp(1_000_500);
+        vm.prank(alice);
+        reg.amendNote(id, "amend 1");
+
+        (, , , , , , , uint64 lu1) = reg.getPost(id);
+        assertEq(lu1, uint64(1_000_500));
+
+        // second amend at t = 1_001_000
+        vm.warp(1_001_000);
+        vm.prank(alice);
+        reg.amendNote(id, "amend 2");
+
+        (, , , , , , , uint64 lu2) = reg.getPost(id);
+        assertEq(lu2, uint64(1_001_000));
+    }
+
+    /// Empty-string amendments are allowed by design — the poster may
+    /// want to clear context, and the contract has no business
+    /// adjudicating note contents.
+    function test_amendNote_acceptsEmptyString() public {
+        _whitelist(alice);
+        uint256 id = _post(alice, bob, address(0));
+
+        vm.expectEmit(true, true, false, true);
+        emit ThatsRekt.PostNoteAmended(id, alice, "");
+
+        vm.prank(alice);
+        reg.amendNote(id, "");
+    }
 }
