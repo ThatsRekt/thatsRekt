@@ -1,1 +1,0 @@
-{"root":["./src/app.tsx","./src/main.tsx","./src/vite-env.d.ts","./src/components/addresslabel.tsx","./src/components/emptystate.tsx","./src/components/postcard.tsx","./src/components/timeline.tsx","./src/lib/client.ts","./src/lib/format.ts","./src/lib/queries.ts","./src/pages/feed.tsx","./src/pages/postdetail.tsx"],"version":"5.7.3"}
