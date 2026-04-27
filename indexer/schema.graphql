@@ -1,0 +1,195 @@
+# thatsRekt indexer schema
+#
+# Aggregate fields on Address (attackerScore, attackerAppearances, isVictim)
+# are derived state maintained by the processor in lockstep with PostCreated /
+# Voted / PostRemoved / AttackersAdded / VictimsAdded events. They mirror the
+# on-chain values exactly.
+#
+# Many-to-many relationships (post ↔ attacker addresses, post ↔ victim
+# addresses) use explicit junction entities (PostAttacker, PostVictim) per
+# Subsquid's required pattern.
+
+# A whitelisted address that posts hack alerts and/or votes on them.
+type Whitelister @entity {
+  "the address (lowercased)"
+  id: ID!
+
+  isCurrentlyWhitelisted: Boolean!
+
+  firstWhitelistedAt: DateTime
+  firstWhitelistedAtBlock: Int
+
+  lastChangedAt: DateTime
+  lastChangedAtBlock: Int
+
+  posts: [Post!]! @derivedFrom(field: "poster")
+  votes: [Vote!]! @derivedFrom(field: "voter")
+  changes: [WhitelistChange!]! @derivedFrom(field: "addr")
+}
+
+# A hack alert post.
+type Post @entity {
+  "postId from the contract"
+  id: ID!
+
+  poster: Whitelister!
+
+  "poster-supplied — block.timestamp of the malicious tx itself"
+  attackedAt: DateTime!
+
+  "updated on amendNote / addAttackers / addVictims; mirrors on-chain field"
+  lastUpdatedAt: DateTime!
+
+  "latest note text — historical edits captured in Edit entities"
+  note: String!
+
+  upvotes: Int!
+  downvotes: Int!
+  netScore: Int!
+
+  removed: Boolean!
+
+  createdAtBlock: Int!
+  createdAtTimestamp: DateTime!
+
+  removedAtBlock: Int
+  removedAtTimestamp: DateTime
+
+  attackerLinks: [PostAttacker!]! @derivedFrom(field: "post")
+  victimLinks: [PostVictim!]! @derivedFrom(field: "post")
+  votes: [Vote!]! @derivedFrom(field: "post")
+  edits: [Edit!]! @derivedFrom(field: "post")
+}
+
+# An address that appears as either attacker or victim in any post.
+# Aggregates mirror the contract's attackerScore / attackerAppearances / isVictim views.
+type Address @entity {
+  "the address (lowercased)"
+  id: ID!
+
+  "signed sum of net votes across all non-removed posts listing the address as attacker"
+  attackerScore: BigInt!
+
+  "count of posts where the address is listed as attacker (lifetime, includes removed)"
+  attackerAppearances: Int!
+
+  "true iff the address is listed as victim of at least one non-removed post (== victimActivePostCount > 0)"
+  isVictim: Boolean!
+
+  "count of non-removed posts where the address is listed as victim — mirrors contract's _victimActivePosts mapping"
+  victimActivePostCount: Int!
+
+  attackerLinks: [PostAttacker!]! @derivedFrom(field: "address")
+  victimLinks: [PostVictim!]! @derivedFrom(field: "address")
+}
+
+# Junction: a post lists this address as one of its attackers.
+type PostAttacker @entity {
+  "postId-address"
+  id: ID!
+  post: Post! @index
+  address: Address! @index
+  "block at which this link was created (PostCreated or AttackersAdded)"
+  createdAtBlock: Int!
+}
+
+# Junction: a post lists this address as one of its victims.
+type PostVictim @entity {
+  "postId-address"
+  id: ID!
+  post: Post! @index
+  address: Address! @index
+  "block at which this link was created (PostCreated or VictimsAdded)"
+  createdAtBlock: Int!
+}
+
+# A single vote action — historical record (every up, down, and unvote).
+type Vote @entity {
+  "txHash-logIndex"
+  id: ID!
+
+  post: Post! @index
+  voter: Whitelister! @index
+
+  "previous vote direction at the time of this event (None if first vote)"
+  oldDirection: VoteDirection!
+
+  "new vote direction emitted by the contract (None on unvote)"
+  newDirection: VoteDirection!
+
+  blockNumber: Int!
+  timestamp: DateTime!
+  txHash: String!
+}
+
+enum VoteDirection {
+  None
+  Upvote
+  Downvote
+}
+
+# Whitelist add/remove history.
+type WhitelistChange @entity {
+  "txHash-logIndex"
+  id: ID!
+
+  addr: Whitelister! @index
+  added: Boolean!
+
+  blockNumber: Int!
+  timestamp: DateTime!
+  txHash: String!
+}
+
+# History of poster-driven amendments (note edits + attacker/victim additions).
+type Edit @entity {
+  "txHash-logIndex"
+  id: ID!
+
+  post: Post! @index
+  kind: EditKind!
+
+  "populated when kind = AmendNote"
+  newNote: String
+
+  "populated when kind = AddAttackers — list of newly-added attacker addresses"
+  addedAttackers: [String!]
+
+  "populated when kind = AddVictims — list of newly-added victim addresses"
+  addedVictims: [String!]
+
+  blockNumber: Int!
+  timestamp: DateTime!
+  txHash: String!
+}
+
+enum EditKind {
+  AmendNote
+  AddAttackers
+  AddVictims
+}
+
+# Proxy upgrade history (UUPSUpgradeable.Upgraded event).
+type Upgrade @entity {
+  "txHash-logIndex"
+  id: ID!
+
+  newImplementation: String!
+
+  blockNumber: Int!
+  timestamp: DateTime!
+  txHash: String!
+}
+
+# Ownership transfer history (Ownable2Step). One row per Transferred event.
+type OwnershipChange @entity {
+  "txHash-logIndex"
+  id: ID!
+
+  previousOwner: String!
+  newOwner: String!
+
+  blockNumber: Int!
+  timestamp: DateTime!
+  txHash: String!
+}

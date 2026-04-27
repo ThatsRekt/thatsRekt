@@ -1,0 +1,21 @@
+manifestVersion: subsquid.io/v0.1
+name: thatsrekt-indexer
+description: Indexer for the thatsRekt on-chain hack alert registry.
+build:
+deploy:
+  addons:
+    postgres:
+  api:
+    cmd: ['npx', 'squid-graphql-server']
+  processor:
+    cmd: ['node', 'lib/main.js']
+scale:
+  addons:
+    postgres:
+      storage: 10G
+      profile: small
+  processor:
+    profile: small
+  api:
+    profile: small
+    replicas: 1
