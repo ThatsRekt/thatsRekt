@@ -45,7 +45,7 @@ contract ThatsRektInvariants is Test {
         uint256 max = reg.postCount();
         if (max > 50) max = 50;
         for (uint256 id = 1; id <= max; ++id) {
-            (address poster, , , , bool removed, , address[] memory vics) = reg.getPost(id);
+            (address poster, , , , bool removed, , address[] memory vics, ) = reg.getPost(id);
             if (poster == address(0)) continue;
             if (removed) continue;
             for (uint256 i; i < vics.length; ++i) {
@@ -60,7 +60,7 @@ contract ThatsRektInvariants is Test {
         if (max > 50) max = 50;
         uint256 cap = reg.MAX_ADDRESSES_PER_POST();
         for (uint256 id = 1; id <= max; ++id) {
-            (address poster, , , , , address[] memory atk, address[] memory vic) = reg.getPost(id);
+            (address poster, , , , , address[] memory atk, address[] memory vic, ) = reg.getPost(id);
             if (poster == address(0)) continue;
             assertLe(atk.length + vic.length, cap, "post exceeds size cap");
         }
@@ -71,7 +71,7 @@ contract ThatsRektInvariants is Test {
         uint256 max = reg.postCount();
         if (max > 50) max = 50;
         for (uint256 id = 1; id <= max; ++id) {
-            (address poster, , , , , , ) = reg.getPost(id);
+            (address poster, , , , , , , ) = reg.getPost(id);
             if (poster == address(0)) continue;
             assertTrue(
                 reg.voteOf(id, poster) == ThatsRekt.VoteDirection.None,
@@ -86,7 +86,7 @@ contract ThatsRektInvariants is Test {
         uint256 max = reg.postCount();
         if (max > 50) max = 50;
         for (uint256 id = 1; id <= max; ++id) {
-            (address poster, , uint32 up, uint32 down, , , ) = reg.getPost(id);
+            (address poster, , uint32 up, uint32 down, , , , ) = reg.getPost(id);
             if (poster == address(0)) continue;
             assertEq(reg.getUpvoterCount(id),   uint256(up),   "upvoter set length must equal post.upvotes");
             assertEq(reg.getDownvoterCount(id), uint256(down), "downvoter set length must equal post.downvotes");

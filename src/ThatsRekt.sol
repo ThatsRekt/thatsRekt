@@ -20,7 +20,11 @@ contract ThatsRekt is Ownable2Step {
     //////////////////////////////////////////////////////////////*/
 
     /// @notice Hard cap on attackers.length + victims.length per post.
-    uint256 public constant MAX_ADDRESSES_PER_POST = 32;
+    /// @dev Sized to accommodate large multi-wallet investigations
+    ///      (e.g. attacker wallets + victim contracts across protocol legs)
+    ///      while staying within a single tx's gas budget on every supported
+    ///      chain — even at the max-size 100/100 boundary the cost is bounded.
+    uint256 public constant MAX_ADDRESSES_PER_POST = 100;
 
     /// @notice Pagination cap for view helpers (eth_call gas budget).
     uint256 public constant MAX_VIEW_LIMIT = 100;
@@ -52,6 +56,13 @@ contract ThatsRekt is Ownable2Step {
         uint32   upvotes;
         uint32   downvotes;
         bool     removed;
+        /// @dev Block-time freshness signal. Set to `block.timestamp` at
+        ///      post creation and bumped on every poster-driven edit
+        ///      (`amendNote`, `addAttackers`, `addVictims`). Indexers and
+        ///      consumers can use this to surface "recently edited" posts
+        ///      without scanning the event log. Packs into the same storage
+        ///      slot as `downvotes` (u32) + `removed` (bool) + this u64.
+        uint64   lastUpdatedAt;
         address[] attackers;
         address[] victims;
     }
@@ -111,6 +122,23 @@ contract ThatsRekt is Ownable2Step {
     enum RemovalReason { Retracted }
     event PostRemoved(uint256 indexed postId, RemovalReason reason);
 
+    /// @notice Emitted when the poster amends a post's free-form note.
+    /// @dev    Notes are intentionally not in storage — they live entirely
+    ///         in the event log (originally `PostCreated`, now also this
+    ///         event). The on-chain `lastUpdatedAt` field is bumped as a
+    ///         side effect. `lastUpdatedAt` is *not* in this event's
+    ///         params: it is implicitly equal to `block.timestamp` of the
+    ///         emit, so duplicating it would be dead weight for indexers.
+    event PostNoteAmended(uint256 indexed postId, address indexed amender, string newNote);
+
+    /// @notice Emitted when the poster appends new attackers to a post.
+    /// @dev    `lastUpdatedAt` is omitted (deducible from `block.timestamp`).
+    event AttackersAdded(uint256 indexed postId, address indexed amender, address[] newAttackers);
+
+    /// @notice Emitted when the poster appends new victims to a post.
+    /// @dev    `lastUpdatedAt` is omitted (deducible from `block.timestamp`).
+    event VictimsAdded(uint256 indexed postId, address indexed amender, address[] newVictims);
+
     /*//////////////////////////////////////////////////////////////
                                   ERRORS
     //////////////////////////////////////////////////////////////*/
@@ -126,6 +154,9 @@ contract ThatsRekt is Ownable2Step {
     error InvalidAttackedAt();
     error InvalidVoteDirection();
     error NoVoteToRetract();
+    error EmptyAdditions();
+    error DuplicateAddress();
+    error ZeroAddress();
 
     /*//////////////////////////////////////////////////////////////
                                 CONSTRUCTOR
@@ -197,8 +228,9 @@ contract ThatsRekt is Ownable2Step {
         unchecked { id = ++postCount; }
 
         Post storage p = _posts[id];
-        p.poster     = msg.sender;
-        p.attackedAt = attackedAt;
+        p.poster        = msg.sender;
+        p.attackedAt    = attackedAt;
+        p.lastUpdatedAt = uint64(block.timestamp);
 
         uint256 aLen = attackers_.length;
         for (uint256 i; i < aLen; ++i) {
@@ -371,6 +403,160 @@ contract ThatsRekt is Ownable2Step {
     }
 
     /*//////////////////////////////////////////////////////////////
+                          POSTER (edits)
+    //////////////////////////////////////////////////////////////*/
+
+    /// @notice Amend the free-form note of a post the caller authored.
+    /// @dev    Notes never lived in storage (event-only design from v0):
+    ///         the new note is emitted in `PostNoteAmended` rather than
+    ///         written. The only on-chain side effect is bumping
+    ///         `lastUpdatedAt` so consumers can surface "recently
+    ///         amended" posts without scanning logs.
+    ///
+    ///         Address arrays are *not* mutable via this entry point —
+    ///         additive-only edits live on `addAttackers` / `addVictims`,
+    ///         and removal is fundamentally not supported (anti
+    ///         bait-and-switch). Posters who need to change addresses
+    ///         must `retract()` and re-post.
+    /// @param postId  Target post id (must exist and be live).
+    /// @param newNote New note contents. Empty string is allowed —
+    ///                clearing context is a legitimate amend.
+    function amendNote(uint256 postId, string calldata newNote) external onlyWhitelisted {
+        Post storage p = _posts[postId];
+        if (p.poster == address(0))   revert PostNotFound();
+        if (p.poster != msg.sender)   revert NotPoster();
+        if (p.removed)                revert PostIsRemoved();
+
+        p.lastUpdatedAt = uint64(block.timestamp);
+
+        emit PostNoteAmended(postId, msg.sender, newNote);
+    }
+
+    /// @notice Append new attackers to an existing post. Additive only —
+    ///         attackers cannot be removed via any path other than
+    ///         `retract()` + re-post.
+    /// @dev    Each new attacker inherits the post's *current* net karma
+    ///         (`upvotes - downvotes`) at the moment of addition. From
+    ///         that point on, subsequent votes / unvotes update all
+    ///         listed attackers (original + newly added) uniformly,
+    ///         preserving v1's single-aggregate model.
+    ///
+    ///         Bait-and-switch resistance: the additive-only design means
+    ///         a poster cannot swap an innocent address into a karma-laden
+    ///         post. They CAN add a fresh address that inherits karma —
+    ///         that's a known and intentional limit (mitigated by
+    ///         downvotes from peers if the addition looks bogus).
+    ///
+    ///         Strict no-duplicates: rejects (a) duplicates within the
+    ///         input batch, (b) addresses already in the post's attacker
+    ///         array, and (c) addresses already in the post's victim
+    ///         array. Asymmetric with `post()` (which permits intra-post
+    ///         duplicates for legacy reasons) — by the time we're in v1
+    ///         edit territory, we have the chance to enforce a cleaner
+    ///         invariant on the additive path.
+    /// @param postId        Target post id.
+    /// @param newAttackers  Non-empty array of unique, non-zero addresses.
+    function addAttackers(uint256 postId, address[] calldata newAttackers) external onlyWhitelisted {
+        Post storage p = _posts[postId];
+        if (p.poster == address(0))   revert PostNotFound();
+        if (p.poster != msg.sender)   revert NotPoster();
+        if (p.removed)                revert PostIsRemoved();
+        if (newAttackers.length == 0) revert EmptyAdditions();
+        // Cap is total addresses (attackers + victims), matching `post()`.
+        // Checking only one array would let the post grow past the cap by
+        // unbalancing the split.
+        if (p.attackers.length + p.victims.length + newAttackers.length > MAX_ADDRESSES_PER_POST) {
+            revert PostTooLarge();
+        }
+
+        int256 currentNet = int256(uint256(p.upvotes)) - int256(uint256(p.downvotes));
+
+        uint256 nNew = newAttackers.length;
+        for (uint256 i; i < nNew; ++i) {
+            address a = newAttackers[i];
+            if (a == address(0)) revert ZeroAddress();
+            _requireNotInPost(p, a);
+            _requireNotInBatch(newAttackers, i, a);
+
+            p.attackers.push(a);
+            attackerScore[a]   += currentNet;
+            unchecked { ++attackerAppearances[a]; }
+        }
+
+        p.lastUpdatedAt = uint64(block.timestamp);
+
+        emit AttackersAdded(postId, msg.sender, newAttackers);
+    }
+
+    /// @notice Append new victims to an existing post. Additive only —
+    ///         victims cannot be removed via any path other than
+    ///         `retract()` + re-post.
+    /// @dev    Mirrors `addAttackers` semantics: same authz, same
+    ///         lifecycle checks, same strict no-duplicate rules across
+    ///         (input batch | attacker array | victim array). Victims
+    ///         do not have a karma aggregate, so the per-victim side
+    ///         effect is purely the `_victimActivePosts` increment and
+    ///         `isVictim[v] = true` flip on first inclusion.
+    /// @param postId      Target post id.
+    /// @param newVictims  Non-empty array of unique, non-zero addresses.
+    function addVictims(uint256 postId, address[] calldata newVictims) external onlyWhitelisted {
+        Post storage p = _posts[postId];
+        if (p.poster == address(0))   revert PostNotFound();
+        if (p.poster != msg.sender)   revert NotPoster();
+        if (p.removed)                revert PostIsRemoved();
+        if (newVictims.length == 0)   revert EmptyAdditions();
+        // Cap is total addresses across both arrays — see `addAttackers`.
+        if (p.attackers.length + p.victims.length + newVictims.length > MAX_ADDRESSES_PER_POST) {
+            revert PostTooLarge();
+        }
+
+        uint256 nNew = newVictims.length;
+        for (uint256 i; i < nNew; ++i) {
+            address v = newVictims[i];
+            if (v == address(0)) revert ZeroAddress();
+            _requireNotInPost(p, v);
+            _requireNotInBatch(newVictims, i, v);
+
+            p.victims.push(v);
+            unchecked { ++_victimActivePosts[v]; }
+            if (_victimActivePosts[v] == 1) isVictim[v] = true;
+        }
+
+        p.lastUpdatedAt = uint64(block.timestamp);
+
+        emit VictimsAdded(postId, msg.sender, newVictims);
+    }
+
+    /// @dev Reverts with `DuplicateAddress` if `a` is already listed in
+    ///      either of the post's attacker or victim arrays. Used by the
+    ///      additive edit paths (`addAttackers` / `addVictims`) to
+    ///      enforce the cross-array uniqueness invariant.
+    function _requireNotInPost(Post storage p, address a) internal view {
+        uint256 aLen = p.attackers.length;
+        for (uint256 j; j < aLen; ++j) {
+            if (p.attackers[j] == a) revert DuplicateAddress();
+        }
+        uint256 vLen = p.victims.length;
+        for (uint256 j; j < vLen; ++j) {
+            if (p.victims[j] == a) revert DuplicateAddress();
+        }
+    }
+
+    /// @dev Reverts with `DuplicateAddress` if `a` appears earlier in
+    ///      the same input batch (indexes [0, upTo)). Catches caller
+    ///      mistakes like `[X, X]` without the gas cost of a fresh
+    ///      memory set.
+    function _requireNotInBatch(
+        address[] calldata batch,
+        uint256 upTo,
+        address a
+    ) internal pure {
+        for (uint256 j; j < upTo; ++j) {
+            if (batch[j] == a) revert DuplicateAddress();
+        }
+    }
+
+    /*//////////////////////////////////////////////////////////////
                                   READS
     //////////////////////////////////////////////////////////////*/
 
@@ -381,11 +567,21 @@ contract ThatsRekt is Ownable2Step {
         uint32   downvotes,
         bool     removed,
         address[] memory attackers_,
-        address[] memory victims_
+        address[] memory victims_,
+        uint64   lastUpdatedAt
     ) {
         Post storage p = _posts[id];
         if (p.poster == address(0)) revert PostNotFound();
-        return (p.poster, p.attackedAt, p.upvotes, p.downvotes, p.removed, p.attackers, p.victims);
+        return (
+            p.poster,
+            p.attackedAt,
+            p.upvotes,
+            p.downvotes,
+            p.removed,
+            p.attackers,
+            p.victims,
+            p.lastUpdatedAt
+        );
     }
 
     function attackerReport(address a) external view returns (int256 score, uint256 appearances) {

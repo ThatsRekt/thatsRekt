@@ -63,4 +63,48 @@ contract ThatsRektHandler is Test {
         vm.prank(actor_);
         try reg.retract(id) {} catch { /* NotPoster, PostIsRemoved, PostNotFound ok */ }
     }
+
+    function fuzz_amendNote(uint256 actorSeed, uint256 postSeed, uint256 noteSeed) external {
+        if (livePostIds.length == 0) return;
+        address actor_ = _actor(actorSeed);
+        uint256 id = livePostIds[postSeed % livePostIds.length];
+        string memory note = noteSeed % 2 == 0 ? "amend-a" : "amend-b";
+        vm.prank(actor_);
+        try reg.amendNote(id, note) {} catch {
+            /* NotPoster, PostIsRemoved, PostNotFound, NotWhitelisted ok */
+        }
+    }
+
+    function fuzz_addAttackers(uint256 actorSeed, uint256 postSeed, uint256 nNew) external {
+        if (livePostIds.length == 0) return;
+        address actor_ = _actor(actorSeed);
+        uint256 id = livePostIds[postSeed % livePostIds.length];
+        nNew = bound(nNew, 1, 3);
+        address[] memory adds = new address[](nNew);
+        // unique-per-call seed avoids self-batch duplicates for the common
+        // case; the contract still validates and reverts cleanly if a
+        // cross-post duplicate or other error lands.
+        for (uint256 i; i < nNew; ++i) {
+            adds[i] = address(uint160(0xF000 + actorSeed + postSeed + i));
+        }
+        vm.prank(actor_);
+        try reg.addAttackers(id, adds) {} catch {
+            /* NotPoster, PostIsRemoved, PostNotFound, NotWhitelisted, EmptyAdditions, DuplicateAddress, ZeroAddress, PostTooLarge ok */
+        }
+    }
+
+    function fuzz_addVictims(uint256 actorSeed, uint256 postSeed, uint256 nNew) external {
+        if (livePostIds.length == 0) return;
+        address actor_ = _actor(actorSeed);
+        uint256 id = livePostIds[postSeed % livePostIds.length];
+        nNew = bound(nNew, 1, 3);
+        address[] memory adds = new address[](nNew);
+        for (uint256 i; i < nNew; ++i) {
+            adds[i] = address(uint160(0xF800 + actorSeed + postSeed + i));
+        }
+        vm.prank(actor_);
+        try reg.addVictims(id, adds) {} catch {
+            /* NotPoster, PostIsRemoved, PostNotFound, NotWhitelisted, EmptyAdditions, DuplicateAddress, ZeroAddress, PostTooLarge ok */
+        }
+    }
 }
