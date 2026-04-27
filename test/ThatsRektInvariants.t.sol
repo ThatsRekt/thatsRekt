@@ -73,7 +73,10 @@ contract ThatsRektInvariants is Test {
         for (uint256 id = 1; id <= max; ++id) {
             (address poster, , , , , , ) = reg.getPost(id);
             if (poster == address(0)) continue;
-            assertEq(reg.voteOf(id, poster), 0, "poster voted on own post");
+            assertTrue(
+                reg.voteOf(id, poster) == ThatsRekt.VoteDirection.None,
+                "poster voted on own post"
+            );
         }
     }
 }

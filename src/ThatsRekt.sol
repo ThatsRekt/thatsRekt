@@ -23,6 +23,16 @@ contract ThatsRekt is Ownable2Step {
     uint256 public constant MAX_VIEW_LIMIT = 100;
 
     /*//////////////////////////////////////////////////////////////
+                                   ENUMS
+    //////////////////////////////////////////////////////////////*/
+
+    /// @notice Direction of a voter's vote on a post.
+    /// @dev    `None` is the zero value (default for unset mapping slots),
+    ///         which lets `voteOf[postId][voter] == None` serve as the natural
+    ///         "no vote yet" sentinel without an extra storage flag.
+    enum VoteDirection { None, Upvote, Downvote }
+
+    /*//////////////////////////////////////////////////////////////
                                   STRUCTS
     //////////////////////////////////////////////////////////////*/
 
@@ -51,7 +61,7 @@ contract ThatsRekt is Ownable2Step {
 
     uint256 public postCount;
     mapping(uint256 => Post) private _posts;
-    mapping(uint256 => mapping(address => int8)) public voteOf;
+    mapping(uint256 => mapping(address => VoteDirection)) public voteOf;
 
     mapping(address => int256)  public attackerScore;
     mapping(address => uint256) public attackerAppearances;
@@ -80,8 +90,8 @@ contract ThatsRekt is Ownable2Step {
     event Voted(
         uint256 indexed postId,
         address indexed voter,
-        int8            oldDirection,
-        int8            newDirection
+        VoteDirection   oldDirection,
+        VoteDirection   newDirection
     );
 
     /// @dev Single variant today; kept as an enum for forward extensibility
@@ -102,6 +112,8 @@ contract ThatsRekt is Ownable2Step {
     error PostTooLarge();
     error NotPoster();
     error InvalidAttackedAt();
+    error InvalidVoteDirection();
+    error NoVoteToRetract();
 
     /*//////////////////////////////////////////////////////////////
                                 CONSTRUCTOR
@@ -205,36 +217,77 @@ contract ThatsRekt is Ownable2Step {
         }
     }
 
-    /// @param isUpvote true to upvote (+1 weight), false to downvote (-1 weight).
-    /// @dev   The internal storage `voteOf` stays int8 to encode three states:
-    ///        no vote (0), upvote (+1), downvote (-1). The public signature is
-    ///        bool to keep callers from having to reason about magic ints.
-    ///        Note: a voter cannot retract a vote in v1 — only flip up<->down.
-    function vote(uint256 postId, bool isUpvote) external onlyWhitelisted {
+    /// @notice Map a `VoteDirection` to its signed weight for aggregate math.
+    /// @dev    Upvote -> +1, Downvote -> -1, None -> 0. Pure helper used to
+    ///         compute deltas in `vote()` and reversal in `unvote()`.
+    function _voteWeight(VoteDirection d) internal pure returns (int8) {
+        if (d == VoteDirection.Upvote)   return int8(1);
+        if (d == VoteDirection.Downvote) return int8(-1);
+        return int8(0);
+    }
+
+    /// @param postId    Target post id.
+    /// @param direction `Upvote` (+1) or `Downvote` (-1). `None` is rejected;
+    ///                  use `unvote()` to clear an existing vote.
+    /// @dev   `voteOf[postId][voter]` is `VoteDirection`, with `None` (= 0) as
+    ///        the implicit "no vote yet" default. Callers can flip up<->down
+    ///        via this entry point; clearing back to `None` lives on `unvote()`.
+    function vote(uint256 postId, VoteDirection direction) external onlyWhitelisted {
+        if (direction == VoteDirection.None) revert InvalidVoteDirection();
+
         Post storage p = _posts[postId];
         if (p.poster == address(0))   revert PostNotFound();
         if (p.removed)                revert PostIsRemoved();
         if (p.poster == msg.sender)   revert PosterCannotVote();
 
-        int8 newVote = isUpvote ? int8(1) : int8(-1);
-        int8 oldDir  = voteOf[postId][msg.sender];
-        if (oldDir == newVote)        revert NoVoteChange();
+        VoteDirection oldDir = voteOf[postId][msg.sender];
+        if (oldDir == direction)      revert NoVoteChange();
 
-        if (oldDir == 1)        { p.upvotes   -= 1; }
-        else if (oldDir == -1)  { p.downvotes -= 1; }
-        if (newVote == 1)       { p.upvotes   += 1; }
-        else                    { p.downvotes += 1; }
+        if (oldDir == VoteDirection.Upvote)        { p.upvotes   -= 1; }
+        else if (oldDir == VoteDirection.Downvote) { p.downvotes -= 1; }
+        if (direction == VoteDirection.Upvote)     { p.upvotes   += 1; }
+        else                                       { p.downvotes += 1; }
 
-        int256 delta = int256(newVote) - int256(oldDir);
+        int256 delta = int256(_voteWeight(direction)) - int256(_voteWeight(oldDir));
 
         uint256 aLen = p.attackers.length;
         for (uint256 i; i < aLen; ++i) {
             attackerScore[p.attackers[i]] += delta;
         }
 
-        voteOf[postId][msg.sender] = newVote;
+        voteOf[postId][msg.sender] = direction;
 
-        emit Voted(postId, msg.sender, oldDir, newVote);
+        emit Voted(postId, msg.sender, oldDir, direction);
+    }
+
+    /// @notice Retract a previously cast vote on `postId`, restoring storage
+    ///         to the "no vote" state and reversing the aggregate impact.
+    /// @dev    Reverts if the caller never voted on this post (`NoVoteToRetract`),
+    ///         if the post does not exist (`PostNotFound`), or if it has already
+    ///         been removed (`PostIsRemoved`). Only whitelisters can call —
+    ///         a de-whitelisted account cannot rewrite history.
+    function unvote(uint256 postId) external onlyWhitelisted {
+        Post storage p = _posts[postId];
+        if (p.poster == address(0)) revert PostNotFound();
+        if (p.removed)              revert PostIsRemoved();
+
+        VoteDirection oldDir = voteOf[postId][msg.sender];
+        if (oldDir == VoteDirection.None) revert NoVoteToRetract();
+
+        // Reverse per-post counters.
+        if (oldDir == VoteDirection.Upvote) { p.upvotes   -= 1; }
+        else                                { p.downvotes -= 1; }
+
+        // Reverse attacker aggregate score: subtract the old weight.
+        int256 oldWeight = int256(_voteWeight(oldDir));
+        uint256 aLen = p.attackers.length;
+        for (uint256 i; i < aLen; ++i) {
+            attackerScore[p.attackers[i]] -= oldWeight;
+        }
+
+        voteOf[postId][msg.sender] = VoteDirection.None;
+
+        emit Voted(postId, msg.sender, oldDir, VoteDirection.None);
     }
 
     function _removePost(uint256 id, RemovalReason reason) internal {

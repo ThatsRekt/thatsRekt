@@ -41,8 +41,19 @@ contract ThatsRektHandler is Test {
         if (livePostIds.length == 0) return;
         address voter = _actor(actorSeed);
         uint256 id = livePostIds[postSeed % livePostIds.length];
+        ThatsRekt.VoteDirection dir = isUpvote
+            ? ThatsRekt.VoteDirection.Upvote
+            : ThatsRekt.VoteDirection.Downvote;
         vm.prank(voter);
-        try reg.vote(id, isUpvote) {} catch { /* PosterCannotVote, NoVoteChange, PostIsRemoved, NotWhitelisted ok */ }
+        try reg.vote(id, dir) {} catch { /* PosterCannotVote, NoVoteChange, PostIsRemoved, NotWhitelisted ok */ }
+    }
+
+    function fuzz_unvote(uint256 actorSeed, uint256 postSeed) external {
+        if (livePostIds.length == 0) return;
+        address voter = _actor(actorSeed);
+        uint256 id = livePostIds[postSeed % livePostIds.length];
+        vm.prank(voter);
+        try reg.unvote(id) {} catch { /* NoVoteToRetract, PostIsRemoved, NotWhitelisted ok */ }
     }
 
     function fuzz_retract(uint256 actorSeed, uint256 postSeed) external {
