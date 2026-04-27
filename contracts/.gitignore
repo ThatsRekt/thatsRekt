@@ -1,0 +1,12 @@
+# Compiler output
+cache/
+out/
+
+# Deployment broadcasts
+broadcast/
+
+# Env file (keep .env.example)
+.env
+
+# Forge install lockfile (deps are vendored; lockfile is local-only)
+foundry.lock

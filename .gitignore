@@ -1,12 +1,15 @@
-# Compiler output
-cache/
-out/
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
 
-# Deployment broadcasts
-broadcast/
+# Node (for indexer + frontend)
+node_modules/
 
-# Env file (keep .env.example)
+# Logs
+*.log
+
+# Env
 .env
-
-# Forge install lockfile (deps are vendored; lockfile is local-only)
-foundry.lock
+.env.local
