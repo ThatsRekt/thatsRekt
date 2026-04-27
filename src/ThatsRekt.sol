@@ -28,7 +28,11 @@ contract ThatsRekt is Ownable2Step {
 
     struct Post {
         address  poster;
-        uint64   timestamp;
+        /// @dev Poster-supplied UTC second timestamp marking when the
+        ///      operator detected the hack. Distinct from the block
+        ///      timestamp (already implicit in event/tx metadata) — this
+        ///      field is the informational datum, not a tamper-proof one.
+        uint64   detectedAt;
         uint32   upvotes;
         uint32   downvotes;
         bool     removed;
@@ -65,7 +69,7 @@ contract ThatsRekt is Ownable2Step {
     event PostCreated(
         uint256 indexed id,
         address indexed poster,
-        uint64          timestamp,
+        uint64          detectedAt,
         address[]       attackers,
         address[]       victims,
         string          note
@@ -95,6 +99,7 @@ contract ThatsRekt is Ownable2Step {
     error EmptyPost();
     error PostTooLarge();
     error NotPoster();
+    error InvalidDetectedAt();
 
     /*//////////////////////////////////////////////////////////////
                                 CONSTRUCTOR
@@ -139,11 +144,21 @@ contract ThatsRekt is Ownable2Step {
                           WHITELISTED (post + vote)
     //////////////////////////////////////////////////////////////*/
 
+    /// @param detectedAt UTC second timestamp the operator marks as the
+    ///                   detection time of the hack. Must be > 0 and not
+    ///                   in the future (relative to block.timestamp).
+    ///                   Combined with the block timestamp this gives
+    ///                   detection-to-post latency, useful for operator
+    ///                   reputation tracking and integrator signals.
     function post(
         address[] calldata attackers_,
         address[] calldata victims_,
-        string   calldata note
+        string   calldata note,
+        uint64            detectedAt
     ) external onlyWhitelisted returns (uint256 id) {
+        if (detectedAt == 0)                        revert InvalidDetectedAt();
+        if (detectedAt > uint64(block.timestamp))   revert InvalidDetectedAt();
+
         uint256 totalAddrs = attackers_.length + victims_.length;
         if (totalAddrs > MAX_ADDRESSES_PER_POST) revert PostTooLarge();
         if (totalAddrs == 0 && bytes(note).length == 0) revert EmptyPost();
@@ -151,8 +166,8 @@ contract ThatsRekt is Ownable2Step {
         unchecked { id = ++postCount; }
 
         Post storage p = _posts[id];
-        p.poster    = msg.sender;
-        p.timestamp = uint64(block.timestamp);
+        p.poster     = msg.sender;
+        p.detectedAt = detectedAt;
 
         uint256 aLen = attackers_.length;
         for (uint256 i; i < aLen; ++i) {
@@ -169,7 +184,7 @@ contract ThatsRekt is Ownable2Step {
 
         _insertActiveTail(id);
 
-        emit PostCreated(id, msg.sender, uint64(block.timestamp), attackers_, victims_, note);
+        emit PostCreated(id, msg.sender, detectedAt, attackers_, victims_, note);
     }
 
     function _insertActiveTail(uint256 id) internal {
@@ -264,7 +279,7 @@ contract ThatsRekt is Ownable2Step {
 
     function getPost(uint256 id) external view returns (
         address  poster,
-        uint64   timestamp,
+        uint64   detectedAt,
         uint32   upvotes,
         uint32   downvotes,
         bool     removed,
@@ -273,7 +288,7 @@ contract ThatsRekt is Ownable2Step {
     ) {
         Post storage p = _posts[id];
         if (p.poster == address(0)) revert PostNotFound();
-        return (p.poster, p.timestamp, p.upvotes, p.downvotes, p.removed, p.attackers, p.victims);
+        return (p.poster, p.detectedAt, p.upvotes, p.downvotes, p.removed, p.attackers, p.victims);
     }
 
     function attackerReport(address a) external view returns (int256 score, uint256 appearances) {

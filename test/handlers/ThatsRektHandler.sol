@@ -32,7 +32,7 @@ contract ThatsRektHandler is Test {
         for (uint256 i; i < nV; ++i) vic[i] = address(uint160(0xB000 + i + actorSeed));
 
         vm.prank(poster);
-        try reg.post(atk, vic, "") returns (uint256 id) {
+        try reg.post(atk, vic, "", uint64(block.timestamp)) returns (uint256 id) {
             livePostIds.push(id);
         } catch { /* expected: NotWhitelisted, etc. */ }
     }
