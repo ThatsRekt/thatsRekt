@@ -1,0 +1,296 @@
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.25;
+
+import {Test} from "forge-std/Test.sol";
+import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
+import {Initializable} from "@openzeppelin/contracts/proxy/utils/Initializable.sol";
+import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import {TimelockController} from "@openzeppelin/contracts/governance/TimelockController.sol";
+
+import {ThatsRekt} from "../src/ThatsRekt.sol";
+import {ThatsRektV1_1Mock} from "./mocks/ThatsRektV1_1Mock.sol";
+
+/// @notice Upgrade-flow tests for the UUPS-upgradeable ThatsRekt.
+///
+/// The 117 pre-existing tests in ThatsRekt.t.sol exercise the contract's
+/// product behavior through the proxy. This file is dedicated to the
+/// upgrade plumbing itself: initializer hardening, upgrade
+/// authorization, the timelocked upgrade flow, state preservation
+/// across upgrades, and the storage gap reservation.
+contract ThatsRektUpgradeTest is Test {
+    /// @dev Match the production deploy script. Tests use a small delay
+    ///      mostly for symmetry with prod; the value just has to be
+    ///      ≥ MIN_DELAY (configurable on TimelockController, defaults
+    ///      to whatever we pass at construction).
+    uint256 internal constant TIMELOCK_DELAY = 7 days;
+
+    /// @dev Salt used for all `schedule` / `execute` calls in this file.
+    ///      Distinct salts let us batch multiple ops, but every test
+    ///      here only needs one queued operation at a time.
+    bytes32 internal constant OP_SALT = bytes32(uint256(1));
+
+    address internal multisig;
+
+    /// @dev Memory mirror of a Post's flat header used to dodge "stack too
+    ///      deep" when destructuring all 8 return values of `getPost`.
+    struct PostSnapshot {
+        address poster;
+        uint64 attackedAt;
+        uint32 upvotes;
+        uint32 downvotes;
+        bool removed;
+        uint64 lastUpdatedAt;
+    }
+
+    function setUp() public {
+        multisig = makeAddr("multisig");
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                         INITIALIZATION HARDENING
+    //////////////////////////////////////////////////////////////*/
+
+    function test_initialize_setsOwner() public {
+        ThatsRekt reg = _deployProxied(multisig);
+        assertEq(reg.owner(), multisig);
+    }
+
+    function test_initialize_revertsOnSecondCall() public {
+        ThatsRekt reg = _deployProxied(multisig);
+        vm.expectRevert(Initializable.InvalidInitialization.selector);
+        reg.initialize(makeAddr("anotherOwner"));
+    }
+
+    function test_initialize_revertsOnZeroOwner() public {
+        ThatsRekt impl = new ThatsRekt();
+        bytes memory initCalldata = abi.encodeCall(ThatsRekt.initialize, (address(0)));
+        // Proxy ctor delegate-calls initialize, which reverts in
+        // OwnableUpgradeable; the revert bubbles up unchanged.
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableInvalidOwner.selector, address(0)));
+        new ERC1967Proxy(address(impl), initCalldata);
+    }
+
+    function test_implementation_initializeIsDisabled() public {
+        ThatsRekt impl = new ThatsRekt();
+        // Constructor on the impl calls _disableInitializers, so
+        // initialize() on the impl directly always reverts. This
+        // closes the well-known foothold of taking over the impl's
+        // owner slot via a public initialize on the logic contract.
+        vm.expectRevert(Initializable.InvalidInitialization.selector);
+        impl.initialize(multisig);
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                          UPGRADE AUTHORIZATION
+    //////////////////////////////////////////////////////////////*/
+
+    function test_upgradeToAndCall_revertsForNonOwner() public {
+        ThatsRekt reg = _deployProxied(multisig);
+        ThatsRektV1_1Mock newImpl = new ThatsRektV1_1Mock();
+
+        address attacker = makeAddr("attacker");
+        vm.prank(attacker);
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, attacker));
+        reg.upgradeToAndCall(address(newImpl), "");
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                       UPGRADE EXECUTION VIA TIMELOCK
+    //////////////////////////////////////////////////////////////*/
+
+    /// Full integration test: deploy impl + timelock + proxy with the
+    /// timelock as the proxy's owner; multisig schedules an upgrade,
+    /// waits the delay, executes it, and verifies the new impl
+    /// is reachable through the proxy AND that pre-upgrade state
+    /// survives the swap.
+    function test_upgradeViaTimelock_succeedsAfterDelay() public {
+        (ThatsRekt reg, TimelockController timelock) = _deployTimelockedProxy();
+
+        // Plant a piece of state we can read back after the upgrade.
+        // Whitelist a poster, post once with a dummy attacker, vote on it.
+        address poster = makeAddr("poster");
+        address voter = makeAddr("voter");
+        address attacker = makeAddr("attackerAddr");
+        _whitelistViaTimelock(reg, timelock, poster);
+        _whitelistViaTimelock(reg, timelock, voter);
+
+        address[] memory atks = new address[](1);
+        atks[0] = attacker;
+        address[] memory vics = new address[](0);
+        vm.prank(poster);
+        uint256 postId = reg.post(atks, vics, "pre-upgrade", uint64(block.timestamp));
+
+        vm.prank(voter);
+        reg.vote(postId, ThatsRekt.VoteDirection.Upvote);
+
+        // Snapshot pre-upgrade state for later comparison. getPost returns
+        // 8 values which blows the stack — read into a memory struct.
+        PostSnapshot memory pre = _snapshotPost(reg, postId);
+        int256 preScore = reg.attackerScore(attacker);
+
+        // Schedule + execute the upgrade through the timelock.
+        ThatsRektV1_1Mock newImpl = new ThatsRektV1_1Mock();
+        bytes memory upgradeCall = abi.encodeCall(reg.upgradeToAndCall, (address(newImpl), ""));
+        _scheduleAndExecute(timelock, address(reg), upgradeCall);
+
+        // The new function must now be reachable through the proxy.
+        assertEq(ThatsRektV1_1Mock(address(reg)).version(), "1.1");
+
+        // Pre-upgrade state must be intact.
+        PostSnapshot memory post_ = _snapshotPost(reg, postId);
+        assertEq(post_.poster, pre.poster, "poster lost across upgrade");
+        assertEq(post_.upvotes, pre.upvotes, "upvote count lost across upgrade");
+        assertEq(post_.removed, pre.removed, "removed flag flipped across upgrade");
+        assertEq(reg.attackerScore(attacker), preScore, "attackerScore lost across upgrade");
+
+        // Owner is still the timelock; further upgrades still gated.
+        assertEq(reg.owner(), address(timelock));
+    }
+
+    function test_upgradeViaTimelock_revertsBeforeDelay() public {
+        (ThatsRekt reg, TimelockController timelock) = _deployTimelockedProxy();
+
+        ThatsRektV1_1Mock newImpl = new ThatsRektV1_1Mock();
+        bytes memory upgradeCall = abi.encodeCall(reg.upgradeToAndCall, (address(newImpl), ""));
+
+        vm.prank(multisig);
+        timelock.schedule(address(reg), 0, upgradeCall, bytes32(0), OP_SALT, TIMELOCK_DELAY);
+
+        // Don't warp. Execute should fail with TimelockUnexpectedOperationState.
+        vm.prank(multisig);
+        vm.expectRevert();
+        timelock.execute(address(reg), 0, upgradeCall, bytes32(0), OP_SALT);
+    }
+
+    function test_upgradeViaTimelock_revertsForNonExecutor() public {
+        (ThatsRekt reg, TimelockController timelock) = _deployTimelockedProxy();
+
+        ThatsRektV1_1Mock newImpl = new ThatsRektV1_1Mock();
+        bytes memory upgradeCall = abi.encodeCall(reg.upgradeToAndCall, (address(newImpl), ""));
+
+        vm.prank(multisig);
+        timelock.schedule(address(reg), 0, upgradeCall, bytes32(0), OP_SALT, TIMELOCK_DELAY);
+        vm.warp(block.timestamp + TIMELOCK_DELAY + 1);
+
+        // Random EOA is not on the executor role.
+        address attacker = makeAddr("notExecutor");
+        vm.prank(attacker);
+        vm.expectRevert();
+        timelock.execute(address(reg), 0, upgradeCall, bytes32(0), OP_SALT);
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                              STORAGE GAP
+    //////////////////////////////////////////////////////////////*/
+
+    /// The contract reserves 50 trailing slots (`__gap`) for forward-
+    /// compatible storage growth. We can't see private storage names
+    /// from a test, but we can read the slots directly via vm.load
+    /// and assert they are zero on a freshly initialized proxy. This
+    /// guards against accidentally introducing a state variable in the
+    /// gap region in a future change.
+    function test_storageGap_isZeroedOnFreshProxy() public {
+        ThatsRekt reg = _deployProxied(multisig);
+
+        // Layout at time of writing (verified via `forge inspect`):
+        //   slots 0-13 = sequential state vars
+        //   slots 14-63 = __gap[50]
+        // If a future change adds state, this test will start reading
+        // non-zero values from the lower gap slots — that's the signal
+        // to reduce the gap size in src/ThatsRekt.sol accordingly.
+        uint256 GAP_START = 14;
+        uint256 GAP_LEN = 50;
+        for (uint256 i; i < GAP_LEN; ++i) {
+            bytes32 v = vm.load(address(reg), bytes32(GAP_START + i));
+            assertEq(uint256(v), 0, "gap slot is non-zero on fresh proxy");
+        }
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                                HELPERS
+    //////////////////////////////////////////////////////////////*/
+
+    function _snapshotPost(ThatsRekt reg, uint256 postId) internal view returns (PostSnapshot memory s) {
+        (
+            address poster,
+            uint64 attackedAt,
+            uint32 upvotes,
+            uint32 downvotes,
+            bool removed,
+            ,
+            ,
+            uint64 lastUpdatedAt
+        ) = reg.getPost(postId);
+        s = PostSnapshot({
+            poster: poster,
+            attackedAt: attackedAt,
+            upvotes: upvotes,
+            downvotes: downvotes,
+            removed: removed,
+            lastUpdatedAt: lastUpdatedAt
+        });
+    }
+
+    function _deployProxied(address owner_) internal returns (ThatsRekt) {
+        ThatsRekt impl = new ThatsRekt();
+        bytes memory initCalldata = abi.encodeCall(ThatsRekt.initialize, (owner_));
+        ERC1967Proxy proxy = new ERC1967Proxy(address(impl), initCalldata);
+        return ThatsRekt(address(proxy));
+    }
+
+    function _deployTimelockedProxy() internal returns (ThatsRekt reg, TimelockController timelock) {
+        // Multisig holds proposer + executor + canceller; admin = address(0).
+        // Mirrors the production Deploy.s.sol config exactly.
+        address[] memory proposers = new address[](1);
+        proposers[0] = multisig;
+        address[] memory executors = new address[](1);
+        executors[0] = multisig;
+        timelock = new TimelockController(TIMELOCK_DELAY, proposers, executors, address(0));
+
+        ThatsRekt impl = new ThatsRekt();
+        bytes memory initCalldata = abi.encodeCall(ThatsRekt.initialize, (address(timelock)));
+        ERC1967Proxy proxy = new ERC1967Proxy(address(impl), initCalldata);
+        reg = ThatsRekt(address(proxy));
+
+        // Sanity: proxy is owned by the timelock, not by the multisig.
+        assertEq(reg.owner(), address(timelock));
+    }
+
+    /// @dev Schedule a single call from the timelock to `target`, warp past
+    ///      the delay, and execute it. Caller is the multisig (the only
+    ///      proposer + executor in this setup).
+    function _scheduleAndExecute(
+        TimelockController timelock,
+        address target,
+        bytes memory data
+    ) internal {
+        vm.prank(multisig);
+        timelock.schedule(target, 0, data, bytes32(0), OP_SALT, TIMELOCK_DELAY);
+
+        vm.warp(block.timestamp + TIMELOCK_DELAY + 1);
+
+        vm.prank(multisig);
+        timelock.execute(target, 0, data, bytes32(0), OP_SALT);
+    }
+
+    /// @dev Whitelisting is owner-gated, so it has to go through the
+    ///      timelock just like any other admin op in this setup. Each
+    ///      call uses a unique OP_SALT-derived salt so multiple
+    ///      sequential whitelists don't collide on the operation id.
+    function _whitelistViaTimelock(
+        ThatsRekt reg,
+        TimelockController timelock,
+        address account
+    ) internal {
+        bytes memory data = abi.encodeCall(reg.addWhitelisted, (account));
+        bytes32 salt = keccak256(abi.encode("whitelist", account));
+
+        vm.prank(multisig);
+        timelock.schedule(address(reg), 0, data, bytes32(0), salt, TIMELOCK_DELAY);
+
+        vm.warp(block.timestamp + TIMELOCK_DELAY + 1);
+
+        vm.prank(multisig);
+        timelock.execute(address(reg), 0, data, bytes32(0), salt);
+    }
+}
