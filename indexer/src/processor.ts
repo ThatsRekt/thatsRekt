@@ -8,65 +8,93 @@ import {
 } from '@subsquid/evm-processor'
 import { Store } from '@subsquid/typeorm-store'
 import { events } from './abi/ThatsRekt'
+import type { ChainConfig } from './chains'
 
 /**
- * Configured to index a single chain in v0.1 (Base mainnet). Multi-chain
- * comes later (Phase 6 of the plan) — at that point each chain will have its
- * own processor instance or a shared one with chainId-aware data sources.
+ * Build a Subsquid processor configured for a single chain.
  *
- * Required env vars (see .env.example):
- *   - RPC_BASE_HTTP       — Base mainnet RPC endpoint (routeme.sh recommended)
- *   - CONTRACT_ADDRESS    — the proxy address (canonical, identical across chains)
- *   - START_BLOCK         — first block to index (typically deploy block)
+ * The chain registry (chains.ts) is the single source of truth for
+ * chain-specific config; env vars (named in the registry entry) supply
+ * the runtime values — RPC URL, contract address, start block.
+ *
+ * Adding a new chain: add an entry to chains.ts and supply matching env
+ * vars. No changes here are required.
  */
+
 const requireEnv = (key: string): string => {
   const value = process.env[key]
   if (!value) throw new Error(`Missing required env var: ${key}`)
   return value
 }
 
-const contractAddress = requireEnv('CONTRACT_ADDRESS').toLowerCase()
-const startBlock = parseInt(requireEnv('START_BLOCK'), 10)
-if (Number.isNaN(startBlock) || startBlock < 0) {
-  throw new Error(`Invalid START_BLOCK: ${process.env.START_BLOCK}`)
-}
+const SUBSCRIBED_TOPICS = [
+  events.PostCreated.topic,
+  events.PostRemoved.topic,
+  events.PostNoteAmended.topic,
+  events.AttackersAdded.topic,
+  events.VictimsAdded.topic,
+  events.Voted.topic,
+  events.WhitelistUpdated.topic,
+  events.Upgraded.topic,
+  events.OwnershipTransferred.topic,
+] as const
 
-export const CONTRACT_ADDRESS = contractAddress
+const LOG_FIELDS = {
+  log: {
+    topics: true,
+    data: true,
+    transactionHash: true,
+  },
+} as const
 
-export const processor = new EvmBatchProcessor()
-  // Subsquid Network gateway for fast historical sync. Base mainnet endpoint.
-  // Switch to another chain's gateway when deploying to other networks.
-  .setGateway('https://v2.archive.subsquid.io/network/base-mainnet')
-  .setRpcEndpoint({
-    url: requireEnv('RPC_BASE_HTTP'),
-    rateLimit: 10,
-  })
-  .setFinalityConfirmation(75)
-  .setFields({
-    log: {
-      topics: true,
-      data: true,
-      transactionHash: true,
-    },
-  })
-  .setBlockRange({ from: startBlock })
-  .addLog({
-    address: [contractAddress],
-    topic0: [
-      events.PostCreated.topic,
-      events.PostRemoved.topic,
-      events.PostNoteAmended.topic,
-      events.AttackersAdded.topic,
-      events.VictimsAdded.topic,
-      events.Voted.topic,
-      events.WhitelistUpdated.topic,
-      events.Upgraded.topic,
-      events.OwnershipTransferred.topic,
-    ],
-    transaction: false,
-  })
+// Probe used purely for type derivation. Every built processor has the same
+// .setFields() shape (LOG_FIELDS above), so the Fields / Log / ProcessorContext
+// types are identical across chains and can be derived from one canonical
+// instance. Handlers import these and stay chain-agnostic.
+const _typingProbe = new EvmBatchProcessor().setFields(LOG_FIELDS)
 
-export type Fields = EvmBatchProcessorFields<typeof processor>
+export type ConfiguredProcessor = typeof _typingProbe
+export type Fields = EvmBatchProcessorFields<ConfiguredProcessor>
 export type BlockHeader = _BlockHeader<Fields>
 export type Log = _Log<Fields>
 export type ProcessorContext = _DataHandlerContext<Store, Fields>
+
+export interface BuiltProcessor {
+  readonly chain: ChainConfig
+  /** Lowercased proxy address — compare with `lc(log.address)` in handlers. */
+  readonly contractAddress: string
+  readonly processor: ConfiguredProcessor
+}
+
+export const buildProcessor = (chain: ChainConfig): BuiltProcessor => {
+  const contractAddress = requireEnv(chain.contractEnvVar).toLowerCase()
+  const startBlockRaw = requireEnv(chain.startBlockEnvVar)
+  const startBlock = parseInt(startBlockRaw, 10)
+  if (Number.isNaN(startBlock) || startBlock < 0) {
+    throw new Error(
+      `Invalid ${chain.startBlockEnvVar}: "${startBlockRaw}" (expected non-negative integer)`,
+    )
+  }
+
+  const base = new EvmBatchProcessor()
+    .setRpcEndpoint({
+      url: requireEnv(chain.rpcEnvVar),
+      rateLimit: chain.rpcRateLimit,
+    })
+    .setFinalityConfirmation(chain.finalityConfirmation)
+    .setFields(LOG_FIELDS)
+    .setBlockRange({ from: startBlock })
+    .addLog({
+      address: [contractAddress],
+      topic0: [...SUBSCRIBED_TOPICS],
+      transaction: false,
+    })
+
+  // Subsquid Network archive — present for real chains, null for local
+  // Anvil (no archive exists). Without a gateway the processor falls back
+  // to RPC-only sync, which is fine at local-fork volumes.
+  const processor: ConfiguredProcessor =
+    chain.gateway !== null ? base.setGateway(chain.gateway) : base
+
+  return { chain, contractAddress, processor }
+}

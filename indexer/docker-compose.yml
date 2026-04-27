@@ -12,6 +12,22 @@ x-indexer: &indexer
     db:
       condition: service_healthy
 
+# All per-chain env vars are passed through. The processor only consumes the
+# block matching CHAIN (e.g. CHAIN=base → RPC_BASE_HTTP / CONTRACT_BASE /
+# START_BLOCK_BASE). Other blocks can be unset; the processor reads what it
+# needs and ignores the rest.
+x-chain-env: &chain-env
+  CHAIN: ${CHAIN:-base}
+  RPC_BASE_HTTP: ${RPC_BASE_HTTP:-}
+  CONTRACT_BASE: ${CONTRACT_BASE:-}
+  START_BLOCK_BASE: ${START_BLOCK_BASE:-}
+  RPC_SEPOLIA_HTTP: ${RPC_SEPOLIA_HTTP:-}
+  CONTRACT_SEPOLIA: ${CONTRACT_SEPOLIA:-}
+  START_BLOCK_SEPOLIA: ${START_BLOCK_SEPOLIA:-}
+  RPC_ANVIL_HTTP: ${RPC_ANVIL_HTTP:-}
+  CONTRACT_ANVIL: ${CONTRACT_ANVIL:-}
+  START_BLOCK_ANVIL: ${START_BLOCK_ANVIL:-}
+
 services:
   db:
     image: postgres:16-alpine
@@ -37,6 +53,9 @@ services:
     restart: 'no'
 
   # Indexes blocks. Restarts on failure (RPC blips, reorgs handled by Subsquid).
+  # Phase 2 will fan this out to one service per chain (processor-anvil,
+  # processor-sepolia, processor-base) — Phase 1 keeps a single instance
+  # selected by the CHAIN env var.
   processor:
     <<: *indexer
     command: ['node', 'lib/main.js']
@@ -46,9 +65,7 @@ services:
       DB_NAME: ${DB_NAME:-squid}
       DB_USER: ${DB_USER:-postgres}
       DB_PASS: ${DB_PASS:-postgres}
-      RPC_BASE_HTTP: ${RPC_BASE_HTTP:?RPC_BASE_HTTP must be set in .env (e.g. https://lb.routeme.sh/rpc/8453/<key>)}
-      CONTRACT_ADDRESS: ${CONTRACT_ADDRESS:-0x0000000000000000000000000000000000000000}
-      START_BLOCK: ${START_BLOCK:-0}
+      <<: *chain-env
     restart: unless-stopped
     depends_on:
       db:

@@ -21,7 +21,7 @@ The whole indexer (postgres + migrations + processor + GraphQL API) runs in Dock
 
 ```bash
 cp .env.example .env
-$EDITOR .env  # set CONTRACT_ADDRESS + START_BLOCK once the contract is deployed
+$EDITOR .env  # set CHAIN + matching RPC_<CHAIN>_HTTP / CONTRACT_<CHAIN> / START_BLOCK_<CHAIN>
 docker compose up -d --build
 ```
 
@@ -63,16 +63,21 @@ pnpm serve      # another — http://localhost:4350/graphql
 
 ## Configuration
 
+The indexer is **multichain-ready**: a single `CHAIN` env (one of `anvil` / `sepolia` / `base`) selects which chain a processor instance indexes. The chain registry at [`src/chains.ts`](./src/chains.ts) is the source of truth — chain ids, gateway URLs, finality settings, and per-chain env var names are all declared there. Adding a new chain is a registry entry plus a matching env block.
+
 `.env` (see `.env.example`):
 
 | Variable | Purpose |
 |----------|---------|
-| `RPC_BASE_HTTP` | Base mainnet RPC endpoint. Default points at routeme.sh (load-balanced multi-provider). Pattern: `https://lb.routeme.sh/rpc/{chainId}/{api-key}` — Base = chainId `8453`. The api-key lives in DAMM's secrets store — never commit it. |
-| `CONTRACT_ADDRESS` | The thatsRekt **proxy** address (canonical, identical across chains) |
-| `START_BLOCK` | First block to index — typically the proxy's deploy block |
-| `DB_*`, `GQL_PORT` | Postgres + GraphQL server ports |
+| `CHAIN` | Which chain this processor instance is for: `anvil` \| `sepolia` \| `base`. Default: `base`. |
+| `RPC_BASE_HTTP` / `CONTRACT_BASE` / `START_BLOCK_BASE` | Base mainnet config. RPC pattern: `https://lb.routeme.sh/rpc/8453/{api-key}` (key in DAMM secrets — never commit). |
+| `RPC_SEPOLIA_HTTP` / `CONTRACT_SEPOLIA` / `START_BLOCK_SEPOLIA` | Ethereum Sepolia config (filled in once Phase 3 deploys to Sepolia). |
+| `RPC_ANVIL_HTTP` / `CONTRACT_ANVIL` / `START_BLOCK_ANVIL` | Local Anvil fork (filled in by Phase 4 bootstrap script). |
+| `DB_*`, `GQL_PORT` | Postgres + GraphQL server ports. |
 
-Single-chain on **Base mainnet** in v0.1. Multi-chain support is planned (see `tasks/squid-indexer-plan.md` § Phase 6).
+Only the block matching `CHAIN` is required at runtime. Other blocks can stay blank.
+
+The full multichain stack (parallel processors per chain, Mesh gateway, frontend chain filter) lands in Phases 2-7 — see [`tasks/multichain-testnet-plan.md`](../tasks/multichain-testnet-plan.md).
 
 ## Schema
 
@@ -154,10 +159,8 @@ pnpm db:migrate
 
 ## Hosting
 
-**Phase 1-5 scope:** local development only. Production hosting (single VPS or AWS) is a future workstream — see `tasks/squid-indexer-plan.md` § Phase 7.
-
-When the contract is deployed to mainnet, set `CONTRACT_ADDRESS` + `START_BLOCK` accordingly and run the processor against the production RPC.
+**Local development only** for now. Production hosting (self-hosted on AWS, or one-squid-per-chain on SQD Cloud) is a future workstream — see [`tasks/multichain-testnet-plan.md`](../tasks/multichain-testnet-plan.md).
 
 ## Plan
 
-Implementation plan and design rationale: [`tasks/squid-indexer-plan.md`](./tasks/squid-indexer-plan.md).
+Implementation plan and design rationale: [`tasks/multichain-testnet-plan.md`](../tasks/multichain-testnet-plan.md) (current) and [`tasks/squid-indexer-plan.md`](./tasks/squid-indexer-plan.md) (predecessor).

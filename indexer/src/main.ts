@@ -1,7 +1,18 @@
+import 'dotenv/config'
 import { TypeormDatabase } from '@subsquid/typeorm-store'
 
 import { events } from './abi/ThatsRekt'
-import { processor, CONTRACT_ADDRESS, Log, ProcessorContext } from './processor'
+import { getChain } from './chains'
+import { buildProcessor, Log, ProcessorContext } from './processor'
+
+const requireEnv = (key: string): string => {
+  const v = process.env[key]
+  if (!v) throw new Error(`Missing required env var: ${key}`)
+  return v
+}
+
+const chain = getChain(requireEnv('CHAIN'))
+const { processor, contractAddress: CONTRACT_ADDRESS } = buildProcessor(chain)
 import {
   Address,
   Edit,
