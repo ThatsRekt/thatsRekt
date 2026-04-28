@@ -73,6 +73,7 @@ export interface PostDetail {
   downvotes: number
   netScore: number
   removed: boolean
+  createdAtBlock: number
   createdAtTimestamp: string
   removedAtTimestamp: string | null
   attackerLinks: PostAttackerLink[]
@@ -165,6 +166,7 @@ const buildPostDetailQuery = (prefix: string): string => /* GraphQL */ `
       downvotes
       netScore
       removed
+      createdAtBlock
       createdAtTimestamp
       removedAtTimestamp
       attackerLinks {

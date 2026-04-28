@@ -89,8 +89,8 @@ export function PostDetail() {
           </span>
         </div>
 
-        <h1 className="font-black uppercase tracking-tighter text-4xl leading-none">
-          {firstLine(data.note) || 'untitled alert'}
+        <h1 className="font-black tracking-tight text-3xl sm:text-4xl leading-tight text-neutral-900 whitespace-pre-wrap break-words">
+          {data.note?.trim() || '(no note attached)'}
         </h1>
 
         <dl className="grid grid-cols-1 gap-1 text-xs uppercase tracking-widest text-neutral-700 sm:grid-cols-2">
@@ -110,13 +110,6 @@ export function PostDetail() {
           )}
         </dl>
       </header>
-
-      <section>
-        <SectionLabel>note</SectionLabel>
-        <p className="mt-3 text-base leading-relaxed text-neutral-800 whitespace-pre-wrap">
-          {data.note || '(no note)'}
-        </p>
-      </section>
 
       <section>
         <SectionLabel>
@@ -178,7 +171,7 @@ export function PostDetail() {
       <section>
         <SectionLabel>timeline</SectionLabel>
         <div className="mt-3">
-          <Timeline votes={data.votes} edits={data.edits} chainSlug={chainSlug} />
+          <Timeline post={data} votes={data.votes} edits={data.edits} chainSlug={chainSlug} />
         </div>
       </section>
     </article>
@@ -225,9 +218,3 @@ function Field({
   )
 }
 
-function firstLine(s: string): string {
-  if (!s) return ''
-  const idx = s.indexOf('.')
-  const slice = idx > 0 ? s.slice(0, idx) : s
-  return slice.length > 120 ? slice.slice(0, 117) + '…' : slice
-}
