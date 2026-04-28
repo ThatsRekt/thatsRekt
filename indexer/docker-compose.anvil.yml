@@ -1,35 +1,41 @@
 # =============================================================================
-# Compose overlay — adds an Anvil service forking Sepolia.
+# Compose overlay — two Anvil services running in parallel:
+#   anvil-eth  forks Ethereum mainnet (chainId 31337, port 127.0.0.1:8545)
+#   anvil-base     forks Base    (chainId 31338, port 127.0.0.1:8546)
 # =============================================================================
+# Together they're the local cross-chain testbed: deploy thatsRekt to
+# both via DeployDev (same EOA → same CREATE2 proxy address on both),
+# index both, watch the unified Mesh feed merge — no real testnet ETH
+# or routeme.sh keys needed for the chain dynamics, only for the fork
+# RPCs themselves.
+#
 # Usage:
-#   docker compose -f docker-compose.yml -f docker-compose.anvil.yml up -d anvil
-#   ../contracts/script/anvil/bootstrap.sh   # deploys thatsRekt onto anvil
-#
-# Once bootstrap.sh has populated indexer/.env with CONTRACT_ANVIL +
-# START_BLOCK_ANVIL, you can bring up the indexer slice:
 #   docker compose -f docker-compose.yml -f docker-compose.anvil.yml up -d \
-#       migrate-anvil processor-anvil graphql-anvil
+#       anvil-eth anvil-base
+#   ../contracts/script/anvil/bootstrap.sh anvil-eth
+#   ../contracts/script/anvil/bootstrap.sh anvil-base
 #
-# The anvil chain id is 31337 (Anvil default), distinct from real Sepolia
-# (11155111) so the indexer registry correctly treats it as a separate chain
-# even though we fork Sepolia state.
+# Then bring up the rest of the stack:
+#   docker compose -f docker-compose.yml -f docker-compose.anvil.yml up -d \
+#       db migrate-anvil-eth processor-anvil-eth graphql-anvil-eth \
+#       migrate-anvil-base    processor-anvil-base    graphql-anvil-base \
+#       mesh
+#
+# Distinct chain ids (31337 / 31338) keep the indexer registry from
+# conflating the two anvil instances or with their forked-from chains.
 # =============================================================================
 
 services:
-  anvil:
+  anvil-eth:
     image: ghcr.io/foundry-rs/foundry:latest
-    # The image's default ENTRYPOINT runs `forge` — override to anvil.
     entrypoint: anvil
     command:
-      - --fork-url=${ANVIL_FORK_URL:?ANVIL_FORK_URL must be set in .env (typically the same value as RPC_SEPOLIA_HTTP)}
+      - --fork-url=${ANVIL_ETH_FORK_URL:?ANVIL_ETH_FORK_URL must be set in .env}
       - --host=0.0.0.0
       - --chain-id=31337
       - --block-time=2
       - --port=8545
     ports:
-      # Exposed to host so the bootstrap script (running on the host) can
-      # talk to anvil at localhost:8545. Phase 6 LAN overlay will widen
-      # this to 0.0.0.0 binding for LAN devices.
       - '127.0.0.1:8545:8545'
     healthcheck:
       test: ['CMD-SHELL', 'cast chain-id --rpc-url http://localhost:8545 | grep -q 31337']
@@ -37,23 +43,55 @@ services:
       timeout: 5s
       retries: 20
 
-  # Override the per-anvil indexer services to depend on the anvil container
-  # being healthy and to point their RPC at the in-network anvil hostname.
-  migrate-anvil:
+  anvil-base:
+    image: ghcr.io/foundry-rs/foundry:latest
+    entrypoint: anvil
+    command:
+      - --fork-url=${ANVIL_BASE_FORK_URL:?ANVIL_BASE_FORK_URL must be set in .env}
+      - --host=0.0.0.0
+      - --chain-id=31338
+      - --block-time=2
+      - --port=8545
+    ports:
+      - '127.0.0.1:8546:8545'
+    healthcheck:
+      test: ['CMD-SHELL', 'cast chain-id --rpc-url http://localhost:8545 | grep -q 31338']
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  # Add anvil dependencies to the per-chain indexer services. The base
+  # compose already declares env defaults; here we just gate startup on
+  # the corresponding anvil container being healthy.
+
+  migrate-anvil-eth:
     depends_on:
       db:
         condition: service_healthy
-      anvil:
+      anvil-eth:
         condition: service_healthy
 
-  processor-anvil:
-    environment:
-      # Inside the compose network, anvil is reachable as `anvil:8545`.
-      RPC_ANVIL_HTTP: http://anvil:8545
+  processor-anvil-eth:
     depends_on:
       db:
         condition: service_healthy
-      anvil:
+      anvil-eth:
         condition: service_healthy
-      migrate-anvil:
+      migrate-anvil-eth:
+        condition: service_completed_successfully
+
+  migrate-anvil-base:
+    depends_on:
+      db:
+        condition: service_healthy
+      anvil-base:
+        condition: service_healthy
+
+  processor-anvil-base:
+    depends_on:
+      db:
+        condition: service_healthy
+      anvil-base:
+        condition: service_healthy
+      migrate-anvil-base:
         condition: service_completed_successfully

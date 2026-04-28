@@ -1,72 +1,73 @@
-# Anvil bootstrap
+# Anvil bootstrap (dual-fork)
 
-Local Anvil fork of Sepolia for tight dev loops on the thatsRekt contract + indexer stack. Forking gives us the CREATE2 singleton factory + Safe singleton factory + realistic block numbers for free, while running locally with no faucet, no rate limits, and instant blocks.
+Two local Anvil forks run side-by-side as the cross-chain dev testbed:
+
+| Slug | chainId | Forks | Host port |
+|---|---|---|---|
+| `anvil-eth` | 31337 | Ethereum mainnet (chainId 1) | 127.0.0.1:8545 |
+| `anvil-base` | 31338 | Base mainnet (chainId 8453) | 127.0.0.1:8546 |
+
+Distinct chain ids keep the indexer registry from conflating them with each other or with their forked-from chains.
+
+Same dev EOA on both anvils → **identical thatsRekt CREATE2 proxy address on both** (since DeployDev's salts are constants and the EOA is the same). That means the `posts` query through Mesh sees a "real" cross-chain feed where the same contract is at the same address on multiple chains, exactly as it would be in production.
 
 ## Prerequisites
 
 - `foundry` installed (`anvil`, `cast`, `forge`).
-- A Sepolia RPC URL for Anvil to fork from. Set `ANVIL_FORK_URL` in `indexer/.env` (typically the same value as `RPC_SEPOLIA_HTTP`).
-- Docker + docker compose (or run anvil natively — see below).
+- Ethereum mainnet RPC (`ANVIL_ETH_FORK_URL`) and Base mainnet RPC (`ANVIL_BASE_FORK_URL`) in `indexer/.env`. Routeme.sh recommended.
+- Docker + docker compose.
 
-## Quickstart (compose)
+## Quickstart
 
 ```bash
-# 1. Start Anvil (fork of Sepolia, chainId 31337)
+# 1. Start both Anvil forks
 cd indexer
-docker compose -f docker-compose.yml -f docker-compose.anvil.yml up -d anvil
-
-# 2. Deploy thatsRekt onto Anvil via DeployDev (EOA owner = Anvil account 0)
-../contracts/script/anvil/bootstrap.sh
-
-# 3. Copy the printed CONTRACT_ANVIL + START_BLOCK_ANVIL values into indexer/.env
-
-# 4. Bring up the rest of the Anvil indexer slice
 docker compose -f docker-compose.yml -f docker-compose.anvil.yml up -d \
-    db migrate-anvil processor-anvil graphql-anvil
+    anvil-eth anvil-base
+
+# 2. Deploy thatsRekt onto each (idempotent — re-run is a no-op)
+../contracts/script/anvil/bootstrap.sh anvil-eth
+../contracts/script/anvil/bootstrap.sh anvil-base
+
+# 3. Copy the printed CONTRACT_ANVIL_ETH / START_BLOCK_ANVIL_ETH and the
+#    matching ANVIL_BASE values into indexer/.env
+
+# 4. Bring up the rest of the dual-anvil stack
+docker compose -f docker-compose.yml -f docker-compose.anvil.yml up -d \
+    db migrate-anvil-eth processor-anvil-eth graphql-anvil-eth \
+       migrate-anvil-base processor-anvil-base graphql-anvil-base \
+       mesh
 ```
 
-The bootstrap is idempotent — re-running it on the same Anvil instance is a no-op (DeployDev detects existing CREATE2 deploys and short-circuits).
+`http://localhost:4350/graphql` now serves a unified schema stitching both forks.
 
 ## Reset
 
-Wipe Anvil's state, drop+recreate the `thatsrekt_anvil` database, and re-bootstrap:
-
 ```bash
-contracts/script/anvil/reset.sh
+contracts/script/anvil/reset.sh anvil-eth      # reset just the eth fork
+contracts/script/anvil/reset.sh anvil-base     # reset just the base fork
+contracts/script/anvil/reset.sh                # reset both
 ```
 
-Use after schema changes, or when accumulated Anvil state interferes with a fresh test run.
+Use after schema changes or when accumulated state interferes with a fresh test run.
 
 ## Configuration
 
-Both scripts pick up overrides from env:
-
 | Var | Default | Purpose |
 |---|---|---|
-| `ANVIL_RPC` | `http://localhost:8545` | Where the bootstrap script reaches Anvil. |
-| `DEV_EOA` | `0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266` | Anvil default account 0. The owner / proposer / executor of the timelock. |
-| `DEV_KEY` | `0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80` | Anvil default account 0 private key. **Public test mnemonic — never use on mainnet.** |
-| `ANVIL_FORK_URL` | (required) | Sepolia RPC URL Anvil forks state from. Set in `indexer/.env`. |
-
-## Running anvil natively (no docker)
-
-```bash
-anvil \
-    --fork-url $ANVIL_FORK_URL \
-    --host 0.0.0.0 \
-    --chain-id 31337 \
-    --block-time 2 \
-    --port 8545
-```
-
-`--chain-id 31337` (Anvil default) is intentional — keeps Anvil's chain id distinct from real Sepolia (11155111) so the indexer treats it as a separate chain even though the forked state is from Sepolia.
+| `DEV_EOA` | `0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266` | Anvil default account 0 |
+| `DEV_KEY` | (Anvil default account 0 key) | Public test key — **never on mainnet** |
+| `ANVIL_ETH_FORK_URL` | (required in `indexer/.env`) | Ethereum mainnet RPC for the fork |
+| `ANVIL_BASE_FORK_URL` | (required in `indexer/.env`) | Base mainnet RPC for the fork |
+| `ANVIL_RPC` | per-chain default | Override the host endpoint for the bootstrap script |
 
 ## Output
 
-`bootstrap.sh` writes `contracts/script/anvil/.deployed.json` (gitignored) with the deployed addresses + start block:
+`bootstrap.sh anvil-eth` writes `contracts/script/anvil/.deployed.anvil-eth.json` (gitignored). Same for `anvil-base`. Each contains:
 
 ```json
 {
+  "chain": "anvil-eth",
   "chainId": 31337,
   "blockNumber": 12345678,
   "implementation": "0x...",
@@ -76,18 +77,12 @@ anvil \
 }
 ```
 
-This is the source of truth for the local Anvil deploy. Copy `proxy` → `CONTRACT_ANVIL` and `blockNumber` → `START_BLOCK_ANVIL` in `indexer/.env`.
+## Why fork mainnet (not testnet)?
 
-## Why fork from Sepolia (not cold-start)?
+- Real cross-chain story uses mainnets (Ethereum + Base + Arbitrum + …). Forking testnet doesn't exercise that.
+- Mainnet state has the CREATE2 singleton factory, the Safe singleton factory, and rich on-chain history we can sanity-check against.
+- No faucet ETH needed — the Anvil instance has unlimited dev ETH locally.
 
-Forking gives us:
-- **CREATE2 singleton factory** at `0x4e59…` already deployed → existing deploy script works unchanged.
-- **Safe singleton factory** in case we ever want a real Safe in the loop for parity testing.
-- **Realistic block numbers + gas pricing** instead of arbitrary single-digit numbers.
-- The indexer can fetch real historical data when sanity-checking event handlers.
+## Why distinct chain ids 31337 + 31338?
 
-## Why chain id 31337 (not Sepolia's 11155111)?
-
-The indexer's chain registry treats each `chainId` as a unique chain. If Anvil reported chain id `11155111`, the indexer's `anvil` processor and `sepolia` processor would both think they're indexing chain `11155111` — colliding on per-address keys and confusing every cross-chain query.
-
-Anvil's default `31337` is well-known and reserved for local development. Keeping that default is the right call.
+The indexer's chain registry treats each chainId as a unique chain. Two anvil instances with identical chainId would collide in every per-address join. 31337 (Anvil's default) + 31338 (the next free integer) — both reserved for local dev — are the right choice.

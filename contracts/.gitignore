@@ -12,4 +12,4 @@ broadcast/
 foundry.lock
 
 # Anvil bootstrap output — local deploy state, varies per machine
-script/anvil/.deployed.json
+script/anvil/.deployed.*.json

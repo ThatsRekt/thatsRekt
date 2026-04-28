@@ -1,8 +1,10 @@
 import { useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
-import { fetchFeed, type FeedPost, type SortOption } from '../lib/queries'
+import { useInfiniteQuery } from '@tanstack/react-query'
+import { fetchFeedPage, type FeedPost, type SortOption } from '../lib/queries'
 import { PostCard } from '../components/PostCard'
 import { EmptyState } from '../components/EmptyState'
+
+const PAGE_SIZE = 25
 
 const SORT_OPTIONS: { value: SortOption; label: string }[] = [
   { value: 'newest', label: 'newest' },
@@ -12,10 +14,27 @@ const SORT_OPTIONS: { value: SortOption; label: string }[] = [
 export function Feed() {
   const [sort, setSort] = useState<SortOption>('newest')
 
-  const { data, isLoading, error } = useQuery({
+  const {
+    data,
+    isLoading,
+    error,
+    fetchNextPage,
+    hasNextPage,
+    isFetchingNextPage,
+  } = useInfiniteQuery({
     queryKey: ['feed', sort],
-    queryFn: () => fetchFeed(50, sort),
+    queryFn: ({ pageParam }) => fetchFeedPage(pageParam, PAGE_SIZE),
+    initialPageParam: 0,
+    getNextPageParam: (lastPage) => lastPage.nextOffset ?? undefined,
   })
+
+  // Flatten + (optionally) reverse for "oldest" view. Mesh always returns
+  // DESC; we reverse client-side and walk pages in the same order.
+  const allPosts: FeedPost[] = data
+    ? data.pages.flatMap((p) => p.items)
+    : []
+  const displayed = sort === 'oldest' ? allPosts.slice().reverse() : allPosts
+  const totalCount = data?.pages[0]?.totalCount ?? 0
 
   return (
     <div>
@@ -28,13 +47,19 @@ export function Feed() {
             title="couldn't load the feed."
             hint={`is the indexer running? ${(error as Error).message}`}
           />
-        ) : !data || data.length === 0 ? (
+        ) : displayed.length === 0 ? (
           <EmptyState
             title="no posts yet."
-            hint="contract not deployed on the indexed chain, or no whitelister has posted an alert yet."
+            hint="contract not deployed on any indexed chain, or no whitelister has posted an alert yet."
           />
         ) : (
-          <FeedList posts={data} />
+          <FeedList
+            posts={displayed}
+            totalCount={totalCount}
+            hasNextPage={!!hasNextPage}
+            isFetchingNextPage={isFetchingNextPage}
+            onLoadMore={() => fetchNextPage()}
+          />
         )}
       </div>
     </div>
@@ -75,7 +100,21 @@ function SortBar({
   )
 }
 
-function FeedList({ posts }: { posts: FeedPost[] }) {
+interface FeedListProps {
+  posts: FeedPost[]
+  totalCount: number
+  hasNextPage: boolean
+  isFetchingNextPage: boolean
+  onLoadMore: () => void
+}
+
+function FeedList({
+  posts,
+  totalCount,
+  hasNextPage,
+  isFetchingNextPage,
+  onLoadMore,
+}: FeedListProps) {
   return (
     <div>
       {posts.map((post, i) => (
@@ -85,10 +124,25 @@ function FeedList({ posts }: { posts: FeedPost[] }) {
         </div>
       ))}
       <div className="rekt-divider mt-8">* * *</div>
-      <p className="text-center text-xs uppercase tracking-widest text-neutral-700">
-        end of feed · {posts.length} post{posts.length === 1 ? '' : 's'}
-      </p>
+      {hasNextPage ? (
+        <div className="flex flex-col items-center gap-2">
+          <button
+            type="button"
+            onClick={onLoadMore}
+            disabled={isFetchingNextPage}
+            className="px-3 py-1.5 text-xs uppercase tracking-widest font-black border-2 border-black hover:bg-black hover:text-[#f5f4ee] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          >
+            {isFetchingNextPage ? 'loading…' : 'load more'}
+          </button>
+          <p className="text-[10px] uppercase tracking-widest text-neutral-500">
+            showing {posts.length} of {totalCount}
+          </p>
+        </div>
+      ) : (
+        <p className="text-center text-xs uppercase tracking-widest text-neutral-700">
+          end of feed · {posts.length} post{posts.length === 1 ? '' : 's'}
+        </p>
+      )}
     </div>
   )
 }
-

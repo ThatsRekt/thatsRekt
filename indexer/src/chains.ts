@@ -2,20 +2,30 @@
  * Backend chain registry — single source of truth for chain-specific
  * config used by the Subsquid processor.
  *
+ * Two flavors of chain entry:
+ *   - Real chains:  `sepolia` (EIP-155 11155111), `base` (8453). Use
+ *     Subsquid Network archive gateways + routeme.sh RPCs.
+ *   - Local Anvil forks: `anvil-eth` (chainId 31337), `anvil-base`
+ *     (chainId 31338). RPC-only mode (no archive gateway). Forked
+ *     against real chain state via `--fork-url`. Distinct chain ids
+ *     so the indexer doesn't conflate them with their real counterparts
+ *     OR with each other.
+ *
+ * Running both anvil forks at once is the local cross-chain testbed —
+ * deploy thatsRekt to both via DeployDev (same EOA → same CREATE2
+ * proxy address), index both, and the unified Mesh feed renders posts
+ * from both as if they were independent chains.
+ *
  * Adding a new chain:
  *   1. Add an entry to CHAINS below.
  *   2. Supply the matching env vars in .env (RPC URL, contract address,
  *      start block — names are declared in the entry).
- *   3. (Mesh / frontend) add a parallel entry in mesh/.meshrc.yaml and
- *      frontend/src/lib/chains.ts.
+ *   3. Mirror in mesh/src/chains.ts and frontend/src/lib/chains.ts.
  *
- * No code changes elsewhere in the indexer should be required.
- *
- * keep in sync with frontend/src/lib/chains.ts (parallel registry,
- * frontend-shaped — only chainId + slug + display fields).
+ * keep in sync with mesh/src/chains.ts and frontend/src/lib/chains.ts.
  */
 
-export type ChainSlug = 'anvil' | 'sepolia' | 'base'
+export type ChainSlug = 'anvil-eth' | 'anvil-base' | 'sepolia' | 'base'
 
 export interface ChainConfig {
   /** EIP-155 chain id. */
@@ -45,14 +55,25 @@ export interface ChainConfig {
 }
 
 export const CHAINS: Readonly<Record<ChainSlug, ChainConfig>> = Object.freeze({
-  anvil: {
+  'anvil-eth': {
     chainId: 31337,
-    slug: 'anvil',
-    name: 'Anvil (local fork)',
+    slug: 'anvil-eth',
+    name: 'Anvil — Ethereum mainnet fork',
     gateway: null,
-    rpcEnvVar: 'RPC_ANVIL_HTTP',
-    contractEnvVar: 'CONTRACT_ANVIL',
-    startBlockEnvVar: 'START_BLOCK_ANVIL',
+    rpcEnvVar: 'RPC_ANVIL_ETH_HTTP',
+    contractEnvVar: 'CONTRACT_ANVIL_ETH',
+    startBlockEnvVar: 'START_BLOCK_ANVIL_ETH',
+    finalityConfirmation: 0,
+    rpcRateLimit: 50,
+  },
+  'anvil-base': {
+    chainId: 31338,
+    slug: 'anvil-base',
+    name: 'Anvil — Base fork',
+    gateway: null,
+    rpcEnvVar: 'RPC_ANVIL_BASE_HTTP',
+    contractEnvVar: 'CONTRACT_ANVIL_BASE',
+    startBlockEnvVar: 'START_BLOCK_ANVIL_BASE',
     finalityConfirmation: 0,
     rpcRateLimit: 50,
   },

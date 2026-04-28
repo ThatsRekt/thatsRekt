@@ -2,9 +2,22 @@ import { useParams, Link } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { fetchPostDetail } from '../lib/queries'
 import { AddressLabel } from '../components/AddressLabel'
+import { ChainBadge } from '../components/ChainBadge'
 import { Timeline } from '../components/Timeline'
 import { EmptyState } from '../components/EmptyState'
 import { formatTimestamp, relativeTime } from '../lib/format'
+
+// Extract chain slug from a composite post id (`{slug}-{onchainId}`).
+// Returns undefined for legacy bare ids.
+function chainSlugFromId(id: string): string | undefined {
+  const knownSlugs = ['anvil-eth', 'anvil-base', 'sepolia', 'base'].sort(
+    (a, b) => b.length - a.length,
+  )
+  for (const s of knownSlugs) {
+    if (id.startsWith(`${s}-`)) return s
+  }
+  return undefined
+}
 
 export function PostDetail() {
   const { id } = useParams<{ id: string }>()
@@ -42,6 +55,8 @@ export function PostDetail() {
     )
   }
 
+  const chainSlug = chainSlugFromId(data.id)
+
   return (
     <article className="space-y-10">
       <Link
@@ -54,6 +69,7 @@ export function PostDetail() {
       <header className="space-y-4 border-b-2 border-black pb-6">
         <div className="flex items-center gap-3 text-[10px] uppercase tracking-widest">
           <span className="font-black">#{data.id}</span>
+          {chainSlug && <ChainBadge slug={chainSlug} variant="full" />}
           <span className="text-neutral-700">·</span>
           {data.removed ? (
             <span className="border border-red-600 px-2 py-0.5 font-black text-red-600">
@@ -73,13 +89,13 @@ export function PostDetail() {
           </span>
         </div>
 
-        <h1 className="font-black uppercase tracking-tighter text-4xl leading-none">
-          {firstLine(data.note) || 'untitled alert'}
+        <h1 className="font-black tracking-tight text-3xl sm:text-4xl leading-tight text-neutral-900 whitespace-pre-wrap break-words">
+          {data.note?.trim() || '(no note attached)'}
         </h1>
 
         <dl className="grid grid-cols-1 gap-1 text-xs uppercase tracking-widest text-neutral-700 sm:grid-cols-2">
           <Field label="poster">
-            <AddressLabel addr={data.poster.id} />
+            <AddressLabel addr={data.poster.id} chainSlug={chainSlug} />
           </Field>
           <Field label="posted on-chain" tooltip={formatTimestamp(data.createdAtTimestamp)}>
             {relativeTime(data.createdAtTimestamp)}
@@ -96,13 +112,6 @@ export function PostDetail() {
       </header>
 
       <section>
-        <SectionLabel>note</SectionLabel>
-        <p className="mt-3 text-base leading-relaxed text-neutral-800 whitespace-pre-wrap">
-          {data.note || '(no note)'}
-        </p>
-      </section>
-
-      <section>
         <SectionLabel>
           attackers <span className="text-neutral-700">[{data.attackerLinks.length}]</span>
         </SectionLabel>
@@ -117,7 +126,7 @@ export function PostDetail() {
                 key={link.address.id}
                 className="flex items-baseline justify-between gap-3 py-2"
               >
-                <AddressLabel addr={link.address.id} full />
+                <AddressLabel addr={link.address.id} chainSlug={chainSlug} full />
                 <div className="flex gap-3 text-xs uppercase tracking-widest">
                   <span className={scoreTextColor(Number(link.address.attackerScore))}>
                     score {link.address.attackerScore}
@@ -149,7 +158,7 @@ export function PostDetail() {
                 key={link.address.id}
                 className="flex items-baseline justify-between gap-3 py-2"
               >
-                <AddressLabel addr={link.address.id} full />
+                <AddressLabel addr={link.address.id} chainSlug={chainSlug} full />
                 <span className="text-xs uppercase tracking-widest text-neutral-700">
                   [{link.address.isVictim ? 'flagged' : 'cleared'}]
                 </span>
@@ -162,7 +171,7 @@ export function PostDetail() {
       <section>
         <SectionLabel>timeline</SectionLabel>
         <div className="mt-3">
-          <Timeline votes={data.votes} edits={data.edits} />
+          <Timeline post={data} votes={data.votes} edits={data.edits} chainSlug={chainSlug} />
         </div>
       </section>
     </article>
@@ -209,9 +218,3 @@ function Field({
   )
 }
 
-function firstLine(s: string): string {
-  if (!s) return ''
-  const idx = s.indexOf('.')
-  const slice = idx > 0 ? s.slice(0, idx) : s
-  return slice.length > 120 ? slice.slice(0, 117) + '…' : slice
-}

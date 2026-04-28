@@ -1,0 +1,31 @@
+{
+  "name": "thatsrekt-mesh",
+  "version": "0.1.0",
+  "description": "GraphQL stitching gateway in front of the per-chain thatsRekt squid GraphQL endpoints. Exposes per-chain prefixed root fields (Anvil_*, Sepolia_*, Base_*) and a unified `posts` query that fans out + sort-merges across all chains.",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "rm -rf lib && tsc",
+    "start": "node lib/server.js",
+    "dev": "tsx watch src/server.ts"
+  },
+  "dependencies": {
+    "@graphql-tools/delegate": "10.2.20",
+    "@graphql-tools/schema": "10.0.18",
+    "@graphql-tools/stitch": "9.4.21",
+    "@graphql-tools/utils": "10.10.0",
+    "@graphql-tools/wrap": "10.0.34",
+    "graphql": "16.10.0",
+    "graphql-yoga": "5.10.4",
+    "zod": "3.24.1"
+  },
+  "devDependencies": {
+    "@types/node": "22.13.4",
+    "tsx": "4.19.2",
+    "typescript": "5.7.3"
+  }
+}

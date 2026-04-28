@@ -15,6 +15,7 @@
 -- the volume and trigger re-init, OR run the CREATE DATABASE manually.
 -- =============================================================================
 
-CREATE DATABASE thatsrekt_anvil;
+CREATE DATABASE thatsrekt_anvil_eth;
+CREATE DATABASE thatsrekt_anvil_base;
 CREATE DATABASE thatsrekt_sepolia;
 CREATE DATABASE thatsrekt_base;

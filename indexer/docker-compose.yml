@@ -1,28 +1,31 @@
 # =============================================================================
-# thatsRekt indexer — multi-squid compose stack (Phase 2 of multichain plan).
+# thatsRekt indexer — multi-squid compose stack (Phases 2 + 5).
 # =============================================================================
-# One Postgres process hosting one logical database per chain (provisioned by
-# init.sql on first boot). One processor and one GraphQL service per chain,
-# all built from the same image. Squid GraphQL ports are compose-internal
-# only — Phase 5 introduces a Mesh gateway as the single public surface.
+# One Postgres process hosting one logical database per chain (provisioned
+# by init.sql). One processor and one GraphQL service per chain, all built
+# from the same image. Squid GraphQL ports are compose-internal only — the
+# Mesh gateway is the single public surface.
 #
-# Service map:
-#   db                  postgres :5432  (host loopback only, 127.0.0.1)
-#   migrate-{chain}     one-shot migrations against thatsrekt_{chain}
-#   processor-{chain}   long-running indexer
-#   graphql-{chain}     squid GraphQL on internal port (4351 / 4352 / 4353)
+# Chains:
+#   anvil-eth  (chainId 31337)  — local Anvil fork of Sepolia
+#   anvil-base     (chainId 31338)  — local Anvil fork of Base
+#   sepolia        (chainId 11155111) — real Ethereum Sepolia
+#   base           (chainId 8453)   — real Base mainnet
 #
-# Verifying just one chain (e.g. Base regression):
-#   docker compose up postgres migrate-base processor-base graphql-base
+# Service map per chain:
+#   migrate-{slug}     one-shot migrations against thatsrekt_{slug}
+#   processor-{slug}   long-running indexer
+#   graphql-{slug}     squid GraphQL on internal port (4351-4354)
 #
-# All chains:
-#   docker compose up
+# Plus shared:
+#   db                 postgres :5432  (host loopback only, 127.0.0.1)
+#   mesh               GraphQL stitching gateway :4350 (the public surface)
+#
+# The two anvil-* chains depend on services in docker-compose.anvil.yml
+# (the anvil overlay) for their RPC endpoints. Bring them up via:
+#   docker compose -f docker-compose.yml -f docker-compose.anvil.yml up -d
 # =============================================================================
 
-# Anchor: build context + db connection bits shared by every indexer-image
-# service. Per-service `environment:` blocks add CHAIN, DB_NAME, and the
-# matching per-chain RPC/contract/start-block triple. Anchor merges only the
-# top-level keys that aren't redefined per service.
 x-indexer: &indexer
   build:
     context: .
@@ -32,17 +35,13 @@ services:
   db:
     image: postgres:16-alpine
     environment:
-      # Default db `postgres` is created by the entrypoint; the per-chain
-      # databases are created by init.sql below.
       POSTGRES_DB: postgres
       POSTGRES_USER: ${DB_USER:-postgres}
       POSTGRES_PASSWORD: ${DB_PASS:-postgres}
     ports:
-      # Bind to loopback only — Postgres has no business on the LAN.
       - '127.0.0.1:${DB_PORT:-5432}:5432'
     volumes:
       - pgdata:/var/lib/postgresql/data
-      # Runs once on first boot (data dir empty). Creates the per-chain dbs.
       - ./init.sql:/docker-entrypoint-initdb.d/01-create-databases.sql:ro
     healthcheck:
       test: ['CMD-SHELL', 'pg_isready -U ${DB_USER:-postgres}']
@@ -51,15 +50,15 @@ services:
       retries: 10
 
   # ===========================================================================
-  # Anvil chain
+  # anvil-eth (chainId 31337)
   # ===========================================================================
-  migrate-anvil:
+  migrate-anvil-eth:
     <<: *indexer
     command: ['npx', 'squid-typeorm-migration', 'apply']
     environment:
       DB_HOST: db
       DB_PORT: 5432
-      DB_NAME: thatsrekt_anvil
+      DB_NAME: thatsrekt_anvil_eth
       DB_USER: ${DB_USER:-postgres}
       DB_PASS: ${DB_PASS:-postgres}
     restart: 'no'
@@ -67,47 +66,105 @@ services:
       db:
         condition: service_healthy
 
-  processor-anvil:
+  processor-anvil-eth:
     <<: *indexer
     command: ['node', 'lib/main.js']
     environment:
       DB_HOST: db
       DB_PORT: 5432
-      DB_NAME: thatsrekt_anvil
+      DB_NAME: thatsrekt_anvil_eth
       DB_USER: ${DB_USER:-postgres}
       DB_PASS: ${DB_PASS:-postgres}
-      CHAIN: anvil
-      RPC_ANVIL_HTTP: ${RPC_ANVIL_HTTP:-}
-      CONTRACT_ANVIL: ${CONTRACT_ANVIL:-}
-      START_BLOCK_ANVIL: ${START_BLOCK_ANVIL:-}
+      CHAIN: anvil-eth
+      RPC_ANVIL_ETH_HTTP: ${RPC_ANVIL_ETH_HTTP:-http://anvil-eth:8545}
+      CONTRACT_ANVIL_ETH: ${CONTRACT_ANVIL_ETH:-}
+      START_BLOCK_ANVIL_ETH: ${START_BLOCK_ANVIL_ETH:-}
     restart: unless-stopped
     depends_on:
       db:
         condition: service_healthy
-      migrate-anvil:
+      migrate-anvil-eth:
         condition: service_completed_successfully
 
-  graphql-anvil:
+  graphql-anvil-eth:
     <<: *indexer
     command: ['npx', 'squid-graphql-server']
     environment:
       DB_HOST: db
       DB_PORT: 5432
-      DB_NAME: thatsrekt_anvil
+      DB_NAME: thatsrekt_anvil_eth
       DB_USER: ${DB_USER:-postgres}
       DB_PASS: ${DB_PASS:-postgres}
       GQL_PORT: 4351
+      NODE_ENV: development
     expose:
       - '4351'
     restart: unless-stopped
     depends_on:
       db:
         condition: service_healthy
-      migrate-anvil:
+      migrate-anvil-eth:
         condition: service_completed_successfully
 
   # ===========================================================================
-  # Sepolia chain
+  # anvil-base (chainId 31338)
+  # ===========================================================================
+  migrate-anvil-base:
+    <<: *indexer
+    command: ['npx', 'squid-typeorm-migration', 'apply']
+    environment:
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_NAME: thatsrekt_anvil_base
+      DB_USER: ${DB_USER:-postgres}
+      DB_PASS: ${DB_PASS:-postgres}
+    restart: 'no'
+    depends_on:
+      db:
+        condition: service_healthy
+
+  processor-anvil-base:
+    <<: *indexer
+    command: ['node', 'lib/main.js']
+    environment:
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_NAME: thatsrekt_anvil_base
+      DB_USER: ${DB_USER:-postgres}
+      DB_PASS: ${DB_PASS:-postgres}
+      CHAIN: anvil-base
+      RPC_ANVIL_BASE_HTTP: ${RPC_ANVIL_BASE_HTTP:-http://anvil-base:8545}
+      CONTRACT_ANVIL_BASE: ${CONTRACT_ANVIL_BASE:-}
+      START_BLOCK_ANVIL_BASE: ${START_BLOCK_ANVIL_BASE:-}
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate-anvil-base:
+        condition: service_completed_successfully
+
+  graphql-anvil-base:
+    <<: *indexer
+    command: ['npx', 'squid-graphql-server']
+    environment:
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_NAME: thatsrekt_anvil_base
+      DB_USER: ${DB_USER:-postgres}
+      DB_PASS: ${DB_PASS:-postgres}
+      GQL_PORT: 4354
+      NODE_ENV: development
+    expose:
+      - '4354'
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate-anvil-base:
+        condition: service_completed_successfully
+
+  # ===========================================================================
+  # sepolia (chainId 11155111)
   # ===========================================================================
   migrate-sepolia:
     <<: *indexer
@@ -153,6 +210,7 @@ services:
       DB_USER: ${DB_USER:-postgres}
       DB_PASS: ${DB_PASS:-postgres}
       GQL_PORT: 4352
+      NODE_ENV: development
     expose:
       - '4352'
     restart: unless-stopped
@@ -163,7 +221,7 @@ services:
         condition: service_completed_successfully
 
   # ===========================================================================
-  # Base chain
+  # base (chainId 8453)
   # ===========================================================================
   migrate-base:
     <<: *indexer
@@ -209,6 +267,7 @@ services:
       DB_USER: ${DB_USER:-postgres}
       DB_PASS: ${DB_PASS:-postgres}
       GQL_PORT: 4353
+      NODE_ENV: development
     expose:
       - '4353'
     restart: unless-stopped
@@ -217,6 +276,33 @@ services:
         condition: service_healthy
       migrate-base:
         condition: service_completed_successfully
+
+  # ===========================================================================
+  # Mesh gateway — single public GraphQL surface stitching all 4 squid APIs.
+  # ===========================================================================
+  mesh:
+    build:
+      context: ../mesh
+      dockerfile: Dockerfile
+    environment:
+      PORT: ${MESH_PORT:-4350}
+      MESH_CHAINS: ${MESH_CHAINS:-anvil-eth,anvil-base,sepolia,base}
+      GRAPHQL_ANVIL_ETH_URL: http://graphql-anvil-eth:4351/graphql
+      GRAPHQL_ANVIL_BASE_URL: http://graphql-anvil-base:4354/graphql
+      GRAPHQL_SEPOLIA_URL: http://graphql-sepolia:4352/graphql
+      GRAPHQL_BASE_URL: http://graphql-base:4353/graphql
+    ports:
+      - '127.0.0.1:${MESH_PORT:-4350}:${MESH_PORT:-4350}'
+    restart: unless-stopped
+    depends_on:
+      graphql-anvil-eth:
+        condition: service_started
+      graphql-anvil-base:
+        condition: service_started
+      graphql-sepolia:
+        condition: service_started
+      graphql-base:
+        condition: service_started
 
 volumes:
   pgdata:

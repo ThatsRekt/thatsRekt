@@ -24,8 +24,15 @@ export interface PostVictimLink {
   address: AddressEntity
 }
 
+export interface ChainInfo {
+  chainId: number
+  slug: string
+  name: string
+}
+
 export interface FeedPost {
   id: string
+  chain?: ChainInfo
   poster: { id: string }
   attackedAt: string
   note: string
@@ -66,6 +73,7 @@ export interface PostDetail {
   downvotes: number
   netScore: number
   removed: boolean
+  createdAtBlock: number
   createdAtTimestamp: string
   removedAtTimestamp: string | null
   attackerLinks: PostAttackerLink[]
@@ -85,49 +93,80 @@ const SORT_TO_ORDER_BY: Record<SortOption, string> = {
   oldest: 'createdAtBlock_ASC',
 }
 
+// Cross-chain feed query against the Mesh gateway. Mesh's
+// `posts(limit, offset)` fans out to every enabled chain's squid,
+// sort-merges by createdAtTimestamp DESC, and paginates server-side.
 const FEED_QUERY = /* GraphQL */ `
-  query Feed($limit: Int!, $orderBy: [PostOrderByInput!]!) {
-    posts(orderBy: $orderBy, limit: $limit, where: { removed_eq: false }) {
-      id
-      poster {
+  query Feed($limit: Int!, $offset: Int!) {
+    posts(limit: $limit, offset: $offset) {
+      items {
         id
+        chain { chainId slug name }
+        poster
+        attackedAt
+        note
+        upvotes
+        downvotes
+        netScore
+        createdAtTimestamp
+        attackers
+        victims
       }
-      attackedAt
-      note
-      upvotes
-      downvotes
-      netScore
-      createdAtTimestamp
-      attackerLinks {
-        address {
-          id
-          attackerScore
-        }
-      }
-      victimLinks {
-        address {
-          id
-        }
-      }
+      totalCount
+      hasMore
     }
   }
 `
 
-const POST_DETAIL_QUERY = /* GraphQL */ `
+export interface FeedPage {
+  items: FeedPost[]
+  totalCount: number
+  hasMore: boolean
+  nextOffset: number | null
+}
+
+// Shape returned by the Mesh unified posts query — flatter than the squid's
+// per-chain Post entity. We adapt it to FeedPost here to keep PostCard
+// untouched.
+interface MeshUnifiedPost {
+  id: string
+  chain: ChainInfo
+  poster: string
+  attackedAt: string
+  note: string
+  upvotes: number
+  downvotes: number
+  netScore: number
+  createdAtTimestamp: string
+  attackers: string[]
+  victims: string[]
+}
+
+// Per-chain detail: Mesh exposes the full upstream squid schema under a
+// `<Prefix>_postById(id:...)` root field thanks to the prefix transforms.
+// All on-chain data — votes, edits, address scores, etc. — is consumable
+// here. We parse the chain prefix from the composite id and pick the
+// matching root field at query time.
+const SLUG_TO_PREFIX: Record<string, string> = {
+  'anvil-eth': 'AnvilEth',
+  'anvil-base': 'AnvilBase',
+  sepolia: 'Sepolia',
+  base: 'Base',
+}
+
+const buildPostDetailQuery = (prefix: string): string => /* GraphQL */ `
   query PostDetail($id: String!) {
-    postById(id: $id) {
+    ${prefix}_postById(id: $id) {
       id
-      poster {
-        id
-      }
+      poster { id }
       attackedAt
       lastUpdatedAt
       note
       upvotes
       downvotes
       netScore
-      netScore
       removed
+      createdAtBlock
       createdAtTimestamp
       removedAtTimestamp
       attackerLinks {
@@ -138,16 +177,11 @@ const POST_DETAIL_QUERY = /* GraphQL */ `
         }
       }
       victimLinks {
-        address {
-          id
-          isVictim
-        }
+        address { id isVictim }
       }
       votes(orderBy: blockNumber_ASC) {
         id
-        voter {
-          id
-        }
+        voter { id }
         oldDirection
         newDirection
         blockNumber
@@ -166,20 +200,87 @@ const POST_DETAIL_QUERY = /* GraphQL */ `
   }
 `
 
+// Composite id is `{slug}-{onchainId}`. Extract both parts.
+const splitCompositeId = (compositeId: string): { slug: string; onchainId: string } => {
+  // Iterate the longest-known slugs first so 'anvil-base' beats 'base'.
+  const slugs = Object.keys(SLUG_TO_PREFIX).sort((a, b) => b.length - a.length)
+  for (const slug of slugs) {
+    if (compositeId.startsWith(`${slug}-`)) {
+      return { slug, onchainId: compositeId.slice(slug.length + 1) }
+    }
+  }
+  // Fallback for legacy / direct-squid ids — assume base.
+  return { slug: 'base', onchainId: compositeId }
+}
+
 export async function fetchFeed(
   limit = 50,
   sort: SortOption = 'newest',
 ): Promise<FeedPost[]> {
-  if (USE_MOCK) return mockFetchFeed(limit, sort)
-  const data = await gqlClient.request<{ posts: FeedPost[] }>(FEED_QUERY, {
-    limit,
-    orderBy: [SORT_TO_ORDER_BY[sort]],
-  })
-  return data.posts
+  // Legacy single-shot call — kept for callers that don't need pagination.
+  const page = await fetchFeedPage(0, limit)
+  return sort === 'oldest' ? page.items.slice().reverse() : page.items
 }
+
+export async function fetchFeedPage(
+  offset: number,
+  limit: number,
+): Promise<FeedPage> {
+  if (USE_MOCK) {
+    const all = await mockFetchFeed(1000, 'newest')
+    const items = all.slice(offset, offset + limit)
+    return {
+      items,
+      totalCount: all.length,
+      hasMore: offset + items.length < all.length,
+      nextOffset: offset + items.length < all.length ? offset + items.length : null,
+    }
+  }
+  const data = await gqlClient.request<{
+    posts: { items: MeshUnifiedPost[]; totalCount: number; hasMore: boolean }
+  }>(FEED_QUERY, { limit, offset })
+  const items = data.posts.items.map(adaptMeshPostToFeedPost)
+  return {
+    items,
+    totalCount: data.posts.totalCount,
+    hasMore: data.posts.hasMore,
+    nextOffset: data.posts.hasMore ? offset + items.length : null,
+  }
+}
+
+const adaptMeshPostToFeedPost = (p: MeshUnifiedPost): FeedPost => ({
+  id: p.id,
+  chain: p.chain,
+  poster: { id: p.poster },
+  attackedAt: p.attackedAt,
+  note: p.note,
+  upvotes: p.upvotes,
+  downvotes: p.downvotes,
+  netScore: p.netScore,
+  createdAtTimestamp: p.createdAtTimestamp,
+  attackerLinks: p.attackers.map((a) => ({ address: { id: a, attackerScore: '0' } })),
+  victimLinks: p.victims.map((a) => ({ address: { id: a, attackerScore: '0' } })),
+})
+
+// Note: SORT_TO_ORDER_BY is no longer used by the Mesh path but kept for
+// the legacy direct-squid mode and as documentation of the underlying
+// Subsquid order keys.
+void SORT_TO_ORDER_BY
 
 export async function fetchPostDetail(id: string): Promise<PostDetail | null> {
   if (USE_MOCK) return mockFetchPostDetail(id)
-  const data = await gqlClient.request<{ postById: PostDetail | null }>(POST_DETAIL_QUERY, { id })
-  return data.postById
+  const { slug, onchainId } = splitCompositeId(id)
+  const prefix = SLUG_TO_PREFIX[slug]
+  if (!prefix) {
+    throw new Error(`Unknown chain slug "${slug}" in post id "${id}"`)
+  }
+  const query = buildPostDetailQuery(prefix)
+  const rootField = `${prefix}_postById`
+  const data = await gqlClient.request<Record<string, PostDetail | null>>(query, {
+    id: onchainId,
+  })
+  const post = data[rootField]
+  if (!post) return null
+  // Re-stamp the composite id so detail-page links and titles stay consistent.
+  return { ...post, id }
 }

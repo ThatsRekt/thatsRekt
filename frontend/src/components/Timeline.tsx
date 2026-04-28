@@ -1,56 +1,127 @@
-import type { EditEntity, VoteEntity } from '../lib/queries'
+import type { EditEntity, PostDetail, VoteEntity } from '../lib/queries'
 import { AddressLabel } from './AddressLabel'
 import { formatTimestamp, relativeTime } from '../lib/format'
 
+// Synthesized "inception" event derived from the post's own creation
+// data (no separate Inception entity exists on-chain — the PostCreated
+// event IS the inception). Always rendered as the first row so a
+// brand-new post still has a visible timeline.
+interface InceptionData {
+  poster: { id: string }
+  /** When the post hit chain. */
+  timestamp: string
+  blockNumber: number
+  attackerCount: number
+  victimCount: number
+}
+
 type TimelineItem =
+  | { kind: 'inception'; data: InceptionData }
   | { kind: 'vote'; data: VoteEntity }
   | { kind: 'edit'; data: EditEntity }
 
-export function Timeline({
-  votes,
-  edits,
-}: {
+interface TimelineProps {
+  /** The post itself — used to derive the inception entry. */
+  post: Pick<
+    PostDetail,
+    | 'poster'
+    | 'createdAtTimestamp'
+    | 'attackerLinks'
+    | 'victimLinks'
+  > & {
+    /** Block number of post creation. Not on PostDetail directly today —
+     *  if absent we still render an inception entry without a block. */
+    createdAtBlock?: number
+  }
   votes: VoteEntity[]
   edits: EditEntity[]
-}) {
+  chainSlug?: string
+}
+
+export function Timeline({ post, votes, edits, chainSlug }: TimelineProps) {
+  const inception: TimelineItem = {
+    kind: 'inception',
+    data: {
+      poster: post.poster,
+      timestamp: post.createdAtTimestamp,
+      blockNumber: post.createdAtBlock ?? 0,
+      attackerCount: post.attackerLinks.length,
+      victimCount: post.victimLinks.length,
+    },
+  }
+
   const items: TimelineItem[] = [
+    inception,
     ...votes.map((v): TimelineItem => ({ kind: 'vote', data: v })),
     ...edits.map((e): TimelineItem => ({ kind: 'edit', data: e })),
-  ].sort((a, b) => a.data.blockNumber - b.data.blockNumber)
-
-  if (items.length === 0) {
-    return (
-      <p className="text-xs uppercase tracking-widest text-neutral-700">
-        no activity on this post yet.
-      </p>
-    )
-  }
+  ].sort((a, b) => {
+    // Inception always comes first (lowest block in practice; but if
+    // blockNumber is unknown we still want it on top).
+    if (a.kind === 'inception') return -1
+    if (b.kind === 'inception') return 1
+    return a.data.blockNumber - b.data.blockNumber
+  })
 
   return (
     <ol className="space-y-4">
-      {items.map((item, i) => (
-        <li
-          key={`${item.kind}-${item.data.id}`}
-          className="border-l-2 border-black pl-4"
-        >
-          <div className="flex items-baseline gap-2 text-[10px] uppercase tracking-widest text-neutral-700">
-            <span className="font-black text-black">{String(i + 1).padStart(2, '0')}</span>
-            <span title={formatTimestamp(item.data.timestamp)}>
-              block {item.data.blockNumber} · {relativeTime(item.data.timestamp)}
-            </span>
-          </div>
-          {item.kind === 'vote' ? <VoteRow vote={item.data} /> : <EditRow edit={item.data} />}
-        </li>
-      ))}
+      {items.map((item, i) => {
+        const ts =
+          item.kind === 'inception' ? item.data.timestamp : item.data.timestamp
+        const block = item.data.blockNumber
+        return (
+          <li
+            key={item.kind === 'inception' ? 'inception' : `${item.kind}-${item.data.id}`}
+            className="border-l-2 border-black pl-4"
+          >
+            <div className="flex flex-wrap items-baseline gap-2 text-[10px] uppercase tracking-widest text-neutral-700">
+              <span className="font-black text-black">
+                {String(i + 1).padStart(2, '0')}
+              </span>
+              <span title={formatTimestamp(ts)}>
+                {block > 0 ? `block ${block} · ` : ''}
+                {relativeTime(ts)}
+              </span>
+            </div>
+            {item.kind === 'inception' ? (
+              <InceptionRow data={item.data} chainSlug={chainSlug} />
+            ) : item.kind === 'vote' ? (
+              <VoteRow vote={item.data} chainSlug={chainSlug} />
+            ) : (
+              <EditRow edit={item.data} />
+            )}
+          </li>
+        )
+      })}
     </ol>
   )
 }
 
-function VoteRow({ vote }: { vote: VoteEntity }) {
+function InceptionRow({
+  data,
+  chainSlug,
+}: {
+  data: InceptionData
+  chainSlug?: string
+}) {
+  return (
+    <p className="mt-1 text-sm">
+      <span className="font-black uppercase tracking-tight text-red-600">★ posted</span>{' '}
+      <span className="text-neutral-700">by</span>{' '}
+      <AddressLabel addr={data.poster.id} chainSlug={chainSlug} />{' '}
+      <span className="text-neutral-700">·</span>{' '}
+      <span className="text-xs uppercase tracking-widest text-neutral-700">
+        {data.attackerCount} attacker{data.attackerCount === 1 ? '' : 's'},{' '}
+        {data.victimCount} victim{data.victimCount === 1 ? '' : 's'}
+      </span>
+    </p>
+  )
+}
+
+function VoteRow({ vote, chainSlug }: { vote: VoteEntity; chainSlug?: string }) {
   const action = describeVote(vote.oldDirection, vote.newDirection)
   return (
     <p className="mt-1 text-sm">
-      <AddressLabel addr={vote.voter.id} />{' '}
+      <AddressLabel addr={vote.voter.id} chainSlug={chainSlug} />{' '}
       <span className={`font-black uppercase tracking-tight ${voteColor(vote.newDirection)}`}>
         {action.icon} {action.label}
       </span>
