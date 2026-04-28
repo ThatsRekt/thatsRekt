@@ -13,3 +13,7 @@ node_modules/
 # Env
 .env
 .env.local
+
+# Detector — artifacts that shouldn't be committed
+detector/dist/
+detector/workflow-ids.local.json

@@ -1,0 +1,39 @@
+{
+  "alertEmails": [
+    "jerry@karpatkey.com",
+    "bautistabaiocchilora@gmail.com",
+    "team@dammcap.finance",
+    "one@dammcap.finance",
+    "bouda@dammcap.finance"
+  ],
+  "monitoredAccounts": [
+    { "username": "BlockSecTeam",   "includeRetweets": true },
+    { "username": "officer_secret", "includeRetweets": false },
+    { "username": "exvulsec",       "includeRetweets": false },
+    { "username": "CertiKAlert",    "includeRetweets": false },
+    { "username": "zachxbt",        "includeRetweets": true },
+    { "username": "peckshield",     "includeRetweets": false },
+    { "username": "lookonchain",    "includeRetweets": true },
+    { "username": "CyversAlerts",   "includeRetweets": true }
+  ],
+  "protocols": [
+    { "name": "Aave",            "twitterHandle": "aave",            "keywords": ["aave", "AAVE", "$AAVE"] },
+    { "name": "Lido",            "twitterHandle": "LidoFinance",     "keywords": ["lido", "stETH", "wstETH", "$stETH", "$wstETH"] },
+    { "name": "Coinbase",        "twitterHandle": "coinbase",        "keywords": ["coinbase", "cbETH", "cbBTC", "$cbETH", "$cbBTC"] },
+    { "name": "Ether.fi",        "twitterHandle": "ether_fi",        "keywords": ["etherfi", "eETH", "weETH", "$eETH", "$weETH"] },
+    { "name": "Reserve Protocol","twitterHandle": "reserveprotocol", "keywords": ["ETH+", "$ETH+", "reserve protocol", "reserveprotocol"] },
+    { "name": "Lombard",         "twitterHandle": "Lombard_Finance", "keywords": ["lombard", "LBTC", "$LBTC"] },
+    { "name": "Threshold",       "twitterHandle": "TheTNetwork",     "keywords": ["threshold", "tBTC", "$tBTC"] },
+    { "name": "Maple",           "twitterHandle": "maplefinance",    "keywords": ["maple", "syrupUSDC", "$syrupUSDC", "syrupUSDT", "$syrupUSDT"] },
+    { "name": "Ethena",          "twitterHandle": "ethena_labs",     "keywords": ["ethena", "sUSDe", "$sUSDe", "USDe", "$USDe"] },
+    { "name": "Royco",           "twitterHandle": "roycoprotocol",   "keywords": ["royco", "srRoyUSDC", "$srRoyUSDC"] },
+    { "name": "Paxos",           "twitterHandle": "paxosglobal",     "keywords": ["paxos", "USDG", "$USDG"] },
+    { "name": "Makina",          "twitterHandle": "makinafi",        "keywords": ["makina", "$DETH", "DETH", "$DUSD", "DUSD", "Dialectic"] },
+    { "name": "Treehouse",       "twitterHandle": "TreehouseFi",     "keywords": ["treehouse", "$tETH", "tETH"] },
+    { "name": "Neutrl",          "twitterHandle": "Neutrl",          "keywords": ["neutrl", "$sNUSD", "sNUSD", "NUSD", "$NUSD"] },
+    { "name": "Avant",           "twitterHandle": "avantprotocol",   "keywords": ["avant", "$savUSD", "savUSD", "savETH", "$savETH"] },
+    { "name": "InfiniFi",        "twitterHandle": "infiniFi",        "keywords": ["infinifi", "$siUSD", "siUSD", "iUSD", "$iUSD"] },
+    { "name": "Cap",             "twitterHandle": "CapApp",          "keywords": ["capapp", "$stcUSD", "stcUSD", "cUSD", "$cUSD"] },
+    { "name": "Origin Protocol", "twitterHandle": "OriginProtocol",  "keywords": ["originprotocol", "OETH", "$OETH", "ARM vault"] }
+  ]
+}

@@ -1,0 +1,25 @@
+{
+  "name": "thatsrekt-detector",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "AI detection workflow: monitors security X accounts, classifies hack alerts per protocol, fans out to email + thatsRekt relay over HTTP.",
+  "scripts": {
+    "mock": "tsx src/mock.ts",
+    "deploy": "tsx src/deploy.ts",
+    "check": "tsx src/check.ts",
+    "redeploy": "tsx src/redeploy.ts",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf node_modules dist workflow-ids.local.json"
+  },
+  "dependencies": {
+    "dotenv": "16.4.5",
+    "otomato-sdk": "2.0.557",
+    "zod": "3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "20.14.0",
+    "tsx": "4.15.0",
+    "typescript": "5.4.5"
+  }
+}
