@@ -1,0 +1,39 @@
+# =============================================================================
+# Compose overlay — exposes the public surface (Mesh + Anvil RPCs) to the LAN.
+# =============================================================================
+# Default compose binds Mesh to 127.0.0.1 (host loopback only). This overlay
+# rebinds it to 0.0.0.0 so other devices on the same Wi-Fi can reach it.
+# Postgres and squid GraphQLs intentionally STAY on 127.0.0.1 (or
+# compose-internal): they have no business on the LAN.
+#
+# Usage (combined with the main + anvil overlays):
+#   docker compose \
+#       -f docker-compose.yml \
+#       -f docker-compose.anvil.yml \
+#       -f docker-compose.lan.yml \
+#       up -d
+#
+# Discover the host's LAN IP with `make lan-info` (from ops/) — teammates
+# visit `http://<host-lan-ip>:5173` for the frontend (run separately via
+# `pnpm dev:lan`) and the frontend computes the Mesh endpoint as
+# `http://<host-lan-ip>:4350` automatically.
+# =============================================================================
+
+# `!override` REPLACES the entire `ports:` list from the base file rather
+# than appending — without it, both bindings would coexist and Docker
+# would refuse to bind the same host port twice.
+services:
+  mesh:
+    ports: !override
+      - '0.0.0.0:${MESH_PORT:-4350}:${MESH_PORT:-4350}'
+
+  # The anvil RPCs are useful from the LAN for `cast` calls / wallet
+  # connections / direct contract poking. Frontend never talks to them
+  # directly (it goes through Mesh).
+  anvil-eth:
+    ports: !override
+      - '0.0.0.0:8545:8545'
+
+  anvil-base:
+    ports: !override
+      - '0.0.0.0:8546:8545'

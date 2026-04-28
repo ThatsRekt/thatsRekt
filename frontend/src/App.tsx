@@ -1,6 +1,7 @@
 import { Routes, Route, Link } from 'react-router-dom'
 import { Feed } from './pages/Feed'
 import { PostDetail } from './pages/PostDetail'
+import { Donate } from './pages/Donate'
 import { IS_MOCK_MODE } from './lib/queries'
 
 export function App() {
@@ -12,6 +13,7 @@ export function App() {
         <Routes>
           <Route path="/" element={<Feed />} />
           <Route path="/post/:id" element={<PostDetail />} />
+          <Route path="/donate" element={<Donate />} />
           <Route path="*" element={<NotFound />} />
         </Routes>
       </main>
@@ -29,6 +31,9 @@ function Header() {
         </Link>
         <nav className="flex gap-4 text-xs uppercase tracking-widest">
           <Link to="/" className="rekt-link">feed</Link>
+          <Link to="/donate" className="rekt-link text-red-600 font-black">
+            donate
+          </Link>
           <a
             href="https://github.com/JeronimoHoulin/thatsRekt"
             target="_blank"
