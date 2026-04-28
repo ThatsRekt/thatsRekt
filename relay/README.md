@@ -1,22 +1,54 @@
 # thatsRekt relay server (sub-phase A)
 
-A Go websocket service that receives hack alerts from an external AI
-detection provider and submits them on-chain to the thatsRekt registry as
-a whitelisted poster. Sub-phase A scope: single chain, env-key signer,
-`post.create` only. See `tasks/relay-server-design.md` (in the repo root)
-for the full design and the boundary against sub-phases B/C.
+A Go service that receives hack alerts from DAMM's AI detection pipeline
+and submits them on-chain to the thatsRekt registry as a whitelisted
+poster. Sub-phase A scope: single chain, env-key signer, `post.create`
+only. See `tasks/relay-server-design.md` (in the repo root) for the full
+design and the boundary against sub-phases B/C.
+
+> **Single-tenant.** The relay is DAMM-internal — it holds a private key
+> and signs txs autonomously. It is NOT a public ingress: bearer-token
+> auth is internal hardening, not authentication for arbitrary callers.
+> Other whitelisted posters submit through their own wallets/tooling
+> against the contract directly. The relay represents DAMM's automated
+> AI-detected alert pipeline specifically; the contract has many possible
+> submitters and the relay is just one of them.
+
+Three transports are exposed on the same listener and share state (auth,
+dedup, submitter):
+
+- **`/ws`** — gorilla/websocket. Long-lived; `ping/pong` keepalive.
+- **`/post`** — plain HTTP POST with the **raw envelope** shape. For
+  direct integrators, smoke tests, and any caller that can build the
+  full envelope itself.
+- **`/detect`** — plain HTTP POST with an **Otomato-shaped adapter**
+  shape: body is the AI's JSON output verbatim, headers carry the
+  metadata. Designed for the detector workflow whose `HTTP_REQUEST`
+  action does dumb-substitute templating (no JSON escaping) and
+  cannot safely build a nested envelope.
+
+HTTP status mapping (both `/post` and `/detect`):
+
+   - `ack` → 200 OK
+   - validation `nack` → 400 Bad Request
+   - submission `nack` → 502 Bad Gateway
+   - `ping` over HTTP → 400 Bad Request (a request/response transport
+     can't host a keep-alive primitive)
 
 ## What this build implements
 
-- Websocket endpoint at `:8080/ws` (configurable).
-- Bearer-token auth on the upgrade handshake; bad/missing token returns
-  HTTP 401 BEFORE any websocket frames are exchanged.
+- Websocket endpoint at `:8080/ws` (configurable) and HTTP endpoint at
+  `:8080/post` (configurable).
+- Bearer-token auth on the websocket upgrade and the HTTP POST; bad/
+  missing token returns HTTP 401 BEFORE any websocket frames are exchanged
+  or any request body is read.
 - Wire envelope decode with strict structural validation (unknown fields
   rejected on payloads).
 - `post.create` submission against one configured chain, env-key signer.
 - Receipt-wait + decode of `PostCreated` to populate `post_id` in the ack.
-- 15-minute in-memory dedup ring; replays the cached response instead of
-  re-submitting.
+- 15-minute in-memory dedup ring **shared across transports**; replays
+  the cached response instead of re-submitting (a `post.create` over WS
+  followed by the same id over HTTP only submits once).
 - Structured JSON logs via `log/slog`.
 
 ## What this build does NOT implement (deferred)
@@ -46,6 +78,8 @@ Unit coverage:
 - response encoding (omitempty handling, success + error shapes)
 - dedup ring (TTL, FIFO eviction, concurrent get/put, fake-clock expiry)
 - ws server (auth, ack happy path, dedup replay, malformed nack, ping/pong)
+- http transport (method gate, auth, ack/nack/502, body-too-large,
+  ping rejection, cross-transport dedup with WS)
 
 ## Run
 
@@ -61,6 +95,8 @@ Configuration is environment-only for sub-phase A.
 | `RELAY_CHAIN_NAME` | no | Default `base`. The string clients put in `chains:[...]` to address this relay. |
 | `RELAY_LISTEN_ADDR` | no | Default `:8080`. |
 | `RELAY_WS_PATH` | no | Default `/ws`. |
+| `RELAY_HTTP_PATH` | no | Default `/post`. Raw-envelope shape. |
+| `RELAY_DETECT_PATH` | no | Default `/detect`. Otomato adapter shape. |
 | `RELAY_DEDUP_WINDOW` | no | Default `15m`. Go duration syntax. |
 | `RELAY_RECEIPT_TIMEOUT` | no | Default `60s`. |
 | `RELAY_LOG_LEVEL` | no | `debug` / `info` / `warn` / `error`. Default `info`. |
@@ -125,7 +161,71 @@ Failure response (validation failure or chain submission failure):
 ```
 
 The relay also responds to `{"type":"ping","id":"..."}` with
-`{"type":"pong","msg_id":"..."}` for keepalive.
+`{"type":"pong","msg_id":"..."}` for keepalive on the websocket
+transport. Ping over `/post` is refused with a 400 nack.
+
+### HTTP example — `/post` (raw envelope)
+
+```sh
+curl -sS -X POST http://127.0.0.1:8080/post \
+  -H "Authorization: Bearer dev-secret" \
+  -H "Content-Type: application/json" \
+  --data @- <<'JSON'
+{
+  "type": "post.create",
+  "id": "msg-curl-1",
+  "timestamp": "2026-04-28T00:00:00Z",
+  "payload": {
+    "chains": ["anvil-eth"],
+    "title": "smoke test",
+    "attackers": [],
+    "victims": [],
+    "note": "from curl",
+    "attacked_at": 1777340000
+  }
+}
+JSON
+```
+
+### HTTP example — `/detect` (Otomato adapter)
+
+The body is the **raw tweet content** — Otomato's `HTTP_REQUEST` action
+does dumb-substitute templating with no JSON escaping, so any structured
+body would break on tweets containing `"`. All other context comes from
+headers, and the relay synthesizes the on-chain title server-side.
+
+```sh
+curl -sS -X POST http://127.0.0.1:8080/detect \
+  -H "Authorization: Bearer dev-secret" \
+  -H "Content-Type: text/plain" \
+  -H "X-Idempotency-Key: 1789012345678901234" \
+  -H "X-Tweet-URL: https://x.com/SomeSec/status/1789012345678901234" \
+  -H "X-Tweet-Account: SomeSec" \
+  -H "X-Tweet-Timestamp: 2026-04-28T00:00:00Z" \
+  -H "X-Chain: anvil-eth" \
+  -H "X-Protocol: Aave" \
+  --data 'Aave V3 pool drained via flashloan exploit. Funds at risk.'
+```
+
+Required headers (all five): `X-Idempotency-Key` (dedup id),
+`X-Tweet-URL`, `X-Tweet-Timestamp` (RFC 3339 or unix seconds),
+`X-Chain`, `X-Protocol`. `X-Tweet-Account` is optional.
+
+Relay-side synthesis:
+
+- **Title** = `"<X-Protocol> — <truncated body>"`, capped at 200 bytes
+  with whitespace collapsed and UTF-8 boundaries respected.
+- **Note** = full tweet body + tweet URL on a new line.
+- **Attackers / Victims** = empty for v1 (regex-extraction of
+  `0x[a-fA-F0-9]{40}` from the body is a future enhancement).
+
+Relay enforces:
+
+- All required headers present
+- Body is non-empty after trimming whitespace
+- `chain` is one of the relay's configured chains
+- `attacked_at` (parsed from `X-Tweet-Timestamp`) is positive and not
+  more than 5 minutes in the future
 
 ## Validation policy (pure relay)
 
@@ -149,12 +249,17 @@ RPC error verbatim.
 relay/
 ├── cmd/relay/main.go              # entrypoint, env config, http+ws wiring
 ├── internal/
-│   ├── ws/
-│   │   ├── server.go              # gorilla/websocket handler + dispatch
+│   ├── ws/                       # both transports live here — they share
+│   │                              #   auth, dedup, and the Submitter.
+│   │   ├── server.go              # gorilla/websocket handler + ProcessEnvelope (shared core)
+│   │   ├── http.go                # /post — raw-envelope HTTP handler
+│   │   ├── detect.go              # /detect — Otomato adapter handler (headers + AI body)
 │   │   ├── codec.go               # envelope/payload encode/decode + validation
 │   │   ├── auth.go                # constant-time bearer-token compare
 │   │   ├── codec_test.go
-│   │   └── server_test.go         # auth + ack + dedup + nack + ping/pong
+│   │   ├── server_test.go         # ws auth + ack + dedup + nack + ping/pong
+│   │   ├── http_test.go           # /post auth + ack/nack/502 + body cap + cross-transport dedup
+│   │   └── detect_test.go         # /detect headers + AI schema + cross-transport dedup
 │   ├── dispatcher/
 │   │   ├── dispatcher.go          # SubmitPostCreate against configured chains
 │   │   └── receipt.go             # WaitMined + PostCreated log decode

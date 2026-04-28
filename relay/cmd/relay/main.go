@@ -20,6 +20,10 @@
 //
 //	RELAY_LISTEN_ADDR     Default ":8080".
 //	RELAY_WS_PATH         Default "/ws".
+//	RELAY_HTTP_PATH       Default "/post". Raw-envelope HTTP transport
+//	                      for direct integrators, smoke tests.
+//	RELAY_DETECT_PATH     Default "/detect". Otomato-shaped adapter:
+//	                      AI-JSON body + metadata in headers.
 //	RELAY_CHAIN_NAME      Default "base". Used in ack results and chain lookup.
 //	RELAY_DEDUP_WINDOW    Default "15m". Go duration syntax.
 //	RELAY_RECEIPT_TIMEOUT Default "60s". Go duration syntax.
@@ -63,7 +67,8 @@ func run() error {
 
 	logger := newLogger(cfg.LogLevel)
 	logger.Info("starting relay (sub-phase A)",
-		"listen", cfg.ListenAddr, "ws_path", cfg.WSPath,
+		"listen", cfg.ListenAddr,
+		"ws_path", cfg.WSPath, "http_path", cfg.HTTPPath, "detect_path", cfg.DetectPath,
 		"chain_name", cfg.ChainName, "chain_id", cfg.ChainID,
 		"contract", cfg.ContractAddress.Hex(),
 	)
@@ -114,6 +119,11 @@ func run() error {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc(cfg.WSPath, srv.HandleWS)
+	// Raw-envelope HTTP transport (direct integrators, curl smoke tests).
+	mux.HandleFunc(cfg.HTTPPath, srv.HandleHTTP)
+	// Otomato-shaped adapter: AI-JSON body + metadata in headers. Routes
+	// through the same Submitter + dedup as /post and /ws.
+	mux.HandleFunc(cfg.DetectPath, srv.HandleDetect)
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))
@@ -153,6 +163,8 @@ func run() error {
 type config struct {
 	ListenAddr      string
 	WSPath          string
+	HTTPPath        string
+	DetectPath      string
 	ProviderToken   string
 	PrivateKey      string
 	RPCURL          string
@@ -197,7 +209,23 @@ func loadConfig() (config, error) {
 	// Optional.
 	cfg.ListenAddr = envOr("RELAY_LISTEN_ADDR", ":8080")
 	cfg.WSPath = envOr("RELAY_WS_PATH", "/ws")
+	cfg.HTTPPath = envOr("RELAY_HTTP_PATH", "/post")
+	cfg.DetectPath = envOr("RELAY_DETECT_PATH", "/detect")
 	cfg.ChainName = envOr("RELAY_CHAIN_NAME", "base")
+	// Path collision check — three distinct mux entries on the same
+	// listener; if any two match, the second registration panics.
+	paths := map[string]string{
+		"RELAY_WS_PATH":     cfg.WSPath,
+		"RELAY_HTTP_PATH":   cfg.HTTPPath,
+		"RELAY_DETECT_PATH": cfg.DetectPath,
+	}
+	seen := make(map[string]string, len(paths))
+	for k, v := range paths {
+		if other, dup := seen[v]; dup {
+			return cfg, fmt.Errorf("%s and %s collide on path %q", other, k, v)
+		}
+		seen[v] = k
+	}
 
 	cfg.DedupWindow, err = parseDuration("RELAY_DEDUP_WINDOW", 15*time.Minute)
 	if err != nil {

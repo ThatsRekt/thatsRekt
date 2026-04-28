@@ -141,45 +141,54 @@ func (s *Server) HandleWS(w http.ResponseWriter, r *http.Request) {
 			}
 			return
 		}
-		s.handleMessage(r.Context(), raw, writeJSON)
+		resp := s.ProcessEnvelope(r.Context(), raw)
+		_ = writeJSON(resp)
 	}
 }
 
-// handleMessage decodes one wire message and dispatches it. Errors at this
-// layer become wire-level nack responses; we never close the conn for a
-// per-message failure (the provider may want to keep sending).
-func (s *Server) handleMessage(ctx context.Context, raw []byte, write func(any) error) {
+// ProcessEnvelope decodes one wire message and dispatches it, returning the
+// Response the caller should send back over whatever transport. This is the
+// shared core used by both the websocket loop (HandleWS) and the HTTP
+// transport (HandleHTTP) — keeping it transport-agnostic means dedup, auth,
+// validation, and on-chain submission all live in exactly one place.
+//
+// Errors at this layer become wire-level nack Responses; the caller should
+// translate those to HTTP status codes (HTTP) or send them over the open
+// conn (WS). The function never panics and never returns nil: every input
+// produces a Response.
+//
+// Caveat: the Response.Type for HTTP transport will still be "ack" / "nack"
+// / "pong" — the HTTP transport translates those into HTTP semantics. The
+// TypePong response makes no sense over HTTP, but we still produce it and
+// let the HTTP transport reject it (a request/response transport that
+// supports ping is a contradiction we explicitly refuse to encode here).
+func (s *Server) ProcessEnvelope(ctx context.Context, raw []byte) Response {
 	env, err := DecodeEnvelope(raw)
 	if err != nil {
 		s.logger.Warn("envelope decode failed", "err", err)
-		// We can't echo a msg_id we don't have. Send a top-level error.
-		_ = write(Response{Type: TypeNack, Error: err.Error()})
-		return
+		// We can't echo a msg_id we don't have.
+		return Response{Type: TypeNack, Error: err.Error()}
 	}
 
 	switch env.Type {
 	case TypePing:
-		_ = write(Response{Type: TypePong, MsgID: env.ID})
-		return
+		return Response{Type: TypePong, MsgID: env.ID}
 
 	case TypePostCreate:
 		// Dedup check first: if we've ack'd this id within the window,
 		// replay the cached response and DO NOT touch the chain.
 		if cached, ok := s.dedup.Get(env.ID); ok {
 			s.logger.Info("dedup hit", "msg_id", env.ID)
-			_ = write(cached)
-			return
+			return cached
 		}
 
 		payload, err := DecodePostCreatePayload(env.Payload)
 		if err != nil {
 			s.logger.Warn("payload validation failed", "msg_id", env.ID, "err", err)
-			resp := Response{Type: TypeNack, MsgID: env.ID, Error: err.Error()}
 			// Validation failures are NOT cached — the provider may
 			// reissue with the same id and a corrected payload, and
 			// we want to give them a fresh chance.
-			_ = write(resp)
-			return
+			return Response{Type: TypeNack, MsgID: env.ID, Error: err.Error()}
 		}
 
 		s.logger.Info("post.create received",
@@ -206,12 +215,12 @@ func (s *Server) handleMessage(ctx context.Context, raw []byte, write func(any) 
 		// exception — those are pre-RPC and worth retrying.
 		s.dedup.Put(env.ID, resp)
 
-		_ = write(resp)
+		return resp
 
 	default:
 		// Unknown type — codec already rejects this, but be paranoid.
 		s.logger.Warn("unknown message type", "type", env.Type, "msg_id", env.ID)
-		_ = write(Response{Type: TypeNack, MsgID: env.ID, Error: "unknown message type"})
+		return Response{Type: TypeNack, MsgID: env.ID, Error: "unknown message type"}
 	}
 }
 
