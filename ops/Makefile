@@ -10,6 +10,7 @@
 #   make lan-info             # print the host's LAN IP + the URLs to share
 #   make anvil-bootstrap      # deploy thatsRekt to both anvils (idempotent)
 #   make lan-down             # stop everything (compose + frontend)
+#   make dev-reset            # nuked something? full re-bootstrap in one shot
 #   make help                 # this list
 # =============================================================================
 
@@ -107,6 +108,10 @@ anvil-bootstrap: ## Deploy thatsRekt to both anvils + emit .deployed.<chain>.jso
 .PHONY: anvil-reset
 anvil-reset: ## Wipe + re-deploy both anvils
 	$(CONTRACTS)/script/anvil/reset.sh
+
+.PHONY: dev-reset
+dev-reset: ## Full local stack re-bootstrap: anvils → contracts → indexer/.env → drop+remigrate DBs → restart processors+mesh (and relay if running). The "I just nuked something, get me back" button.
+	@$(SCRIPTS)/dev-reset.sh
 
 .PHONY: clean
 clean: ## Tear down the stack and wipe pgdata
