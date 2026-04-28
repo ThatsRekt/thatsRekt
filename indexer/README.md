@@ -17,48 +17,69 @@ TypeScript indexer of `thatsRekt` contract events. Persists state into Postgres 
 
 ## Quickstart — full Docker stack
 
-The whole indexer (postgres + migrations + processor + GraphQL API) runs in Docker. Single command from a clean checkout:
+The indexer is sovereign-per-chain: one Postgres process holds one logical
+database per chain (`thatsrekt_anvil`, `thatsrekt_sepolia`, `thatsrekt_base`),
+and each chain gets its own processor + GraphQL service from the same image.
+Squid GraphQL ports are **compose-internal only** — Phase 5 of the multichain
+plan introduces a Mesh gateway as the single public surface.
 
 ```bash
 cp .env.example .env
-$EDITOR .env  # set CHAIN + matching RPC_<CHAIN>_HTTP / CONTRACT_<CHAIN> / START_BLOCK_<CHAIN>
+$EDITOR .env  # fill in RPC + contract + start-block for each chain you want indexed
 docker compose up -d --build
 ```
 
 What that brings up:
 
-| Service | Image | Role |
-|---------|-------|------|
-| `db` | `postgres:16-alpine` | Postgres on port 5432 |
-| `migrate` | `indexer-migrate` (built) | One-shot — applies committed migrations against the fresh db, then exits |
-| `processor` | `indexer-processor` (built) | Long-running — indexes blocks |
-| `api` | `indexer-api` (built) | GraphQL server on port 4350 |
-
-GraphQL endpoint: <http://localhost:4350/graphql>.
-
-Image size: ~204 MB per service (alpine + Node 20 + production node_modules + compiled JS).
+| Service | Role | Listens on |
+|---|---|---|
+| `db` | Postgres 16. Provisions `thatsrekt_anvil` / `thatsrekt_sepolia` / `thatsrekt_base` from `init.sql` on first boot. | `127.0.0.1:5432` (host loopback only) |
+| `migrate-{chain}` | One-shot — applies migrations to `thatsrekt_{chain}`, then exits. | n/a |
+| `processor-{chain}` | Long-running — indexes `{chain}` into `thatsrekt_{chain}`. | n/a |
+| `graphql-{chain}` | Squid GraphQL on internal port — **not** exposed to the host. | compose net only: `4351` (anvil), `4352` (sepolia), `4353` (base) |
 
 ```bash
-docker compose ps                # check status
-docker compose logs -f processor # tail processor logs
-docker compose logs -f api       # tail api logs
-docker compose down              # stop, keep volume
-docker compose down -v           # stop and wipe data
+docker compose ps                          # status of all services
+docker compose logs -f processor-base      # tail one chain's processor
+docker compose down                        # stop, keep data volume
+docker compose down -v                     # stop + wipe pgdata (forces init.sql to re-run)
+```
+
+### Running a single chain (regression / dev)
+
+```bash
+docker compose up -d db migrate-base processor-base graphql-base
+```
+
+Same pattern for `anvil` or `sepolia`. The other chains' services stay
+stopped; their databases exist but are unused until those services run.
+
+### Talking to a squid GraphQL endpoint (before Phase 5 / Mesh)
+
+The squid GraphQL ports are compose-internal. Until Phase 5 introduces the
+public Mesh gateway, query a squid directly via `docker compose exec`:
+
+```bash
+docker compose exec graphql-base sh -c \
+  'wget -qO- --post-data="{\"query\":\"{ posts(limit:5) { id } }\"}" \
+   --header="Content-Type: application/json" \
+   http://localhost:4353/graphql'
 ```
 
 ## Local dev (without Docker for the indexer)
 
-If you'd rather run the processor + api on the host while only Postgres lives in Docker:
+If you'd rather run a single processor + api on the host while only Postgres
+lives in Docker:
 
 ```bash
 docker compose up -d db
 pnpm install
 pnpm codegen
 pnpm build
-cp .env.example .env  # ensure DB_HOST=localhost
+cp .env.example .env       # ensure DB_HOST=localhost, DB_NAME=thatsrekt_<chain>
 pnpm db:migrate
-pnpm process    # one terminal
-pnpm serve      # another — http://localhost:4350/graphql
+CHAIN=base pnpm process    # one terminal
+pnpm serve                 # another — http://localhost:4350/graphql
 ```
 
 ## Configuration

@@ -1,96 +1,221 @@
+# =============================================================================
+# thatsRekt indexer — multi-squid compose stack (Phase 2 of multichain plan).
+# =============================================================================
+# One Postgres process hosting one logical database per chain (provisioned by
+# init.sql on first boot). One processor and one GraphQL service per chain,
+# all built from the same image. Squid GraphQL ports are compose-internal
+# only — Phase 5 introduces a Mesh gateway as the single public surface.
+#
+# Service map:
+#   db                  postgres :5432  (host loopback only, 127.0.0.1)
+#   migrate-{chain}     one-shot migrations against thatsrekt_{chain}
+#   processor-{chain}   long-running indexer
+#   graphql-{chain}     squid GraphQL on internal port (4351 / 4352 / 4353)
+#
+# Verifying just one chain (e.g. Base regression):
+#   docker compose up postgres migrate-base processor-base graphql-base
+#
+# All chains:
+#   docker compose up
+# =============================================================================
+
+# Anchor: build context + db connection bits shared by every indexer-image
+# service. Per-service `environment:` blocks add CHAIN, DB_NAME, and the
+# matching per-chain RPC/contract/start-block triple. Anchor merges only the
+# top-level keys that aren't redefined per service.
 x-indexer: &indexer
   build:
     context: .
     dockerfile: Dockerfile
-  environment:
-    DB_HOST: db
-    DB_PORT: 5432
-    DB_NAME: ${DB_NAME:-squid}
-    DB_USER: ${DB_USER:-postgres}
-    DB_PASS: ${DB_PASS:-postgres}
-  depends_on:
-    db:
-      condition: service_healthy
-
-# All per-chain env vars are passed through. The processor only consumes the
-# block matching CHAIN (e.g. CHAIN=base → RPC_BASE_HTTP / CONTRACT_BASE /
-# START_BLOCK_BASE). Other blocks can be unset; the processor reads what it
-# needs and ignores the rest.
-x-chain-env: &chain-env
-  CHAIN: ${CHAIN:-base}
-  RPC_BASE_HTTP: ${RPC_BASE_HTTP:-}
-  CONTRACT_BASE: ${CONTRACT_BASE:-}
-  START_BLOCK_BASE: ${START_BLOCK_BASE:-}
-  RPC_SEPOLIA_HTTP: ${RPC_SEPOLIA_HTTP:-}
-  CONTRACT_SEPOLIA: ${CONTRACT_SEPOLIA:-}
-  START_BLOCK_SEPOLIA: ${START_BLOCK_SEPOLIA:-}
-  RPC_ANVIL_HTTP: ${RPC_ANVIL_HTTP:-}
-  CONTRACT_ANVIL: ${CONTRACT_ANVIL:-}
-  START_BLOCK_ANVIL: ${START_BLOCK_ANVIL:-}
 
 services:
   db:
     image: postgres:16-alpine
     environment:
-      POSTGRES_DB: ${DB_NAME:-squid}
+      # Default db `postgres` is created by the entrypoint; the per-chain
+      # databases are created by init.sql below.
+      POSTGRES_DB: postgres
       POSTGRES_USER: ${DB_USER:-postgres}
       POSTGRES_PASSWORD: ${DB_PASS:-postgres}
     ports:
-      - '${DB_PORT:-5432}:5432'
+      # Bind to loopback only — Postgres has no business on the LAN.
+      - '127.0.0.1:${DB_PORT:-5432}:5432'
     volumes:
       - pgdata:/var/lib/postgresql/data
+      # Runs once on first boot (data dir empty). Creates the per-chain dbs.
+      - ./init.sql:/docker-entrypoint-initdb.d/01-create-databases.sql:ro
     healthcheck:
       test: ['CMD-SHELL', 'pg_isready -U ${DB_USER:-postgres}']
       interval: 5s
       timeout: 5s
       retries: 10
 
-  # One-shot: applies committed migrations against the freshly-started db.
-  # Has to complete successfully before processor + api come up.
-  migrate:
+  # ===========================================================================
+  # Anvil chain
+  # ===========================================================================
+  migrate-anvil:
     <<: *indexer
     command: ['npx', 'squid-typeorm-migration', 'apply']
+    environment:
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_NAME: thatsrekt_anvil
+      DB_USER: ${DB_USER:-postgres}
+      DB_PASS: ${DB_PASS:-postgres}
     restart: 'no'
+    depends_on:
+      db:
+        condition: service_healthy
 
-  # Indexes blocks. Restarts on failure (RPC blips, reorgs handled by Subsquid).
-  # Phase 2 will fan this out to one service per chain (processor-anvil,
-  # processor-sepolia, processor-base) — Phase 1 keeps a single instance
-  # selected by the CHAIN env var.
-  processor:
+  processor-anvil:
     <<: *indexer
     command: ['node', 'lib/main.js']
     environment:
       DB_HOST: db
       DB_PORT: 5432
-      DB_NAME: ${DB_NAME:-squid}
+      DB_NAME: thatsrekt_anvil
       DB_USER: ${DB_USER:-postgres}
       DB_PASS: ${DB_PASS:-postgres}
-      <<: *chain-env
+      CHAIN: anvil
+      RPC_ANVIL_HTTP: ${RPC_ANVIL_HTTP:-}
+      CONTRACT_ANVIL: ${CONTRACT_ANVIL:-}
+      START_BLOCK_ANVIL: ${START_BLOCK_ANVIL:-}
     restart: unless-stopped
     depends_on:
       db:
         condition: service_healthy
-      migrate:
+      migrate-anvil:
         condition: service_completed_successfully
 
-  # GraphQL server. Reads schema.graphql + DB; serves on GQL_PORT (default 4350).
-  api:
+  graphql-anvil:
     <<: *indexer
     command: ['npx', 'squid-graphql-server']
     environment:
       DB_HOST: db
       DB_PORT: 5432
-      DB_NAME: ${DB_NAME:-squid}
+      DB_NAME: thatsrekt_anvil
       DB_USER: ${DB_USER:-postgres}
       DB_PASS: ${DB_PASS:-postgres}
-      GQL_PORT: ${GQL_PORT:-4350}
-    ports:
-      - '${GQL_PORT:-4350}:${GQL_PORT:-4350}'
+      GQL_PORT: 4351
+    expose:
+      - '4351'
     restart: unless-stopped
     depends_on:
       db:
         condition: service_healthy
-      migrate:
+      migrate-anvil:
+        condition: service_completed_successfully
+
+  # ===========================================================================
+  # Sepolia chain
+  # ===========================================================================
+  migrate-sepolia:
+    <<: *indexer
+    command: ['npx', 'squid-typeorm-migration', 'apply']
+    environment:
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_NAME: thatsrekt_sepolia
+      DB_USER: ${DB_USER:-postgres}
+      DB_PASS: ${DB_PASS:-postgres}
+    restart: 'no'
+    depends_on:
+      db:
+        condition: service_healthy
+
+  processor-sepolia:
+    <<: *indexer
+    command: ['node', 'lib/main.js']
+    environment:
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_NAME: thatsrekt_sepolia
+      DB_USER: ${DB_USER:-postgres}
+      DB_PASS: ${DB_PASS:-postgres}
+      CHAIN: sepolia
+      RPC_SEPOLIA_HTTP: ${RPC_SEPOLIA_HTTP:-}
+      CONTRACT_SEPOLIA: ${CONTRACT_SEPOLIA:-}
+      START_BLOCK_SEPOLIA: ${START_BLOCK_SEPOLIA:-}
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate-sepolia:
+        condition: service_completed_successfully
+
+  graphql-sepolia:
+    <<: *indexer
+    command: ['npx', 'squid-graphql-server']
+    environment:
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_NAME: thatsrekt_sepolia
+      DB_USER: ${DB_USER:-postgres}
+      DB_PASS: ${DB_PASS:-postgres}
+      GQL_PORT: 4352
+    expose:
+      - '4352'
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate-sepolia:
+        condition: service_completed_successfully
+
+  # ===========================================================================
+  # Base chain
+  # ===========================================================================
+  migrate-base:
+    <<: *indexer
+    command: ['npx', 'squid-typeorm-migration', 'apply']
+    environment:
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_NAME: thatsrekt_base
+      DB_USER: ${DB_USER:-postgres}
+      DB_PASS: ${DB_PASS:-postgres}
+    restart: 'no'
+    depends_on:
+      db:
+        condition: service_healthy
+
+  processor-base:
+    <<: *indexer
+    command: ['node', 'lib/main.js']
+    environment:
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_NAME: thatsrekt_base
+      DB_USER: ${DB_USER:-postgres}
+      DB_PASS: ${DB_PASS:-postgres}
+      CHAIN: base
+      RPC_BASE_HTTP: ${RPC_BASE_HTTP:-}
+      CONTRACT_BASE: ${CONTRACT_BASE:-}
+      START_BLOCK_BASE: ${START_BLOCK_BASE:-}
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate-base:
+        condition: service_completed_successfully
+
+  graphql-base:
+    <<: *indexer
+    command: ['npx', 'squid-graphql-server']
+    environment:
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_NAME: thatsrekt_base
+      DB_USER: ${DB_USER:-postgres}
+      DB_PASS: ${DB_PASS:-postgres}
+      GQL_PORT: 4353
+    expose:
+      - '4353'
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate-base:
         condition: service_completed_successfully
 
 volumes:
