@@ -83,7 +83,7 @@ export interface PostDetail {
   removedAtTimestamp: string | null
   attackerLinks: PostAttackerLink[]
   victimLinks: PostVictimLink[]
-  log: ConfirmationEntity[]
+  confirmationLog: ConfirmationEntity[]
   edits: EditEntity[]
 }
 
