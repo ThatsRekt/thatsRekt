@@ -37,8 +37,8 @@ contract ThatsRektUpgradeTest is Test {
     struct PostSnapshot {
         address poster;
         uint64 attackedAt;
-        uint32 upvotes;
-        uint32 downvotes;
+        uint32 upConfirms;
+        uint32 downConfirms;
         bool removed;
         uint64 lastUpdatedAt;
     }
@@ -122,7 +122,7 @@ contract ThatsRektUpgradeTest is Test {
         uint256 postId = reg.post("test title", atks, vics, "pre-upgrade", uint64(block.timestamp));
 
         vm.prank(voter);
-        reg.vote(postId, ThatsRekt.VoteDirection.Upvote);
+        reg.confirm(postId, ThatsRekt.ConfirmDirection.Up);
 
         // Snapshot pre-upgrade state for later comparison. getPost returns
         // 8 values which blows the stack — read into a memory struct.
@@ -140,7 +140,7 @@ contract ThatsRektUpgradeTest is Test {
         // Pre-upgrade state must be intact.
         PostSnapshot memory post_ = _snapshotPost(reg, postId);
         assertEq(post_.poster, pre.poster, "poster lost across upgrade");
-        assertEq(post_.upvotes, pre.upvotes, "upvote count lost across upgrade");
+        assertEq(post_.upConfirms, pre.upConfirms, "upConfirm count lost across upgrade");
         assertEq(post_.removed, pre.removed, "removed flag flipped across upgrade");
         assertEq(reg.attackerScore(attacker), preScore, "attackerScore lost across upgrade");
 
@@ -231,7 +231,7 @@ contract ThatsRektUpgradeTest is Test {
         _whitelistViaTimelock(reg, timelock, poster);
         _whitelistViaTimelock(reg, timelock, voter);
 
-        // Plant a post + an upvote so attackerScore > 0 and postCount == 1.
+        // Plant a post + an upConfirm so attackerScore > 0 and postCount == 1.
         address[] memory atks = new address[](1);
         atks[0] = attackerAddr;
         address[] memory vics = new address[](0);
@@ -239,7 +239,7 @@ contract ThatsRektUpgradeTest is Test {
         uint256 postId = reg.post("test title", atks, vics, "pre-v1.2-upgrade", uint64(block.timestamp));
 
         vm.prank(voter);
-        reg.vote(postId, ThatsRekt.VoteDirection.Upvote);
+        reg.confirm(postId, ThatsRekt.ConfirmDirection.Up);
 
         // Snapshot pre-upgrade state.
         PostSnapshot memory pre = _snapshotPost(reg, postId);
@@ -257,8 +257,8 @@ contract ThatsRektUpgradeTest is Test {
         // 1. Pre-upgrade state preserved through the proxy.
         PostSnapshot memory post_ = _snapshotPost(reg, postId);
         assertEq(post_.poster, pre.poster, "post.poster preserved");
-        assertEq(post_.upvotes, pre.upvotes, "post.upvotes preserved");
-        assertEq(post_.downvotes, pre.downvotes, "post.downvotes preserved");
+        assertEq(post_.upConfirms, pre.upConfirms, "post.upConfirms preserved");
+        assertEq(post_.downConfirms, pre.downConfirms, "post.downConfirms preserved");
         assertEq(post_.removed, pre.removed, "post.removed preserved");
         assertEq(post_.attackedAt, pre.attackedAt, "post.attackedAt preserved");
         assertEq(post_.lastUpdatedAt, pre.lastUpdatedAt, "post.lastUpdatedAt preserved");
@@ -289,8 +289,8 @@ contract ThatsRektUpgradeTest is Test {
         (
             address poster,
             uint64 attackedAt,
-            uint32 upvotes,
-            uint32 downvotes,
+            uint32 upConfirms,
+            uint32 downConfirms,
             bool removed,
             ,
             ,
@@ -299,8 +299,8 @@ contract ThatsRektUpgradeTest is Test {
         s = PostSnapshot({
             poster: poster,
             attackedAt: attackedAt,
-            upvotes: upvotes,
-            downvotes: downvotes,
+            upConfirms: upConfirms,
+            downConfirms: downConfirms,
             removed: removed,
             lastUpdatedAt: lastUpdatedAt
         });

@@ -10,7 +10,8 @@ import {EnumerableSet} from "@openzeppelin/contracts/utils/structs/EnumerableSet
 /// @title  ThatsRekt - On-chain hack-alert registry (v1)
 /// @notice Whitelisted operators post structured alerts identifying attacker
 ///         addresses, victim contracts, and free-form context. Other whitelisters
-///         vouch (upvote) or refute (downvote). Aggregates exposed as O(1) reads
+///         confirm (up) or disconfirm (down) the alert — saying "I agree this
+///         is real" or "I think this is wrong". Aggregates exposed as O(1) reads
 ///         so any contract can plug in and inline-blacklist.
 /// @dev    UUPS upgradeable. The implementation lives behind an ERC1967Proxy;
 ///         the proxy is the canonical permanent address (cross-chain identical
@@ -48,11 +49,13 @@ contract ThatsRekt is Initializable, Ownable2StepUpgradeable, UUPSUpgradeable {
                                    ENUMS
     //////////////////////////////////////////////////////////////*/
 
-    /// @notice Direction of a voter's vote on a post.
+    /// @notice Direction of a confirmer's signal on a post.
     /// @dev    `None` is the zero value (default for unset mapping slots),
-    ///         which lets `voteOf[postId][voter] == None` serve as the natural
-    ///         "no vote yet" sentinel without an extra storage flag.
-    enum VoteDirection { None, Upvote, Downvote }
+    ///         which lets `confirmationOf[postId][confirmer] == None` serve as
+    ///         the natural "no confirmation yet" sentinel without an extra
+    ///         storage flag. `Up` means "I agree this is a real incident",
+    ///         `Down` means "I think this is wrong / not real".
+    enum ConfirmDirection { None, Up, Down }
 
     /*//////////////////////////////////////////////////////////////
                                   STRUCTS
@@ -68,15 +71,15 @@ contract ThatsRekt is Initializable, Ownable2StepUpgradeable, UUPSUpgradeable {
         ///      this field carries the *attack* time as the informational
         ///      datum (not a tamper-proof one).
         uint64   attackedAt;
-        uint32   upvotes;
-        uint32   downvotes;
+        uint32   confirmations;
+        uint32   disconfirmations;
         bool     removed;
         /// @dev Block-time freshness signal. Set to `block.timestamp` at
         ///      post creation and bumped on every poster-driven edit
         ///      (`amendNote`, `addAttackers`, `addVictims`). Indexers and
         ///      consumers can use this to surface "recently edited" posts
         ///      without scanning the event log. Packs into the same storage
-        ///      slot as `downvotes` (u32) + `removed` (bool) + this u64.
+        ///      slot as `disconfirmations` (u32) + `removed` (bool) + this u64.
         uint64   lastUpdatedAt;
         address[] attackers;
         address[] victims;
@@ -90,16 +93,16 @@ contract ThatsRekt is Initializable, Ownable2StepUpgradeable, UUPSUpgradeable {
 
     uint256 public postCount;
     mapping(uint256 => Post) private _posts;
-    mapping(uint256 => mapping(address => VoteDirection)) public voteOf;
+    mapping(uint256 => mapping(address => ConfirmDirection)) public confirmationOf;
 
-    /// @dev Per-post enumerable voter sets. Kept in lockstep with the
-    ///      `voteOf` mapping and the per-post `upvotes`/`downvotes` counters
-    ///      via `_applyVoterSetChange`. Exposed through `getUpvoters` /
-    ///      `getDownvoters` so consumers can answer "who voted on this post?"
+    /// @dev Per-post enumerable confirmer sets. Kept in lockstep with the
+    ///      `confirmationOf` mapping and the per-post `confirmations`/`disconfirmations` counters
+    ///      via `_applyConfirmerSetChange`. Exposed through `getConfirmers` /
+    ///      `getDisconfirmers` so consumers can answer "who confirmed this post?"
     ///      on-chain — useful when integrators want to gate on a trusted
     ///      subset of whitelisters rather than the raw aggregate score.
-    mapping(uint256 => EnumerableSet.AddressSet) private _upvoters;
-    mapping(uint256 => EnumerableSet.AddressSet) private _downvoters;
+    mapping(uint256 => EnumerableSet.AddressSet) private _confirmers;
+    mapping(uint256 => EnumerableSet.AddressSet) private _disconfirmers;
 
     mapping(address => int256)  public attackerScore;
     mapping(address => uint256) public attackerAppearances;
@@ -126,11 +129,11 @@ contract ThatsRekt is Initializable, Ownable2StepUpgradeable, UUPSUpgradeable {
         address[]       victims,
         string          note
     );
-    event Voted(
+    event Confirmed(
         uint256 indexed postId,
-        address indexed voter,
-        VoteDirection   oldDirection,
-        VoteDirection   newDirection
+        address indexed confirmer,
+        ConfirmDirection   oldDirection,
+        ConfirmDirection   newDirection
     );
 
     /// @dev Single variant today; kept as an enum for forward extensibility
@@ -167,16 +170,16 @@ contract ThatsRekt is Initializable, Ownable2StepUpgradeable, UUPSUpgradeable {
     //////////////////////////////////////////////////////////////*/
 
     error NotWhitelisted();
-    error PosterCannotVote();
+    error PosterCannotConfirm();
     error PostIsRemoved();
     error PostNotFound();
-    error NoVoteChange();
+    error NoConfirmationChange();
     error EmptyPost();
     error PostTooLarge();
     error NotPoster();
     error InvalidAttackedAt();
-    error InvalidVoteDirection();
-    error NoVoteToRetract();
+    error InvalidConfirmDirection();
+    error NothingToUnconfirm();
     error EmptyAdditions();
     error DuplicateAddress();
     error ZeroAddress();
@@ -252,7 +255,7 @@ contract ThatsRekt is Initializable, Ownable2StepUpgradeable, UUPSUpgradeable {
     }
 
     /*//////////////////////////////////////////////////////////////
-                          WHITELISTED (post + vote)
+                          WHITELISTED (post + confirm)
     //////////////////////////////////////////////////////////////*/
 
     /// @param attackedAt UTC second timestamp of the on-chain attack itself
@@ -327,104 +330,104 @@ contract ThatsRekt is Initializable, Ownable2StepUpgradeable, UUPSUpgradeable {
         }
     }
 
-    /// @notice Map a `VoteDirection` to its signed weight for aggregate math.
-    /// @dev    Upvote -> +1, Downvote -> -1, None -> 0. Pure helper used to
-    ///         compute deltas in `vote()` and reversal in `unvote()`.
-    function _voteWeight(VoteDirection d) internal pure returns (int8) {
-        if (d == VoteDirection.Upvote)   return int8(1);
-        if (d == VoteDirection.Downvote) return int8(-1);
+    /// @notice Map a `ConfirmDirection` to its signed weight for aggregate math.
+    /// @dev    Up -> +1, Down -> -1, None -> 0. Pure helper used to
+    ///         compute deltas in `confirm()` and reversal in `unconfirm()`.
+    function _directionWeight(ConfirmDirection d) internal pure returns (int8) {
+        if (d == ConfirmDirection.Up)   return int8(1);
+        if (d == ConfirmDirection.Down) return int8(-1);
         return int8(0);
     }
 
-    /// @notice Keep the per-post upvoter/downvoter sets in sync with a vote
-    ///         transition (`oldVote -> newVote`).
-    /// @dev    Removes the voter from the set matching `oldVote` (if any) and
-    ///         adds them to the set matching `newVote` (if any). `None` slots
+    /// @notice Keep the per-post confirmer/disconfirmer sets in sync with a confirmation
+    ///         transition (`oldDir -> newDir`).
+    /// @dev    Removes the confirmer from the set matching `oldDir` (if any) and
+    ///         adds them to the set matching `newDir` (if any). `None` slots
     ///         on either side are no-ops, which makes this helper correct for
-    ///         fresh votes, flips, and unvotes alike.
-    function _applyVoterSetChange(
+    ///         fresh confirmations, flips, and unconfirms alike.
+    function _applyConfirmerSetChange(
         uint256 postId,
-        address voter,
-        VoteDirection oldVote,
-        VoteDirection newVote
+        address confirmer,
+        ConfirmDirection oldDir,
+        ConfirmDirection newDir
     ) internal {
-        if (oldVote == VoteDirection.Upvote)        _upvoters[postId].remove(voter);
-        else if (oldVote == VoteDirection.Downvote) _downvoters[postId].remove(voter);
+        if (oldDir == ConfirmDirection.Up)        _confirmers[postId].remove(confirmer);
+        else if (oldDir == ConfirmDirection.Down) _disconfirmers[postId].remove(confirmer);
 
-        if (newVote == VoteDirection.Upvote)        _upvoters[postId].add(voter);
-        else if (newVote == VoteDirection.Downvote) _downvoters[postId].add(voter);
+        if (newDir == ConfirmDirection.Up)        _confirmers[postId].add(confirmer);
+        else if (newDir == ConfirmDirection.Down) _disconfirmers[postId].add(confirmer);
     }
 
     /// @param postId    Target post id.
-    /// @param direction `Upvote` (+1) or `Downvote` (-1). `None` is rejected;
-    ///                  use `unvote()` to clear an existing vote.
-    /// @dev   `voteOf[postId][voter]` is `VoteDirection`, with `None` (= 0) as
-    ///        the implicit "no vote yet" default. Callers can flip up<->down
-    ///        via this entry point; clearing back to `None` lives on `unvote()`.
-    function vote(uint256 postId, VoteDirection direction) external onlyWhitelisted {
-        if (direction == VoteDirection.None) revert InvalidVoteDirection();
+    /// @param direction `Up` (+1) or `Down` (-1). `None` is rejected;
+    ///                  use `unconfirm()` to clear an existing confirmation.
+    /// @dev   `confirmationOf[postId][confirmer]` is `ConfirmDirection`, with `None` (= 0) as
+    ///        the implicit "no confirmation yet" default. Callers can flip up<->down
+    ///        via this entry point; clearing back to `None` lives on `unconfirm()`.
+    function confirm(uint256 postId, ConfirmDirection direction) external onlyWhitelisted {
+        if (direction == ConfirmDirection.None) revert InvalidConfirmDirection();
 
         Post storage p = _posts[postId];
         if (p.poster == address(0))   revert PostNotFound();
         if (p.removed)                revert PostIsRemoved();
-        if (p.poster == msg.sender)   revert PosterCannotVote();
+        if (p.poster == msg.sender)   revert PosterCannotConfirm();
 
-        VoteDirection oldDir = voteOf[postId][msg.sender];
-        if (oldDir == direction)      revert NoVoteChange();
+        ConfirmDirection oldDir = confirmationOf[postId][msg.sender];
+        if (oldDir == direction)      revert NoConfirmationChange();
 
-        if (oldDir == VoteDirection.Upvote)        { p.upvotes   -= 1; }
-        else if (oldDir == VoteDirection.Downvote) { p.downvotes -= 1; }
-        if (direction == VoteDirection.Upvote)     { p.upvotes   += 1; }
-        else                                       { p.downvotes += 1; }
+        if (oldDir == ConfirmDirection.Up)        { p.confirmations   -= 1; }
+        else if (oldDir == ConfirmDirection.Down) { p.disconfirmations -= 1; }
+        if (direction == ConfirmDirection.Up)     { p.confirmations   += 1; }
+        else                                       { p.disconfirmations += 1; }
 
-        int256 delta = int256(_voteWeight(direction)) - int256(_voteWeight(oldDir));
+        int256 delta = int256(_directionWeight(direction)) - int256(_directionWeight(oldDir));
 
         uint256 aLen = p.attackers.length;
         for (uint256 i; i < aLen; ++i) {
             attackerScore[p.attackers[i]] += delta;
         }
 
-        voteOf[postId][msg.sender] = direction;
-        _applyVoterSetChange(postId, msg.sender, oldDir, direction);
+        confirmationOf[postId][msg.sender] = direction;
+        _applyConfirmerSetChange(postId, msg.sender, oldDir, direction);
 
-        emit Voted(postId, msg.sender, oldDir, direction);
+        emit Confirmed(postId, msg.sender, oldDir, direction);
     }
 
-    /// @notice Retract a previously cast vote on `postId`, restoring storage
-    ///         to the "no vote" state and reversing the aggregate impact.
-    /// @dev    Reverts if the caller never voted on this post (`NoVoteToRetract`),
+    /// @notice Clear a previously cast confirmation on `postId`, restoring storage
+    ///         to the "no confirmation" state and reversing the aggregate impact.
+    /// @dev    Reverts if the caller never confirmed on this post (`NothingToUnconfirm`),
     ///         if the post does not exist (`PostNotFound`), or if it has already
     ///         been removed (`PostIsRemoved`). Only whitelisters can call —
     ///         a de-whitelisted account cannot rewrite history.
-    function unvote(uint256 postId) external onlyWhitelisted {
+    function unconfirm(uint256 postId) external onlyWhitelisted {
         Post storage p = _posts[postId];
         if (p.poster == address(0)) revert PostNotFound();
         if (p.removed)              revert PostIsRemoved();
 
-        VoteDirection oldDir = voteOf[postId][msg.sender];
-        if (oldDir == VoteDirection.None) revert NoVoteToRetract();
+        ConfirmDirection oldDir = confirmationOf[postId][msg.sender];
+        if (oldDir == ConfirmDirection.None) revert NothingToUnconfirm();
 
         // Reverse per-post counters.
-        if (oldDir == VoteDirection.Upvote) { p.upvotes   -= 1; }
-        else                                { p.downvotes -= 1; }
+        if (oldDir == ConfirmDirection.Up) { p.confirmations   -= 1; }
+        else                                { p.disconfirmations -= 1; }
 
         // Reverse attacker aggregate score: subtract the old weight.
-        int256 oldWeight = int256(_voteWeight(oldDir));
+        int256 oldWeight = int256(_directionWeight(oldDir));
         uint256 aLen = p.attackers.length;
         for (uint256 i; i < aLen; ++i) {
             attackerScore[p.attackers[i]] -= oldWeight;
         }
 
-        voteOf[postId][msg.sender] = VoteDirection.None;
-        _applyVoterSetChange(postId, msg.sender, oldDir, VoteDirection.None);
+        confirmationOf[postId][msg.sender] = ConfirmDirection.None;
+        _applyConfirmerSetChange(postId, msg.sender, oldDir, ConfirmDirection.None);
 
-        emit Voted(postId, msg.sender, oldDir, VoteDirection.None);
+        emit Confirmed(postId, msg.sender, oldDir, ConfirmDirection.None);
     }
 
     function _removePost(uint256 id, RemovalReason reason) internal {
         Post storage p = _posts[id];
 
-        int256 net = int256(uint256(p.upvotes)) - int256(uint256(p.downvotes));
+        int256 net = int256(uint256(p.confirmations)) - int256(uint256(p.disconfirmations));
 
         // 1. reverse attacker aggregates
         uint256 aLen = p.attackers.length;
@@ -524,8 +527,8 @@ contract ThatsRekt is Initializable, Ownable2StepUpgradeable, UUPSUpgradeable {
     ///         attackers cannot be removed via any path other than
     ///         `retract()` + re-post.
     /// @dev    Each new attacker inherits the post's *current* net karma
-    ///         (`upvotes - downvotes`) at the moment of addition. From
-    ///         that point on, subsequent votes / unvotes update all
+    ///         (`confirmations - disconfirmations`) at the moment of addition. From
+    ///         that point on, subsequent confirmations / unconfirms update all
     ///         listed attackers (original + newly added) uniformly,
     ///         preserving v1's single-aggregate model.
     ///
@@ -533,7 +536,7 @@ contract ThatsRekt is Initializable, Ownable2StepUpgradeable, UUPSUpgradeable {
     ///         a poster cannot swap an innocent address into a karma-laden
     ///         post. They CAN add a fresh address that inherits karma —
     ///         that's a known and intentional limit (mitigated by
-    ///         downvotes from peers if the addition looks bogus).
+    ///         disconfirmations from peers if the addition looks bogus).
     ///
     ///         Strict no-duplicates: rejects (a) duplicates within the
     ///         input batch, (b) addresses already in the post's attacker
@@ -557,7 +560,7 @@ contract ThatsRekt is Initializable, Ownable2StepUpgradeable, UUPSUpgradeable {
             revert PostTooLarge();
         }
 
-        int256 currentNet = int256(uint256(p.upvotes)) - int256(uint256(p.downvotes));
+        int256 currentNet = int256(uint256(p.confirmations)) - int256(uint256(p.disconfirmations));
 
         uint256 nNew = newAttackers.length;
         for (uint256 i; i < nNew; ++i) {
@@ -651,8 +654,8 @@ contract ThatsRekt is Initializable, Ownable2StepUpgradeable, UUPSUpgradeable {
     function getPost(uint256 id) external view returns (
         address  poster,
         uint64   attackedAt,
-        uint32   upvotes,
-        uint32   downvotes,
+        uint32   confirmations,
+        uint32   disconfirmations,
         bool     removed,
         address[] memory attackers_,
         address[] memory victims_,
@@ -663,8 +666,8 @@ contract ThatsRekt is Initializable, Ownable2StepUpgradeable, UUPSUpgradeable {
         return (
             p.poster,
             p.attackedAt,
-            p.upvotes,
-            p.downvotes,
+            p.confirmations,
+            p.disconfirmations,
             p.removed,
             p.attackers,
             p.victims,
@@ -707,31 +710,31 @@ contract ThatsRekt is Initializable, Ownable2StepUpgradeable, UUPSUpgradeable {
         for (uint256 j; j < i; ++j) ids[j] = tmp[j];
     }
 
-    /// @notice Full set of upvoters on `postId`, in insertion order (per
+    /// @notice Full set of confirmers on `postId`, in insertion order (per
     ///         OpenZeppelin EnumerableSet.values()).
     /// @dev    Unbounded by design: caller picks the gas budget at the
-    ///         eth_call layer. For very large voter sets, paginate at the
+    ///         eth_call layer. For very large confirmer sets, paginate at the
     ///         consumer level.
-    function getUpvoters(uint256 postId) external view returns (address[] memory) {
-        return _upvoters[postId].values();
+    function getConfirmers(uint256 postId) external view returns (address[] memory) {
+        return _confirmers[postId].values();
     }
 
-    /// @notice Full set of downvoters on `postId`, same semantics as
-    ///         `getUpvoters`.
-    function getDownvoters(uint256 postId) external view returns (address[] memory) {
-        return _downvoters[postId].values();
+    /// @notice Full set of disconfirmers on `postId`, same semantics as
+    ///         `getConfirmers`.
+    function getDisconfirmers(uint256 postId) external view returns (address[] memory) {
+        return _disconfirmers[postId].values();
     }
 
-    /// @notice Cardinality of the upvoter set for `postId`. Equal to the
-    ///         post's `upvotes` counter as an invariant.
-    function getUpvoterCount(uint256 postId) external view returns (uint256) {
-        return _upvoters[postId].length();
+    /// @notice Cardinality of the confirmer set for `postId`. Equal to the
+    ///         post's `confirmations` counter as an invariant.
+    function getConfirmerCount(uint256 postId) external view returns (uint256) {
+        return _confirmers[postId].length();
     }
 
-    /// @notice Cardinality of the downvoter set for `postId`. Equal to the
-    ///         post's `downvotes` counter as an invariant.
-    function getDownvoterCount(uint256 postId) external view returns (uint256) {
-        return _downvoters[postId].length();
+    /// @notice Cardinality of the disconfirmer set for `postId`. Equal to the
+    ///         post's `disconfirmations` counter as an invariant.
+    function getDisconfirmerCount(uint256 postId) external view returns (uint256) {
+        return _disconfirmers[postId].length();
     }
 
     /*//////////////////////////////////////////////////////////////

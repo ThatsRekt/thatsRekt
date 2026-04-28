@@ -34,7 +34,7 @@ const SUBSCRIBED_TOPICS = [
   events.PostTitleAmended.topic,
   events.AttackersAdded.topic,
   events.VictimsAdded.topic,
-  events.Voted.topic,
+  events.Confirmed.topic,
   events.WhitelistUpdated.topic,
   events.Upgraded.topic,
   events.OwnershipTransferred.topic,

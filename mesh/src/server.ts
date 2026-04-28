@@ -109,8 +109,8 @@ const additionalTypeDefs = /* GraphQL */ `
     """Free-form note body — optional, updatable via amendNote()."""
     note: String!
     netScore: Int!
-    upvotes: Int!
-    downvotes: Int!
+    confirmations: Int!
+    disconfirmations: Int!
     removed: Boolean!
     createdAtBlock: Int!
     createdAtTimestamp: String!
@@ -153,8 +153,8 @@ const RawPost = z.object({
   title: z.string(),
   note: z.string(),
   netScore: z.number().int(),
-  upvotes: z.number().int(),
-  downvotes: z.number().int(),
+  confirmations: z.number().int(),
+  disconfirmations: z.number().int(),
   removed: z.boolean(),
   createdAtBlock: z.number().int(),
   createdAtTimestamp: z.string(),
@@ -177,8 +177,8 @@ const FETCH_POSTS_QUERY = /* GraphQL */ `
       title
       note
       netScore
-      upvotes
-      downvotes
+      confirmations
+      disconfirmations
       removed
       createdAtBlock
       createdAtTimestamp
@@ -291,8 +291,8 @@ const buildAdditionalResolvers = (chains: readonly ChainEntry[]) => ({
         title: post.title,
         note: post.note,
         netScore: post.netScore,
-        upvotes: post.upvotes,
-        downvotes: post.downvotes,
+        confirmations: post.confirmations,
+        disconfirmations: post.disconfirmations,
         removed: post.removed,
         createdAtBlock: post.createdAtBlock,
         createdAtTimestamp: post.createdAtTimestamp,

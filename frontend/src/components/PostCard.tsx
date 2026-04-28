@@ -46,7 +46,7 @@ export function PostCard({ post }: { post: FeedPost }) {
         </span>
         <span>
           <span className="text-neutral-400">·</span>{' '}
-          <ScoreBadge net={post.netScore} up={post.upvotes} down={post.downvotes} />
+          <ScoreBadge net={post.netScore} up={post.confirmations} down={post.disconfirmations} />
         </span>
       </div>
 

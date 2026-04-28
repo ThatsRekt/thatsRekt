@@ -70,7 +70,7 @@ export function Contributors() {
         </p>
         <p className="text-base leading-relaxed text-neutral-800">
           These are the addresses authorized to <strong className="font-black">post hack alerts</strong>{' '}
-          and vote on the registry, per chain. They are added and removed
+          and confirm posts on the registry, per chain. They are added and removed
           by the governance multisig through the 7-day timelock — the
           on-chain whitelist is the source of truth, the names below are
           a courtesy lookup.

@@ -1,4 +1,4 @@
-import type { EditEntity, PostDetail, VoteEntity } from '../lib/queries'
+import type { EditEntity, PostDetail, ConfirmationEntity } from '../lib/queries'
 import { AddressLabel } from './AddressLabel'
 import { formatTimestamp, relativeTime } from '../lib/format'
 
@@ -17,7 +17,7 @@ interface InceptionData {
 
 type TimelineItem =
   | { kind: 'inception'; data: InceptionData }
-  | { kind: 'vote'; data: VoteEntity }
+  | { kind: 'confirmation'; data: ConfirmationEntity }
   | { kind: 'edit'; data: EditEntity }
 
 interface TimelineProps {
@@ -33,12 +33,12 @@ interface TimelineProps {
      *  if absent we still render an inception entry without a block. */
     createdAtBlock?: number
   }
-  votes: VoteEntity[]
+  log: ConfirmationEntity[]
   edits: EditEntity[]
   chainSlug?: string
 }
 
-export function Timeline({ post, votes, edits, chainSlug }: TimelineProps) {
+export function Timeline({ post, log, edits, chainSlug }: TimelineProps) {
   const inception: TimelineItem = {
     kind: 'inception',
     data: {
@@ -52,7 +52,7 @@ export function Timeline({ post, votes, edits, chainSlug }: TimelineProps) {
 
   const items: TimelineItem[] = [
     inception,
-    ...votes.map((v): TimelineItem => ({ kind: 'vote', data: v })),
+    ...log.map((v): TimelineItem => ({ kind: 'confirmation', data: v })),
     ...edits.map((e): TimelineItem => ({ kind: 'edit', data: e })),
   ].sort((a, b) => {
     // Inception always comes first (lowest block in practice; but if
@@ -84,8 +84,8 @@ export function Timeline({ post, votes, edits, chainSlug }: TimelineProps) {
             </div>
             {item.kind === 'inception' ? (
               <InceptionRow data={item.data} chainSlug={chainSlug} />
-            ) : item.kind === 'vote' ? (
-              <VoteRow vote={item.data} chainSlug={chainSlug} />
+            ) : item.kind === 'confirmation' ? (
+              <ConfirmationRow confirmation={item.data} chainSlug={chainSlug} />
             ) : (
               <EditRow edit={item.data} />
             )}
@@ -117,12 +117,12 @@ function InceptionRow({
   )
 }
 
-function VoteRow({ vote, chainSlug }: { vote: VoteEntity; chainSlug?: string }) {
-  const action = describeVote(vote.oldDirection, vote.newDirection)
+function ConfirmationRow({ confirmation, chainSlug }: { confirmation: ConfirmationEntity; chainSlug?: string }) {
+  const action = describeConfirmation(confirmation.oldDirection, confirmation.newDirection)
   return (
     <p className="mt-1 text-sm">
-      <AddressLabel addr={vote.voter.id} chainSlug={chainSlug} />{' '}
-      <span className={`font-black uppercase tracking-tight ${voteColor(vote.newDirection)}`}>
+      <AddressLabel addr={confirmation.confirmer.id} chainSlug={chainSlug} />{' '}
+      <span className={`font-black uppercase tracking-tight ${confirmationColor(confirmation.newDirection)}`}>
         {action.icon} {action.label}
       </span>
     </p>
@@ -159,24 +159,24 @@ function EditRow({ edit }: { edit: EditEntity }) {
   )
 }
 
-function describeVote(
-  oldDir: VoteEntity['oldDirection'],
-  newDir: VoteEntity['newDirection'],
+function describeConfirmation(
+  oldDir: ConfirmationEntity['oldDirection'],
+  newDir: ConfirmationEntity['newDirection'],
 ): { icon: string; label: string } {
-  if (oldDir === 'None' && newDir === 'Upvote') return { icon: '↑', label: 'upvoted' }
-  if (oldDir === 'None' && newDir === 'Downvote') return { icon: '↓', label: 'downvoted' }
-  if (newDir === 'None') return { icon: '×', label: 'cleared their vote' }
-  if (oldDir === 'Upvote' && newDir === 'Downvote')
-    return { icon: '↓', label: 'switched to downvote' }
-  if (oldDir === 'Downvote' && newDir === 'Upvote')
-    return { icon: '↑', label: 'switched to upvote' }
+  if (oldDir === 'None' && newDir === 'Up') return { icon: '↑', label: 'confirmed' }
+  if (oldDir === 'None' && newDir === 'Down') return { icon: '↓', label: 'disconfirmed' }
+  if (newDir === 'None') return { icon: '×', label: 'cleared their confirmation' }
+  if (oldDir === 'Up' && newDir === 'Down')
+    return { icon: '↓', label: 'switched to disconfirm' }
+  if (oldDir === 'Down' && newDir === 'Up')
+    return { icon: '↑', label: 'switched to confirm' }
   return { icon: '·', label: `${oldDir} → ${newDir}` }
 }
 
-function voteColor(newDir: string): string {
+function confirmationColor(newDir: string): string {
   if (newDir === 'None') return 'text-neutral-700'
-  if (newDir === 'Upvote') return 'text-emerald-700'
-  if (newDir === 'Downvote') return 'text-red-600'
+  if (newDir === 'Up') return 'text-emerald-700'
+  if (newDir === 'Down') return 'text-red-600'
   return 'text-neutral-700'
 }
 

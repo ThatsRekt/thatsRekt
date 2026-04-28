@@ -6,7 +6,7 @@ export const IS_MOCK_MODE = USE_MOCK
 
 // ---- shared types (mirror schema.graphql) ----
 
-export type VoteDirection = 'None' | 'Upvote' | 'Downvote'
+export type ConfirmDirection = 'None' | 'Up' | 'Down'
 export type EditKind = 'AmendNote' | 'AmendTitle' | 'AddAttackers' | 'AddVictims'
 
 export interface AddressEntity {
@@ -39,19 +39,19 @@ export interface FeedPost {
   title: string
   /** Free-form body — optional. */
   note: string
-  upvotes: number
-  downvotes: number
+  confirmations: number
+  disconfirmations: number
   netScore: number
   createdAtTimestamp: string
   attackerLinks: PostAttackerLink[]
   victimLinks: PostVictimLink[]
 }
 
-export interface VoteEntity {
+export interface ConfirmationEntity {
   id: string
-  voter: { id: string }
-  oldDirection: VoteDirection
-  newDirection: VoteDirection
+  confirmer: { id: string }
+  oldDirection: ConfirmDirection
+  newDirection: ConfirmDirection
   blockNumber: number
   timestamp: string
 }
@@ -74,8 +74,8 @@ export interface PostDetail {
   lastUpdatedAt: string
   title: string
   note: string
-  upvotes: number
-  downvotes: number
+  confirmations: number
+  disconfirmations: number
   netScore: number
   removed: boolean
   createdAtBlock: number
@@ -83,7 +83,7 @@ export interface PostDetail {
   removedAtTimestamp: string | null
   attackerLinks: PostAttackerLink[]
   victimLinks: PostVictimLink[]
-  votes: VoteEntity[]
+  log: ConfirmationEntity[]
   edits: EditEntity[]
 }
 
@@ -111,8 +111,8 @@ const FEED_QUERY = /* GraphQL */ `
         attackedAt
         title
         note
-        upvotes
-        downvotes
+        confirmations
+        disconfirmations
         netScore
         createdAtTimestamp
         attackers
@@ -141,8 +141,8 @@ interface MeshUnifiedPost {
   attackedAt: string
   title: string
   note: string
-  upvotes: number
-  downvotes: number
+  confirmations: number
+  disconfirmations: number
   netScore: number
   createdAtTimestamp: string
   attackers: string[]
@@ -151,7 +151,7 @@ interface MeshUnifiedPost {
 
 // Per-chain detail: Mesh exposes the full upstream squid schema under a
 // `<Prefix>_postById(id:...)` root field thanks to the prefix transforms.
-// All on-chain data — votes, edits, address scores, etc. — is consumable
+// All on-chain data — confirmations, edits, address scores, etc. — is consumable
 // here. We parse the chain prefix from the composite id and pick the
 // matching root field at query time.
 const SLUG_TO_PREFIX: Record<string, string> = {
@@ -170,8 +170,8 @@ const buildPostDetailQuery = (prefix: string): string => /* GraphQL */ `
       lastUpdatedAt
       title
       note
-      upvotes
-      downvotes
+      confirmations
+      disconfirmations
       netScore
       removed
       createdAtBlock
@@ -187,9 +187,9 @@ const buildPostDetailQuery = (prefix: string): string => /* GraphQL */ `
       victimLinks {
         address { id isVictim }
       }
-      votes(orderBy: blockNumber_ASC) {
+      confirmationLog(orderBy: blockNumber_ASC) {
         id
-        voter { id }
+        confirmer { id }
         oldDirection
         newDirection
         blockNumber
@@ -276,8 +276,8 @@ const adaptMeshPostToFeedPost = (p: MeshUnifiedPost): FeedPost => ({
   attackedAt: p.attackedAt,
   title: p.title,
   note: p.note,
-  upvotes: p.upvotes,
-  downvotes: p.downvotes,
+  confirmations: p.confirmations,
+  disconfirmations: p.disconfirmations,
   netScore: p.netScore,
   createdAtTimestamp: p.createdAtTimestamp,
   attackerLinks: p.attackers.map((a) => ({ address: { id: a, attackerScore: '0' } })),
@@ -322,7 +322,7 @@ export interface Contributor {
 /** A single chain's whitelister set, split into active vs past. */
 export interface ChainContributors {
   chainSlug: string
-  /** Currently whitelisted (still able to post + vote). */
+  /** Currently whitelisted (still able to post + confirm). */
   active: Contributor[]
   /** Previously whitelisted but since removed by governance. */
   past: Contributor[]

@@ -2,14 +2,14 @@
 #
 # Aggregate fields on Address (attackerScore, attackerAppearances, isVictim)
 # are derived state maintained by the processor in lockstep with PostCreated /
-# Voted / PostRemoved / AttackersAdded / VictimsAdded events. They mirror the
+# Confirmed / PostRemoved / AttackersAdded / VictimsAdded events. They mirror the
 # on-chain values exactly.
 #
 # Many-to-many relationships (post ↔ attacker addresses, post ↔ victim
 # addresses) use explicit junction entities (PostAttacker, PostVictim) per
 # Subsquid's required pattern.
 
-# A whitelisted address that posts hack alerts and/or votes on them.
+# A whitelisted address that posts hack alerts and/or confirms them.
 type Whitelister @entity {
   "the address (lowercased)"
   id: ID!
@@ -23,7 +23,7 @@ type Whitelister @entity {
   lastChangedAtBlock: Int
 
   posts: [Post!]! @derivedFrom(field: "poster")
-  votes: [Vote!]! @derivedFrom(field: "voter")
+  confirmationLog: [Confirmation!]! @derivedFrom(field: "confirmer")
   changes: [WhitelistChange!]! @derivedFrom(field: "addr")
 }
 
@@ -46,8 +46,8 @@ type Post @entity {
   "latest note text — historical edits captured in Edit entities"
   note: String!
 
-  upvotes: Int!
-  downvotes: Int!
+  confirmations: Int!
+  disconfirmations: Int!
   netScore: Int!
 
   removed: Boolean!
@@ -60,7 +60,7 @@ type Post @entity {
 
   attackerLinks: [PostAttacker!]! @derivedFrom(field: "post")
   victimLinks: [PostVictim!]! @derivedFrom(field: "post")
-  votes: [Vote!]! @derivedFrom(field: "post")
+  confirmationLog: [Confirmation!]! @derivedFrom(field: "post")
   edits: [Edit!]! @derivedFrom(field: "post")
 }
 
@@ -70,7 +70,7 @@ type Address @entity {
   "the address (lowercased)"
   id: ID!
 
-  "signed sum of net votes across all non-removed posts listing the address as attacker"
+  "signed sum of net confirmations across all non-removed posts listing the address as attacker"
   attackerScore: BigInt!
 
   "count of posts where the address is listed as attacker (lifetime, includes removed)"
@@ -106,29 +106,29 @@ type PostVictim @entity {
   createdAtBlock: Int!
 }
 
-# A single vote action — historical record (every up, down, and unvote).
-type Vote @entity {
+# A single confirmation action — historical record (every up, down, and unconfirm).
+type Confirmation @entity {
   "txHash-logIndex"
   id: ID!
 
   post: Post! @index
-  voter: Whitelister! @index
+  confirmer: Whitelister! @index
 
-  "previous vote direction at the time of this event (None if first vote)"
-  oldDirection: VoteDirection!
+  "previous confirm direction at the time of this event (None if first confirmation)"
+  oldDirection: ConfirmDirection!
 
-  "new vote direction emitted by the contract (None on unvote)"
-  newDirection: VoteDirection!
+  "new confirm direction emitted by the contract (None on unconfirm)"
+  newDirection: ConfirmDirection!
 
   blockNumber: Int!
   timestamp: DateTime!
   txHash: String!
 }
 
-enum VoteDirection {
+enum ConfirmDirection {
   None
-  Upvote
-  Downvote
+  Up
+  Down
 }
 
 # Whitelist add/remove history.

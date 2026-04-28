@@ -4,6 +4,7 @@ import type { EventParams as EParams, FunctionArguments, FunctionReturn } from '
 
 export const events = {
     AttackersAdded: event("0x11e33fe659ce20067cdcc1c90a3b342aa497e29cfcb732a3eaddd3a2d3c39bb4", "AttackersAdded(uint256,address,address[])", {"postId": indexed(p.uint256), "amender": indexed(p.address), "newAttackers": p.array(p.address)}),
+    Confirmed: event("0x097ad824d639a422c3d350f244fc0f8c23b116959ede9dbc119114e0fae20222", "Confirmed(uint256,address,uint8,uint8)", {"postId": indexed(p.uint256), "confirmer": indexed(p.address), "oldDirection": p.uint8, "newDirection": p.uint8}),
     Initialized: event("0xc7f505b2f371ae2175ee4913f4499e1f2633a7b5936321eed1cdaeb6115181d2", "Initialized(uint64)", {"version": p.uint64}),
     OwnershipTransferStarted: event("0x38d16b8cac22d99fc7c124b9cd0de2d3fa1faef420bfe791d8c362d765e22700", "OwnershipTransferStarted(address,address)", {"previousOwner": indexed(p.address), "newOwner": indexed(p.address)}),
     OwnershipTransferred: event("0x8be0079c531659141344cd1fd0a4f28419497f9722a3daafe3b4186f6b6457e0", "OwnershipTransferred(address,address)", {"previousOwner": indexed(p.address), "newOwner": indexed(p.address)}),
@@ -13,7 +14,6 @@ export const events = {
     PostTitleAmended: event("0xaae225037103bba935ab52a59332ced3e456790237b9b71dc31ce4357a9cdb6c", "PostTitleAmended(uint256,address,string)", {"postId": indexed(p.uint256), "amender": indexed(p.address), "newTitle": p.string}),
     Upgraded: event("0xbc7cd75a20ee27fd9adebab32041f755214dbc6bffa90cc0225b39da2e5c2d3b", "Upgraded(address)", {"implementation": indexed(p.address)}),
     VictimsAdded: event("0x6bb42a267ffcd2d73693fdcf84c1f13c887f2d4dba77e9477c0c4123eae655c8", "VictimsAdded(uint256,address,address[])", {"postId": indexed(p.uint256), "amender": indexed(p.address), "newVictims": p.array(p.address)}),
-    Voted: event("0x19adb7d3e13e2d662a94a50dfe0d354cd07a4f56f757fe2d58e8d188797b7703", "Voted(uint256,address,uint8,uint8)", {"postId": indexed(p.uint256), "voter": indexed(p.address), "oldDirection": p.uint8, "newDirection": p.uint8}),
     WhitelistUpdated: event("0xf93f9a76c1bf3444d22400a00cb9fe990e6abe9dbb333fda48859cfee864543d", "WhitelistUpdated(address,bool)", {"account": indexed(p.address), "status": p.bool}),
 }
 
@@ -32,11 +32,13 @@ export const functions = {
     attackerAppearances: viewFun("0x640c6395", "attackerAppearances(address)", {"_0": p.address}, p.uint256),
     attackerReport: viewFun("0x07363ce8", "attackerReport(address)", {"a": p.address}, {"score": p.int256, "appearances": p.uint256}),
     attackerScore: viewFun("0x6559e955", "attackerScore(address)", {"_0": p.address}, p.int256),
-    getDownvoterCount: viewFun("0x0914f11d", "getDownvoterCount(uint256)", {"postId": p.uint256}, p.uint256),
-    getDownvoters: viewFun("0x29b5b159", "getDownvoters(uint256)", {"postId": p.uint256}, p.array(p.address)),
-    getPost: viewFun("0x40731c24", "getPost(uint256)", {"id": p.uint256}, {"poster": p.address, "attackedAt": p.uint64, "upvotes": p.uint32, "downvotes": p.uint32, "removed": p.bool, "attackers_": p.array(p.address), "victims_": p.array(p.address), "lastUpdatedAt": p.uint64}),
-    getUpvoterCount: viewFun("0x34bead0c", "getUpvoterCount(uint256)", {"postId": p.uint256}, p.uint256),
-    getUpvoters: viewFun("0xaa6ee29b", "getUpvoters(uint256)", {"postId": p.uint256}, p.array(p.address)),
+    confirm: fun("0x13a34b28", "confirm(uint256,uint8)", {"postId": p.uint256, "direction": p.uint8}, ),
+    confirmationOf: viewFun("0xb1fd994b", "confirmationOf(uint256,address)", {"_0": p.uint256, "_1": p.address}, p.uint8),
+    getConfirmerCount: viewFun("0xa8beb1da", "getConfirmerCount(uint256)", {"postId": p.uint256}, p.uint256),
+    getConfirmers: viewFun("0xb779e1c0", "getConfirmers(uint256)", {"postId": p.uint256}, p.array(p.address)),
+    getDisconfirmerCount: viewFun("0x59dafd3c", "getDisconfirmerCount(uint256)", {"postId": p.uint256}, p.uint256),
+    getDisconfirmers: viewFun("0x7e7d5daf", "getDisconfirmers(uint256)", {"postId": p.uint256}, p.array(p.address)),
+    getPost: viewFun("0x40731c24", "getPost(uint256)", {"id": p.uint256}, {"poster": p.address, "attackedAt": p.uint64, "confirmations": p.uint32, "disconfirmations": p.uint32, "removed": p.bool, "attackers_": p.array(p.address), "victims_": p.array(p.address), "lastUpdatedAt": p.uint64}),
     headPostId: viewFun("0xf93b72e1", "headPostId()", {}, p.uint256),
     initialize: fun("0xc4d66de8", "initialize(address)", {"initialOwner": p.address}, ),
     isVictim: viewFun("0x2d10cc3d", "isVictim(address)", {"_0": p.address}, p.bool),
@@ -55,10 +57,8 @@ export const functions = {
     retract: fun("0x9fab6656", "retract(uint256)", {"postId": p.uint256}, ),
     tailPostId: viewFun("0x8094c914", "tailPostId()", {}, p.uint256),
     transferOwnership: fun("0xf2fde38b", "transferOwnership(address)", {"newOwner": p.address}, ),
-    unvote: fun("0x51ec4285", "unvote(uint256)", {"postId": p.uint256}, ),
+    unconfirm: fun("0xec132ce3", "unconfirm(uint256)", {"postId": p.uint256}, ),
     upgradeToAndCall: fun("0x4f1ef286", "upgradeToAndCall(address,bytes)", {"newImplementation": p.address, "data": p.bytes}, ),
-    vote: fun("0x943e8216", "vote(uint256,uint8)", {"postId": p.uint256, "direction": p.uint8}, ),
-    voteOf: viewFun("0x45ddc85d", "voteOf(uint256,address)", {"_0": p.uint256, "_1": p.address}, p.uint8),
 }
 
 export class Contract extends ContractBase {
@@ -95,24 +95,28 @@ export class Contract extends ContractBase {
         return this.eth_call(functions.attackerScore, {_0})
     }
 
-    getDownvoterCount(postId: GetDownvoterCountParams["postId"]) {
-        return this.eth_call(functions.getDownvoterCount, {postId})
+    confirmationOf(_0: ConfirmationOfParams["_0"], _1: ConfirmationOfParams["_1"]) {
+        return this.eth_call(functions.confirmationOf, {_0, _1})
     }
 
-    getDownvoters(postId: GetDownvotersParams["postId"]) {
-        return this.eth_call(functions.getDownvoters, {postId})
+    getConfirmerCount(postId: GetConfirmerCountParams["postId"]) {
+        return this.eth_call(functions.getConfirmerCount, {postId})
+    }
+
+    getConfirmers(postId: GetConfirmersParams["postId"]) {
+        return this.eth_call(functions.getConfirmers, {postId})
+    }
+
+    getDisconfirmerCount(postId: GetDisconfirmerCountParams["postId"]) {
+        return this.eth_call(functions.getDisconfirmerCount, {postId})
+    }
+
+    getDisconfirmers(postId: GetDisconfirmersParams["postId"]) {
+        return this.eth_call(functions.getDisconfirmers, {postId})
     }
 
     getPost(id: GetPostParams["id"]) {
         return this.eth_call(functions.getPost, {id})
-    }
-
-    getUpvoterCount(postId: GetUpvoterCountParams["postId"]) {
-        return this.eth_call(functions.getUpvoterCount, {postId})
-    }
-
-    getUpvoters(postId: GetUpvotersParams["postId"]) {
-        return this.eth_call(functions.getUpvoters, {postId})
     }
 
     headPostId() {
@@ -162,14 +166,11 @@ export class Contract extends ContractBase {
     tailPostId() {
         return this.eth_call(functions.tailPostId, {})
     }
-
-    voteOf(_0: VoteOfParams["_0"], _1: VoteOfParams["_1"]) {
-        return this.eth_call(functions.voteOf, {_0, _1})
-    }
 }
 
 /// Event types
 export type AttackersAddedEventArgs = EParams<typeof events.AttackersAdded>
+export type ConfirmedEventArgs = EParams<typeof events.Confirmed>
 export type InitializedEventArgs = EParams<typeof events.Initialized>
 export type OwnershipTransferStartedEventArgs = EParams<typeof events.OwnershipTransferStarted>
 export type OwnershipTransferredEventArgs = EParams<typeof events.OwnershipTransferred>
@@ -179,7 +180,6 @@ export type PostRemovedEventArgs = EParams<typeof events.PostRemoved>
 export type PostTitleAmendedEventArgs = EParams<typeof events.PostTitleAmended>
 export type UpgradedEventArgs = EParams<typeof events.Upgraded>
 export type VictimsAddedEventArgs = EParams<typeof events.VictimsAdded>
-export type VotedEventArgs = EParams<typeof events.Voted>
 export type WhitelistUpdatedEventArgs = EParams<typeof events.WhitelistUpdated>
 
 /// Function types
@@ -225,20 +225,26 @@ export type AttackerReportReturn = FunctionReturn<typeof functions.attackerRepor
 export type AttackerScoreParams = FunctionArguments<typeof functions.attackerScore>
 export type AttackerScoreReturn = FunctionReturn<typeof functions.attackerScore>
 
-export type GetDownvoterCountParams = FunctionArguments<typeof functions.getDownvoterCount>
-export type GetDownvoterCountReturn = FunctionReturn<typeof functions.getDownvoterCount>
+export type ConfirmParams = FunctionArguments<typeof functions.confirm>
+export type ConfirmReturn = FunctionReturn<typeof functions.confirm>
 
-export type GetDownvotersParams = FunctionArguments<typeof functions.getDownvoters>
-export type GetDownvotersReturn = FunctionReturn<typeof functions.getDownvoters>
+export type ConfirmationOfParams = FunctionArguments<typeof functions.confirmationOf>
+export type ConfirmationOfReturn = FunctionReturn<typeof functions.confirmationOf>
+
+export type GetConfirmerCountParams = FunctionArguments<typeof functions.getConfirmerCount>
+export type GetConfirmerCountReturn = FunctionReturn<typeof functions.getConfirmerCount>
+
+export type GetConfirmersParams = FunctionArguments<typeof functions.getConfirmers>
+export type GetConfirmersReturn = FunctionReturn<typeof functions.getConfirmers>
+
+export type GetDisconfirmerCountParams = FunctionArguments<typeof functions.getDisconfirmerCount>
+export type GetDisconfirmerCountReturn = FunctionReturn<typeof functions.getDisconfirmerCount>
+
+export type GetDisconfirmersParams = FunctionArguments<typeof functions.getDisconfirmers>
+export type GetDisconfirmersReturn = FunctionReturn<typeof functions.getDisconfirmers>
 
 export type GetPostParams = FunctionArguments<typeof functions.getPost>
 export type GetPostReturn = FunctionReturn<typeof functions.getPost>
-
-export type GetUpvoterCountParams = FunctionArguments<typeof functions.getUpvoterCount>
-export type GetUpvoterCountReturn = FunctionReturn<typeof functions.getUpvoterCount>
-
-export type GetUpvotersParams = FunctionArguments<typeof functions.getUpvoters>
-export type GetUpvotersReturn = FunctionReturn<typeof functions.getUpvoters>
 
 export type HeadPostIdParams = FunctionArguments<typeof functions.headPostId>
 export type HeadPostIdReturn = FunctionReturn<typeof functions.headPostId>
@@ -294,15 +300,9 @@ export type TailPostIdReturn = FunctionReturn<typeof functions.tailPostId>
 export type TransferOwnershipParams = FunctionArguments<typeof functions.transferOwnership>
 export type TransferOwnershipReturn = FunctionReturn<typeof functions.transferOwnership>
 
-export type UnvoteParams = FunctionArguments<typeof functions.unvote>
-export type UnvoteReturn = FunctionReturn<typeof functions.unvote>
+export type UnconfirmParams = FunctionArguments<typeof functions.unconfirm>
+export type UnconfirmReturn = FunctionReturn<typeof functions.unconfirm>
 
 export type UpgradeToAndCallParams = FunctionArguments<typeof functions.upgradeToAndCall>
 export type UpgradeToAndCallReturn = FunctionReturn<typeof functions.upgradeToAndCall>
-
-export type VoteParams = FunctionArguments<typeof functions.vote>
-export type VoteReturn = FunctionReturn<typeof functions.vote>
-
-export type VoteOfParams = FunctionArguments<typeof functions.voteOf>
-export type VoteOfReturn = FunctionReturn<typeof functions.voteOf>
 

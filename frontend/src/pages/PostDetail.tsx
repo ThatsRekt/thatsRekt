@@ -85,7 +85,7 @@ export function PostDetail() {
             attacked {relativeTime(data.attackedAt)}
           </span>
           <span className="ml-auto">
-            <ScoreLine net={data.netScore} up={data.upvotes} down={data.downvotes} />
+            <ScoreLine net={data.netScore} up={data.confirmations} down={data.disconfirmations} />
           </span>
         </div>
 
@@ -180,7 +180,7 @@ export function PostDetail() {
       <section>
         <SectionLabel>timeline</SectionLabel>
         <div className="mt-3">
-          <Timeline post={data} votes={data.votes} edits={data.edits} chainSlug={chainSlug} />
+          <Timeline post={data} log={data.confirmationLog} edits={data.edits} chainSlug={chainSlug} />
         </div>
       </section>
     </article>

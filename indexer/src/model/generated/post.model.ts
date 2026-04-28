@@ -2,7 +2,7 @@ import {Entity as Entity_, Column as Column_, PrimaryColumn as PrimaryColumn_, M
 import {Whitelister} from "./whitelister.model"
 import {PostAttacker} from "./postAttacker.model"
 import {PostVictim} from "./postVictim.model"
-import {Vote} from "./vote.model"
+import {Confirmation} from "./confirmation.model"
 import {Edit} from "./edit.model"
 
 @Entity_()
@@ -46,10 +46,10 @@ export class Post {
     note!: string
 
     @IntColumn_({nullable: false})
-    upvotes!: number
+    confirmations!: number
 
     @IntColumn_({nullable: false})
-    downvotes!: number
+    disconfirmations!: number
 
     @IntColumn_({nullable: false})
     netScore!: number
@@ -75,8 +75,8 @@ export class Post {
     @OneToMany_(() => PostVictim, e => e.post)
     victimLinks!: Relation_<PostVictim[]>
 
-    @OneToMany_(() => Vote, e => e.post)
-    votes!: Relation_<Vote[]>
+    @OneToMany_(() => Confirmation, e => e.post)
+    confirmationLog!: Relation_<Confirmation[]>
 
     @OneToMany_(() => Edit, e => e.post)
     edits!: Relation_<Edit[]>

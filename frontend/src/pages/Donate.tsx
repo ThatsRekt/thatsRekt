@@ -22,13 +22,13 @@ export function Donate() {
       <section className="space-y-4">
         <p className="text-base leading-relaxed text-neutral-800">
           <strong className="font-black">thatsRekt is a public good.</strong>{' '}
-          Reads are open to anyone — every score, every post, every voter
+          Reads are open to anyone — every score, every post, every confirmer
           set is queryable from any contract or app. Nobody profits from
           running it, and nobody is meant to.
         </p>
         <p className="text-base leading-relaxed text-neutral-800">
           Posting hack alerts is permissioned: only whitelisted operators
-          can post or vote. A{' '}
+          can post or confirm. A{' '}
           <strong className="font-black">governance multisig rules the protocol</strong>
           {' '}— it controls the whitelist and can upgrade the contract, but
           every change goes through a{' '}

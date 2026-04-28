@@ -22,8 +22,8 @@ import {
   PostAttacker,
   PostVictim,
   Upgrade,
-  Vote,
-  VoteDirection,
+  Confirmation,
+  ConfirmDirection,
   WhitelistChange,
   Whitelister,
 } from './model'
@@ -37,7 +37,7 @@ type Caches = {
   postAttackers: Map<string, PostAttacker>
   postVictims: Map<string, PostVictim>
   // append-only — never read back this batch
-  votes: Vote[]
+  confirmationLog: Confirmation[]
   edits: Edit[]
   whitelistChanges: WhitelistChange[]
   upgrades: Upgrade[]
@@ -50,7 +50,7 @@ const newCaches = (): Caches => ({
   whitelisters: new Map(),
   postAttackers: new Map(),
   postVictims: new Map(),
-  votes: [],
+  confirmationLog: [],
   edits: [],
   whitelistChanges: [],
   upgrades: [],
@@ -153,18 +153,18 @@ async function getOrCreatePostVictim(
   return link
 }
 
-const directionFromUint8 = (n: number): VoteDirection => {
+const directionFromUint8 = (n: number): ConfirmDirection => {
   switch (n) {
-    case 0: return VoteDirection.None
-    case 1: return VoteDirection.Upvote
-    case 2: return VoteDirection.Downvote
-    default: throw new Error(`Unknown VoteDirection uint8: ${n}`)
+    case 0: return ConfirmDirection.None
+    case 1: return ConfirmDirection.Up
+    case 2: return ConfirmDirection.Down
+    default: throw new Error(`Unknown ConfirmDirection uint8: ${n}`)
   }
 }
 
-const weight = (d: VoteDirection): number => {
-  if (d === VoteDirection.Upvote) return 1
-  if (d === VoteDirection.Downvote) return -1
+const weight = (d: ConfirmDirection): number => {
+  if (d === ConfirmDirection.Up) return 1
+  if (d === ConfirmDirection.Down) return -1
   return 0
 }
 
@@ -184,8 +184,8 @@ async function handlePostCreated(ctx: Ctx, caches: Caches, log: Log): Promise<vo
     lastUpdatedAt: ts,
     title: e.title,
     note: e.note,
-    upvotes: 0,
-    downvotes: 0,
+    confirmations: 0,
+    disconfirmations: 0,
     netScore: 0,
     removed: false,
     createdAtBlock: block.height,
@@ -196,7 +196,7 @@ async function handlePostCreated(ctx: Ctx, caches: Caches, log: Log): Promise<vo
   for (const rawAttacker of e.attackers) {
     const addr = await getOrCreateAddress(ctx, caches, rawAttacker)
     addr.attackerAppearances += 1
-    // score unchanged at creation: post starts at 0/0 votes -> netScore == 0
+    // score unchanged at creation: post starts at 0/0 confirmations -> netScore == 0
     await getOrCreatePostAttacker(ctx, caches, post, addr, block.height)
   }
 
@@ -208,8 +208,8 @@ async function handlePostCreated(ctx: Ctx, caches: Caches, log: Log): Promise<vo
   }
 }
 
-async function handleVoted(ctx: Ctx, caches: Caches, log: Log): Promise<void> {
-  const e = events.Voted.decode(log)
+async function handleConfirmed(ctx: Ctx, caches: Caches, log: Log): Promise<void> {
+  const e = events.Confirmed.decode(log)
   const block = log.block
   const postId = e.postId.toString()
   const oldDir = directionFromUint8(e.oldDirection)
@@ -218,16 +218,16 @@ async function handleVoted(ctx: Ctx, caches: Caches, log: Log): Promise<void> {
 
   const post = await getOrCreatePost(ctx, caches, postId)
   if (!post) {
-    ctx.log.warn(`Voted event references unknown postId=${postId}; skipping`)
+    ctx.log.warn(`Confirmed event references unknown postId=${postId}; skipping`)
     return
   }
 
-  // Maintain post.upvotes / post.downvotes counters per direction transition.
-  if (oldDir === VoteDirection.Upvote) post.upvotes -= 1
-  else if (oldDir === VoteDirection.Downvote) post.downvotes -= 1
-  if (newDir === VoteDirection.Upvote) post.upvotes += 1
-  else if (newDir === VoteDirection.Downvote) post.downvotes += 1
-  post.netScore = post.upvotes - post.downvotes
+  // Maintain post.confirmations / post.disconfirmations counters per direction transition.
+  if (oldDir === ConfirmDirection.Up) post.confirmations -= 1
+  else if (oldDir === ConfirmDirection.Down) post.disconfirmations -= 1
+  if (newDir === ConfirmDirection.Up) post.confirmations += 1
+  else if (newDir === ConfirmDirection.Down) post.disconfirmations += 1
+  post.netScore = post.confirmations - post.disconfirmations
 
   // Apply attacker score delta — load every attacker linked to this post.
   if (delta !== 0) {
@@ -243,12 +243,12 @@ async function handleVoted(ctx: Ctx, caches: Caches, log: Log): Promise<void> {
     }
   }
 
-  const voter = await getOrCreateWhitelister(ctx, caches, e.voter)
-  caches.votes.push(
-    new Vote({
+  const confirmer = await getOrCreateWhitelister(ctx, caches, e.confirmer)
+  caches.confirmationLog.push(
+    new Confirmation({
       id: eventId(log),
       post,
-      voter,
+      confirmer,
       oldDirection: oldDir,
       newDirection: newDir,
       blockNumber: block.height,
@@ -516,8 +516,8 @@ processor.run(new TypeormDatabase({ supportHotBlocks: true }), async (ctx) => {
         case events.PostCreated.topic:
           await handlePostCreated(ctx, caches, log)
           break
-        case events.Voted.topic:
-          await handleVoted(ctx, caches, log)
+        case events.Confirmed.topic:
+          await handleConfirmed(ctx, caches, log)
           break
         case events.PostRemoved.topic:
           await handlePostRemoved(ctx, caches, log)
@@ -552,13 +552,13 @@ processor.run(new TypeormDatabase({ supportHotBlocks: true }), async (ctx) => {
   }
 
   // Persist. Order matters: parents (Whitelister, Address, Post) before
-  // children (PostAttacker, PostVictim, Vote, Edit) due to FK constraints.
+  // children (PostAttacker, PostVictim, Confirmation, Edit) due to FK constraints.
   await ctx.store.upsert([...caches.whitelisters.values()])
   await ctx.store.upsert([...caches.addresses.values()])
   await ctx.store.upsert([...caches.posts.values()])
   await ctx.store.upsert([...caches.postAttackers.values()])
   await ctx.store.upsert([...caches.postVictims.values()])
-  await ctx.store.insert(caches.votes)
+  await ctx.store.insert(caches.confirmationLog)
   await ctx.store.insert(caches.edits)
   await ctx.store.insert(caches.whitelistChanges)
   await ctx.store.insert(caches.upgrades)

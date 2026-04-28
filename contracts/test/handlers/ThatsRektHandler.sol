@@ -37,15 +37,15 @@ contract ThatsRektHandler is Test {
         } catch { /* expected: NotWhitelisted, etc. */ }
     }
 
-    function fuzz_vote(uint256 actorSeed, uint256 postSeed, bool isUpvote) external {
+    function fuzz_vote(uint256 actorSeed, uint256 postSeed, bool isUpConfirm) external {
         if (livePostIds.length == 0) return;
         address voter = _actor(actorSeed);
         uint256 id = livePostIds[postSeed % livePostIds.length];
-        ThatsRekt.VoteDirection dir = isUpvote
-            ? ThatsRekt.VoteDirection.Upvote
-            : ThatsRekt.VoteDirection.Downvote;
+        ThatsRekt.ConfirmDirection dir = isUpConfirm
+            ? ThatsRekt.ConfirmDirection.Up
+            : ThatsRekt.ConfirmDirection.Down;
         vm.prank(voter);
-        try reg.vote(id, dir) {} catch { /* PosterCannotVote, NoVoteChange, PostIsRemoved, NotWhitelisted ok */ }
+        try reg.confirm(id, dir) {} catch { /* PosterCannotConfirm, NoConfirmationChange, PostIsRemoved, NotWhitelisted ok */ }
     }
 
     function fuzz_unvote(uint256 actorSeed, uint256 postSeed) external {
@@ -53,7 +53,7 @@ contract ThatsRektHandler is Test {
         address voter = _actor(actorSeed);
         uint256 id = livePostIds[postSeed % livePostIds.length];
         vm.prank(voter);
-        try reg.unvote(id) {} catch { /* NoVoteToRetract, PostIsRemoved, NotWhitelisted ok */ }
+        try reg.unconfirm(id) {} catch { /* NothingToUnconfirm, PostIsRemoved, NotWhitelisted ok */ }
     }
 
     function fuzz_retract(uint256 actorSeed, uint256 postSeed) external {

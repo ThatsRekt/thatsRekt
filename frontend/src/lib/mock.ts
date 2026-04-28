@@ -5,8 +5,8 @@ import type {
   FeedPost,
   PostDetail,
   SortOption,
-  VoteDirection,
-  VoteEntity,
+  ConfirmDirection,
+  ConfirmationEntity,
 } from './queries'
 
 // Realistic dummy data so the UI can be inspected without a running indexer.
@@ -45,14 +45,14 @@ const addr = (id: string, score: string, isVictim = false, appearances = 1): Add
 
 const v = (
   id: string,
-  voter: string,
-  oldDirection: VoteDirection,
-  newDirection: VoteDirection,
+  confirmer: string,
+  oldDirection: ConfirmDirection,
+  newDirection: ConfirmDirection,
   blockNumber: number,
   timestamp: string,
-): VoteEntity => ({
+): ConfirmationEntity => ({
   id,
-  voter: { id: voter.toLowerCase() },
+  confirmer: { id: confirmer.toLowerCase() },
   oldDirection,
   newDirection,
   blockNumber,
@@ -86,8 +86,8 @@ const POST_42: PostDetail = {
   title: "Bridge exploit on Mochi vault",
   note:
     'Active bridge exploit in progress. Attacker drained ~$4.2M from the bridge contract on Base. Funds are being moved through ETH bridge — flagging the attacker EOA + downstream laundering addresses. Full thread incoming on our channel.',
-  upvotes: 4,
-  downvotes: 0,
+  confirmations: 4,
+  disconfirmations: 0,
   netScore: 4,
   removed: false,
   createdAtBlock: 0,
@@ -99,11 +99,11 @@ const POST_42: PostDetail = {
     { address: addr(ATTACKER_LAUNDER_2, '4', false, 1) },
   ],
   victimLinks: [{ address: addr(BRIDGE_VICTIM, '0', true) }],
-  votes: [
-    v('0xtx1-1', BLOCKSEC, 'None', 'Upvote', 18450010, iso(NOW - 4.8 * HOUR)),
-    v('0xtx2-3', PECKSHIELD, 'None', 'Upvote', 18450055, iso(NOW - 4.5 * HOUR)),
-    v('0xtx3-2', HIRYUU, 'None', 'Upvote', 18450122, iso(NOW - 4 * HOUR)),
-    v('0xtx4-1', NUMEN, 'None', 'Upvote', 18450199, iso(NOW - 3 * HOUR)),
+  confirmationLog: [
+    v('0xtx1-1', BLOCKSEC, 'None', 'Up', 18450010, iso(NOW - 4.8 * HOUR)),
+    v('0xtx2-3', PECKSHIELD, 'None', 'Up', 18450055, iso(NOW - 4.5 * HOUR)),
+    v('0xtx3-2', HIRYUU, 'None', 'Up', 18450122, iso(NOW - 4 * HOUR)),
+    v('0xtx4-1', NUMEN, 'None', 'Up', 18450199, iso(NOW - 3 * HOUR)),
   ],
   edits: [
     e('0xtx5-1', 'AmendNote', 18450350, iso(NOW - 2 * HOUR), {
@@ -124,8 +124,8 @@ const POST_41: PostDetail = {
   title: "Drainer detected on Aave v3",
   note:
     'Flash-loan based price manipulation against the lending pool. ~$1.1M lost. Attacker used a single tx to manipulate the oracle and liquidate underwater positions at a discount.',
-  upvotes: 3,
-  downvotes: 0,
+  confirmations: 3,
+  disconfirmations: 0,
   netScore: 3,
   removed: false,
   createdAtBlock: 0,
@@ -133,10 +133,10 @@ const POST_41: PostDetail = {
   removedAtTimestamp: null,
   attackerLinks: [{ address: addr(ATTACKER_EOA_2, '3', false, 1) }],
   victimLinks: [{ address: addr(POOL_VICTIM, '0', true) }],
-  votes: [
-    v('0xtx10-1', SLOWMIST, 'None', 'Upvote', 18380000, iso(NOW - 28 * HOUR)),
-    v('0xtx11-2', PECKSHIELD, 'None', 'Upvote', 18380120, iso(NOW - 27 * HOUR)),
-    v('0xtx12-1', HIRYUU, 'None', 'Upvote', 18380302, iso(NOW - 26 * HOUR)),
+  confirmationLog: [
+    v('0xtx10-1', SLOWMIST, 'None', 'Up', 18380000, iso(NOW - 28 * HOUR)),
+    v('0xtx11-2', PECKSHIELD, 'None', 'Up', 18380120, iso(NOW - 27 * HOUR)),
+    v('0xtx12-1', HIRYUU, 'None', 'Up', 18380302, iso(NOW - 26 * HOUR)),
   ],
   edits: [],
 }
@@ -149,8 +149,8 @@ const POST_40: PostDetail = {
   title: "Suspicious withdraw from Compound",
   note:
     'Re-entrancy on a yield vault — checks-effects-interactions ordering bug. Attacker withdrew ~$320k before the team could pause. Pause activated, recovery negotiations ongoing.',
-  upvotes: 2,
-  downvotes: 0,
+  confirmations: 2,
+  disconfirmations: 0,
   netScore: 2,
   removed: false,
   createdAtBlock: 0,
@@ -161,9 +161,9 @@ const POST_40: PostDetail = {
     { address: addr(VAULT_VICTIM, '0', true) },
     { address: addr(STAKING_VICTIM, '0', true) },
   ],
-  votes: [
-    v('0xtx20-1', SLOWMIST, 'None', 'Upvote', 18290000, iso(NOW - 2.9 * DAY)),
-    v('0xtx21-2', BLOCKSEC, 'None', 'Upvote', 18290444, iso(NOW - 2.7 * DAY)),
+  confirmationLog: [
+    v('0xtx20-1', SLOWMIST, 'None', 'Up', 18290000, iso(NOW - 2.9 * DAY)),
+    v('0xtx21-2', BLOCKSEC, 'None', 'Up', 18290444, iso(NOW - 2.7 * DAY)),
   ],
   edits: [
     e('0xtx22-1', 'AddVictims', 18290601, iso(NOW - 2.5 * DAY), {
@@ -180,8 +180,8 @@ const POST_39: PostDetail = {
   title: "Fake airdrop phishing wave",
   note:
     'Suspected exit scam from a small farm contract. Attacker drained the LP. Posting for visibility — TVL was modest (~$60k).',
-  upvotes: 1,
-  downvotes: 3,
+  confirmations: 1,
+  disconfirmations: 3,
   netScore: -2,
   removed: false,
   createdAtBlock: 0,
@@ -189,11 +189,11 @@ const POST_39: PostDetail = {
   removedAtTimestamp: null,
   attackerLinks: [{ address: addr('0xdeadc0de00000000000000000000000000000099', '-2') }],
   victimLinks: [{ address: addr('0xfa1100000000000000000000000000000000ee00', '0', true) }],
-  votes: [
-    v('0xtx30-1', NUMEN, 'None', 'Upvote', 18200000, iso(NOW - 3.8 * DAY)),
-    v('0xtx31-2', SLOWMIST, 'None', 'Downvote', 18200400, iso(NOW - 3.7 * DAY)),
-    v('0xtx32-1', BLOCKSEC, 'None', 'Downvote', 18200555, iso(NOW - 3.6 * DAY)),
-    v('0xtx33-2', PECKSHIELD, 'None', 'Downvote', 18200800, iso(NOW - 3.5 * DAY)),
+  confirmationLog: [
+    v('0xtx30-1', NUMEN, 'None', 'Up', 18200000, iso(NOW - 3.8 * DAY)),
+    v('0xtx31-2', SLOWMIST, 'None', 'Down', 18200400, iso(NOW - 3.7 * DAY)),
+    v('0xtx32-1', BLOCKSEC, 'None', 'Down', 18200555, iso(NOW - 3.6 * DAY)),
+    v('0xtx33-2', PECKSHIELD, 'None', 'Down', 18200800, iso(NOW - 3.5 * DAY)),
   ],
   edits: [],
 }
@@ -205,8 +205,8 @@ const POST_38: PostDetail = {
   lastUpdatedAt: iso(NOW - 4 * DAY),
   title: "Retracted: false-positive migration",
   note: 'False alarm — turns out the suspicious tx was a legitimate migration. Retracting.',
-  upvotes: 0,
-  downvotes: 0,
+  confirmations: 0,
+  disconfirmations: 0,
   netScore: 0,
   removed: true,
   createdAtBlock: 0,
@@ -214,7 +214,7 @@ const POST_38: PostDetail = {
   removedAtTimestamp: iso(NOW - 4 * DAY),
   attackerLinks: [{ address: addr('0xa1ar0000000000000000000000000000000000aa', '0') }],
   victimLinks: [],
-  votes: [],
+  confirmationLog: [],
   edits: [],
 }
 
@@ -226,8 +226,8 @@ const POST_37: PostDetail = {
   title: "Test alert · seed",
   note:
     'Just-detected: anomalous outflow from a stablecoin issuer treasury. Investigating; will update.',
-  upvotes: 0,
-  downvotes: 0,
+  confirmations: 0,
+  disconfirmations: 0,
   netScore: 0,
   removed: false,
   createdAtBlock: 0,
@@ -235,7 +235,7 @@ const POST_37: PostDetail = {
   removedAtTimestamp: null,
   attackerLinks: [{ address: addr('0xfreshff00000000000000000000000000000fff0', '0') }],
   victimLinks: [{ address: addr('0xfreshff00000000000000000000000000000fee1', '0', true) }],
-  votes: [],
+  confirmationLog: [],
   edits: [],
 }
 
@@ -249,8 +249,8 @@ const toFeed = (p: PostDetail): FeedPost => ({
   attackedAt: p.attackedAt,
   title: p.title,
   note: p.note,
-  upvotes: p.upvotes,
-  downvotes: p.downvotes,
+  confirmations: p.confirmations,
+  disconfirmations: p.disconfirmations,
   netScore: p.netScore,
   createdAtTimestamp: p.createdAtTimestamp,
   attackerLinks: p.attackerLinks,

@@ -15,7 +15,7 @@ export class Address {
     id!: string
 
     /**
-     * signed sum of net votes across all non-removed posts listing the address as attacker
+     * signed sum of net confirmations across all non-removed posts listing the address as attacker
      */
     @BigIntColumn_({nullable: false})
     attackerScore!: bigint

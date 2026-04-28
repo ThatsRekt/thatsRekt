@@ -1,6 +1,6 @@
 import {Entity as Entity_, Column as Column_, PrimaryColumn as PrimaryColumn_, BooleanColumn as BooleanColumn_, DateTimeColumn as DateTimeColumn_, IntColumn as IntColumn_, OneToMany as OneToMany_, Relation as Relation_} from "@subsquid/typeorm-store"
 import {Post} from "./post.model"
-import {Vote} from "./vote.model"
+import {Confirmation} from "./confirmation.model"
 import {WhitelistChange} from "./whitelistChange.model"
 
 @Entity_()
@@ -33,8 +33,8 @@ export class Whitelister {
     @OneToMany_(() => Post, e => e.poster)
     posts!: Relation_<Post[]>
 
-    @OneToMany_(() => Vote, e => e.voter)
-    votes!: Relation_<Vote[]>
+    @OneToMany_(() => Confirmation, e => e.confirmer)
+    confirmationLog!: Relation_<Confirmation[]>
 
     @OneToMany_(() => WhitelistChange, e => e.addr)
     changes!: Relation_<WhitelistChange[]>

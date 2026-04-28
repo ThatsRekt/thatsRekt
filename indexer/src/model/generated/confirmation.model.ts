@@ -1,11 +1,11 @@
 import {Entity as Entity_, Column as Column_, PrimaryColumn as PrimaryColumn_, ManyToOne as ManyToOne_, Index as Index_, Relation as Relation_, IntColumn as IntColumn_, DateTimeColumn as DateTimeColumn_, StringColumn as StringColumn_} from "@subsquid/typeorm-store"
 import {Post} from "./post.model"
 import {Whitelister} from "./whitelister.model"
-import {VoteDirection} from "./_voteDirection"
+import {ConfirmDirection} from "./_confirmDirection"
 
 @Entity_()
-export class Vote {
-    constructor(props?: Partial<Vote>) {
+export class Confirmation {
+    constructor(props?: Partial<Confirmation>) {
         Object.assign(this, props)
     }
 
@@ -21,19 +21,19 @@ export class Vote {
 
     @Index_()
     @ManyToOne_(() => Whitelister, {nullable: true})
-    voter!: Relation_<Whitelister>
+    confirmer!: Relation_<Whitelister>
 
     /**
-     * previous vote direction at the time of this event (None if first vote)
+     * previous confirm direction at the time of this event (None if first confirmation)
      */
-    @Column_("varchar", {length: 8, nullable: false})
-    oldDirection!: VoteDirection
+    @Column_("varchar", {length: 4, nullable: false})
+    oldDirection!: ConfirmDirection
 
     /**
-     * new vote direction emitted by the contract (None on unvote)
+     * new confirm direction emitted by the contract (None on unconfirm)
      */
-    @Column_("varchar", {length: 8, nullable: false})
-    newDirection!: VoteDirection
+    @Column_("varchar", {length: 4, nullable: false})
+    newDirection!: ConfirmDirection
 
     @IntColumn_({nullable: false})
     blockNumber!: number
