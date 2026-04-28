@@ -3,8 +3,9 @@
  * config used by the Subsquid processor.
  *
  * Two flavors of chain entry:
- *   - Real chains:  `sepolia` (EIP-155 11155111), `base` (8453). Use
- *     Subsquid Network archive gateways + routeme.sh RPCs.
+ *   - Real chains:  `sepolia` (EIP-155 11155111), `base` (8453),
+ *     `optimism` (10). Use Subsquid Network archive gateways +
+ *     routeme.sh RPCs.
  *   - Local Anvil forks: `anvil-eth` (chainId 31337), `anvil-base`
  *     (chainId 31338). RPC-only mode (no archive gateway). Forked
  *     against real chain state via `--fork-url`. Distinct chain ids
@@ -25,7 +26,12 @@
  * keep in sync with mesh/src/chains.ts and frontend/src/lib/chains.ts.
  */
 
-export type ChainSlug = 'anvil-eth' | 'anvil-base' | 'sepolia' | 'base'
+export type ChainSlug =
+  | 'anvil-eth'
+  | 'anvil-base'
+  | 'sepolia'
+  | 'base'
+  | 'optimism'
 
 export interface ChainConfig {
   /** EIP-155 chain id. */
@@ -96,6 +102,17 @@ export const CHAINS: Readonly<Record<ChainSlug, ChainConfig>> = Object.freeze({
     rpcEnvVar: 'RPC_BASE_HTTP',
     contractEnvVar: 'CONTRACT_BASE',
     startBlockEnvVar: 'START_BLOCK_BASE',
+    finalityConfirmation: 75,
+    rpcRateLimit: 10,
+  },
+  optimism: {
+    chainId: 10,
+    slug: 'optimism',
+    name: 'Optimism',
+    gateway: 'https://v2.archive.subsquid.io/network/optimism-mainnet',
+    rpcEnvVar: 'RPC_OPTIMISM_HTTP',
+    contractEnvVar: 'CONTRACT_OPTIMISM',
+    startBlockEnvVar: 'START_BLOCK_OPTIMISM',
     finalityConfirmation: 75,
     rpcRateLimit: 10,
   },

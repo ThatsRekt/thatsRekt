@@ -12,7 +12,7 @@
 
 export interface FrontendChain {
   readonly chainId: number
-  readonly slug: 'anvil-eth' | 'anvil-base' | 'sepolia' | 'base'
+  readonly slug: 'anvil-eth' | 'anvil-base' | 'sepolia' | 'base' | 'optimism'
   readonly name: string
   /** Short label shown next to addresses, post cards, etc. */
   readonly badge: string
@@ -54,6 +54,14 @@ export const CHAINS: Readonly<Record<FrontendChain['slug'], FrontendChain>> =
       name: 'Base',
       badge: 'base',
       explorer: 'https://basescan.org',
+      isLocalFork: false,
+    },
+    optimism: {
+      chainId: 10,
+      slug: 'optimism',
+      name: 'Optimism',
+      badge: 'optimism',
+      explorer: 'https://optimistic.etherscan.io',
       isLocalFork: false,
     },
   })

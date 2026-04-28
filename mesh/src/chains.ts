@@ -11,7 +11,12 @@
  *   3. Mirror in indexer/src/chains.ts and frontend/src/lib/chains.ts.
  */
 
-export type ChainSlug = 'anvil-eth' | 'anvil-base' | 'sepolia' | 'base'
+export type ChainSlug =
+  | 'anvil-eth'
+  | 'anvil-base'
+  | 'sepolia'
+  | 'base'
+  | 'optimism'
 
 export interface ChainEntry {
   /** EIP-155 chain id. Distinct values across all entries (anvil forks
@@ -64,10 +69,18 @@ export const CHAINS: readonly ChainEntry[] = Object.freeze([
     prefix: 'Base_',
     endpoint: process.env.GRAPHQL_BASE_URL ?? 'http://graphql-base:4353/graphql',
   },
+  {
+    chainId: 10,
+    slug: 'optimism',
+    name: 'Optimism',
+    prefix: 'Optimism_',
+    endpoint:
+      process.env.GRAPHQL_OPTIMISM_URL ?? 'http://graphql-optimism:4355/graphql',
+  },
 ])
 
 export const ENABLED_CHAINS = new Set(
-  (process.env.MESH_CHAINS ?? 'anvil-eth,anvil-base,sepolia,base')
+  (process.env.MESH_CHAINS ?? 'anvil-eth,anvil-base,sepolia,base,optimism')
     .split(',')
     .map((s) => s.trim())
     .filter((s) => s.length > 0),
