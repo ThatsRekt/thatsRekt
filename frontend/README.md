@@ -46,6 +46,26 @@ pnpm preview          # http://localhost:4173 — smoke-test the static bundle
 
 Total bundle size: ~330 KB uncompressed, ~99 KB gzipped (split into a React chunk, a query/graphql chunk, and the app entry).
 
+## Docker (containerized prod build)
+
+A multi-stage `Dockerfile` produces an `nginx:alpine`-based image that serves `dist/` on port 80. nginx config is intentionally NOT baked in — runtime environments mount their own (e.g. damm-cloud's prod compose adds a `/graphql` reverse-proxy in front of the bundle so the SPA and the Mesh gateway share an origin).
+
+```bash
+docker build -t thatsrekt-frontend ./frontend
+docker run --rm -p 8080:80 thatsrekt-frontend
+# http://localhost:8080 — serves the static bundle with no proxy (useful smoke test)
+```
+
+Build args (all optional):
+
+| Build arg | Default | Purpose |
+|-----------|---------|---------|
+| `VITE_GRAPHQL_ENDPOINT` | `/graphql` | Relative path for same-origin Mesh proxy. Override with absolute URL for cross-origin deploys. |
+| `VITE_USE_MOCK_DATA` | `false` | Set `true` to bake in the mock dataset instead of querying GraphQL. |
+| `VITE_SHOW_LOCAL_FORKS` | `false` | Set `true` to expose anvil-* chains in the UI selector. |
+
+Default `VITE_GRAPHQL_ENDPOINT=/graphql` makes the bundle **domain-agnostic**: the same image works on EC2 public DNS today and on a real domain later, no rebuild on domain change.
+
 ## IPFS hosting (when ready)
 
 The build is intentionally constrained for IPFS hosting:

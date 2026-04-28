@@ -1,0 +1,26 @@
+# Build outputs
+dist/
+dist-ssr/
+*.tsbuildinfo
+
+# Dependencies (Dockerfile reinstalls inside the builder stage)
+node_modules/
+
+# Local env / secrets — never bake into the image
+.env
+.env.local
+.env.*.local
+
+# Editor / OS
+.DS_Store
+*.swp
+.idea/
+.vscode/
+.cache/
+
+# Logs
+*.log
+
+# Repo metadata not needed for the build
+README.md
+tasks/
