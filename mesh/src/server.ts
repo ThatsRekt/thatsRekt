@@ -131,8 +131,8 @@ const additionalTypeDefs = /* GraphQL */ `
     """Chains served by this gateway."""
     chains: [ChainInfo!]!
 
-    """Cross-chain feed page. Posts are sort-merged by createdAtTimestamp DESC across all enabled chains. Use \`offset + limit\` for pagination."""
-    posts(limit: Int = 25, offset: Int = 0): UnifiedPostsPage!
+    """Cross-chain feed page. Posts are sort-merged by createdAtTimestamp DESC across all enabled chains. Pass \`chains: [\"anvil-base\"]\` to scope to a single chain (or omit to query all). Use \`offset + limit\` for pagination."""
+    posts(limit: Int = 25, offset: Int = 0, chains: [String!]): UnifiedPostsPage!
   }
 `
 
@@ -202,14 +202,27 @@ const buildAdditionalResolvers = (chains: readonly ChainEntry[]) => ({
     chains: () =>
       chains.map((c) => ({ chainId: c.chainId, slug: c.slug, name: c.name })),
 
-    posts: async (_root: unknown, args: { limit: number; offset: number }) => {
+    posts: async (
+      _root: unknown,
+      args: { limit: number; offset: number; chains?: string[] | null },
+    ) => {
       const { limit, offset } = args
+      // Optional chain filter: when provided, only fan out to those
+      // chains. Unknown slugs are silently ignored (the GraphQL filter
+      // arg is opaque from upstream's perspective).
+      const filterSet = args.chains?.length
+        ? new Set(args.chains)
+        : null
+      const activeChains = filterSet
+        ? chains.filter((c) => filterSet.has(c.slug))
+        : chains
+
       // Each chain must yield enough rows to cover (offset + limit) after
       // merge. We over-fetch (offset + limit) per chain — generous upper
       // bound. Cursor-based pagination would be tighter; deferred.
       const fetchPerChain = offset + limit
       const results = await Promise.allSettled(
-        chains.map(async (c) => {
+        activeChains.map(async (c) => {
           const executor = makeExecutor(c.endpoint)
           const raw = await executor({
             document: parseQueryToDocument(FETCH_POSTS_QUERY),
@@ -242,11 +255,11 @@ const buildAdditionalResolvers = (chains: readonly ChainEntry[]) => ({
         return a.chain.chainId - b.chain.chainId
       })
 
-      // Per-chain count for totalCount + hasMore. Run in parallel with the
-      // page fetches above (separate await chain — overlap is automatic
-      // because we awaited results once).
+      // Per-chain count for totalCount + hasMore. Counts only the chains
+      // currently in scope (so a single-chain filter shows that chain's
+      // count, not the global total).
       const countResults = await Promise.allSettled(
-        chains.map(async (c) => {
+        activeChains.map(async (c) => {
           const executor = makeExecutor(c.endpoint)
           const raw = await executor({
             document: parseQueryToDocument(COUNT_POSTS_QUERY),

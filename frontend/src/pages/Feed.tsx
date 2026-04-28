@@ -2,7 +2,9 @@ import { useState } from 'react'
 import { useInfiniteQuery } from '@tanstack/react-query'
 import { fetchFeedPage, type FeedPost, type SortOption } from '../lib/queries'
 import { PostCard } from '../components/PostCard'
+import { ChainSelector } from '../components/ChainSelector'
 import { EmptyState } from '../components/EmptyState'
+import { useChainFilter } from '../hooks/useChainFilter'
 
 const PAGE_SIZE = 25
 
@@ -13,6 +15,12 @@ const SORT_OPTIONS: { value: SortOption; label: string }[] = [
 
 export function Feed() {
   const [sort, setSort] = useState<SortOption>('newest')
+  const { filter: chainFilter, setFilter: setChainFilter } = useChainFilter()
+
+  // Pass an array (single-element when scoped) — Mesh accepts a list.
+  // queryKey includes the filter so TanStack discriminates per scope and
+  // refetches cleanly on switch.
+  const chainSlugs = chainFilter ? [chainFilter] : undefined
 
   const {
     data,
@@ -22,8 +30,8 @@ export function Feed() {
     hasNextPage,
     isFetchingNextPage,
   } = useInfiniteQuery({
-    queryKey: ['feed', sort],
-    queryFn: ({ pageParam }) => fetchFeedPage(pageParam, PAGE_SIZE),
+    queryKey: ['feed', sort, chainFilter ?? 'all'],
+    queryFn: ({ pageParam }) => fetchFeedPage(pageParam, PAGE_SIZE, chainSlugs),
     initialPageParam: 0,
     getNextPageParam: (lastPage) => lastPage.nextOffset ?? undefined,
   })
@@ -38,7 +46,12 @@ export function Feed() {
 
   return (
     <div>
-      <SortBar current={sort} onChange={setSort} />
+      <FilterBar
+        sort={sort}
+        onSortChange={setSort}
+        chainFilter={chainFilter}
+        onChainChange={setChainFilter}
+      />
       <div className="mt-6">
         {isLoading ? (
           <p className="text-xs uppercase tracking-widest text-neutral-700">loading…</p>
@@ -66,36 +79,43 @@ export function Feed() {
   )
 }
 
-function SortBar({
-  current,
-  onChange,
+function FilterBar({
+  sort,
+  onSortChange,
+  chainFilter,
+  onChainChange,
 }: {
-  current: SortOption
-  onChange: (s: SortOption) => void
+  sort: SortOption
+  onSortChange: (s: SortOption) => void
+  chainFilter: string | null
+  onChainChange: (next: string | null) => void
 }) {
   return (
-    <div className="flex items-baseline gap-3 border-b border-black pb-3">
-      <span className="text-[10px] uppercase tracking-widest text-neutral-700">sort:</span>
-      <div className="flex gap-1">
-        {SORT_OPTIONS.map((opt) => {
-          const active = current === opt.value
-          return (
-            <button
-              key={opt.value}
-              type="button"
-              onClick={() => onChange(opt.value)}
-              className={
-                'px-2 py-0.5 text-xs uppercase tracking-widest border ' +
-                (active
-                  ? 'border-black bg-black text-[#f5f4ee]'
-                  : 'border-transparent text-neutral-700 hover:border-black hover:text-black')
-              }
-            >
-              {opt.label}
-            </button>
-          )
-        })}
+    <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-2 border-b border-black pb-3">
+      <div className="flex items-baseline gap-3">
+        <span className="text-[10px] uppercase tracking-widest text-neutral-700">sort:</span>
+        <div className="flex gap-1">
+          {SORT_OPTIONS.map((opt) => {
+            const active = sort === opt.value
+            return (
+              <button
+                key={opt.value}
+                type="button"
+                onClick={() => onSortChange(opt.value)}
+                className={
+                  'px-2 py-0.5 text-xs uppercase tracking-widest border ' +
+                  (active
+                    ? 'border-black bg-black text-[#f5f4ee]'
+                    : 'border-transparent text-neutral-700 hover:border-black hover:text-black')
+                }
+              >
+                {opt.label}
+              </button>
+            )
+          })}
+        </div>
       </div>
+      <ChainSelector value={chainFilter} onChange={onChainChange} />
     </div>
   )
 }

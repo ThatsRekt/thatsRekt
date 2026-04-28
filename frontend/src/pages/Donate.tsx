@@ -22,9 +22,18 @@ export function Donate() {
       <section className="space-y-4">
         <p className="text-base leading-relaxed text-neutral-800">
           <strong className="font-black">thatsRekt is a public good.</strong>{' '}
-          The contract is permissionless, the data is open, and the gateway
-          serves anyone who wants to read it. Nobody profits from running it,
-          and nobody is meant to.
+          Reads are open to anyone — every score, every post, every voter
+          set is queryable from any contract or app. Nobody profits from
+          running it, and nobody is meant to.
+        </p>
+        <p className="text-base leading-relaxed text-neutral-800">
+          Posting hack alerts is permissioned: only whitelisted operators
+          can post or vote. A{' '}
+          <strong className="font-black">governance multisig rules the protocol</strong>
+          {' '}— it controls the whitelist and can upgrade the contract, but
+          every change goes through a{' '}
+          <strong className="font-black">7-day timelock</strong>. Integrators
+          always have a week to disengage if a malicious change is queued.
         </p>
         <p className="text-base leading-relaxed text-neutral-800">
           The point is to make hack alerts a piece of <em>shared infrastructure</em> —
@@ -40,12 +49,12 @@ export function Donate() {
         </p>
       </section>
 
-      <section className="space-y-3">
+      <section className="flex flex-col items-center space-y-3 text-center">
         <p className="text-xs uppercase tracking-widest text-neutral-700">
           [donation address]
         </p>
         <DonateAddress />
-        <p className="text-xs leading-relaxed text-neutral-700">
+        <p className="max-w-md text-xs leading-relaxed text-neutral-700">
           Send on any EVM chain — Ethereum, Base, Arbitrum, Optimism, Polygon,
           and so on. The ENS resolves to the same controlling address
           everywhere.
@@ -69,13 +78,13 @@ function DonateAddress() {
   }
 
   return (
-    <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+    <div className="flex flex-col items-center gap-3">
       <button
         type="button"
         onClick={onCopy}
         title={copied ? 'copied!' : `copy ${DONATE_ENS}`}
         aria-label={`Copy ${DONATE_ENS}`}
-        className="group inline-flex items-center justify-between gap-3 border-2 border-black bg-white px-4 py-3 hover:bg-yellow-100 active:bg-yellow-200 transition-colors min-h-[3rem] touch-manipulation"
+        className="group inline-flex items-center justify-center gap-4 border-2 border-black bg-white px-6 py-4 hover:bg-yellow-100 active:bg-yellow-200 transition-colors min-h-[3.25rem] touch-manipulation"
       >
         <span className="font-mono text-xl sm:text-2xl font-black tracking-tight">
           {DONATE_ENS}

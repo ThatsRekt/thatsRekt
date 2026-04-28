@@ -97,8 +97,8 @@ const SORT_TO_ORDER_BY: Record<SortOption, string> = {
 // `posts(limit, offset)` fans out to every enabled chain's squid,
 // sort-merges by createdAtTimestamp DESC, and paginates server-side.
 const FEED_QUERY = /* GraphQL */ `
-  query Feed($limit: Int!, $offset: Int!) {
-    posts(limit: $limit, offset: $offset) {
+  query Feed($limit: Int!, $offset: Int!, $chains: [String!]) {
+    posts(limit: $limit, offset: $offset, chains: $chains) {
       items {
         id
         chain { chainId slug name }
@@ -225,20 +225,32 @@ export async function fetchFeed(
 export async function fetchFeedPage(
   offset: number,
   limit: number,
+  /** Optional chain-slug list. Empty/undefined = all chains. */
+  chainSlugs?: readonly string[],
 ): Promise<FeedPage> {
   if (USE_MOCK) {
     const all = await mockFetchFeed(1000, 'newest')
-    const items = all.slice(offset, offset + limit)
+    const filtered = chainSlugs?.length
+      ? all.filter((p) => p.chain && chainSlugs.includes(p.chain.slug))
+      : all
+    const items = filtered.slice(offset, offset + limit)
     return {
       items,
-      totalCount: all.length,
-      hasMore: offset + items.length < all.length,
-      nextOffset: offset + items.length < all.length ? offset + items.length : null,
+      totalCount: filtered.length,
+      hasMore: offset + items.length < filtered.length,
+      nextOffset:
+        offset + items.length < filtered.length ? offset + items.length : null,
     }
   }
   const data = await gqlClient.request<{
     posts: { items: MeshUnifiedPost[]; totalCount: number; hasMore: boolean }
-  }>(FEED_QUERY, { limit, offset })
+  }>(FEED_QUERY, {
+    limit,
+    offset,
+    // Pass null (not undefined) when no filter; gql expects an explicit
+    // value-or-null and graphql-request would otherwise send `undefined`.
+    chains: chainSlugs?.length ? chainSlugs : null,
+  })
   const items = data.posts.items.map(adaptMeshPostToFeedPost)
   return {
     items,
