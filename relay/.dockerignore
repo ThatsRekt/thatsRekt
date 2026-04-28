@@ -1,0 +1,22 @@
+# Build artifacts
+bin/
+dist/
+*.test
+
+# Local env / secrets — never bake into the image
+.env
+.env.local
+.env.*.local
+
+# Editor / OS
+.DS_Store
+*.swp
+.idea/
+.vscode/
+
+# Logs
+*.log
+
+# Repo metadata not needed for the build
+README.md
+scripts/
