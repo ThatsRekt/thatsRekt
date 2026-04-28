@@ -61,6 +61,29 @@ export const CHAINS: Readonly<Record<FrontendChain['slug'], FrontendChain>> =
 export const getChainBySlug = (slug: string): FrontendChain | undefined =>
   (CHAINS as Record<string, FrontendChain | undefined>)[slug]
 
+/**
+ * Local Anvil forks are useful in dev (instant, free, exposes the full
+ * cross-chain story) but should never appear in a production build —
+ * end users have no use for chains that don't exist outside one
+ * developer's machine.
+ *
+ * Default behavior: hide local forks. Set `VITE_SHOW_LOCAL_FORKS=true`
+ * in `.env.local` (dev only) to surface them in the chain selector,
+ * contributors page, etc. The Mesh gateway still indexes them — this
+ * is purely a UI gate.
+ */
+const SHOW_LOCAL_FORKS = import.meta.env.VITE_SHOW_LOCAL_FORKS === 'true'
+
+/**
+ * The chain set the UI exposes — filters out local forks when not in
+ * dev mode. Use this for selectors, contributors lists, anywhere the
+ * end user picks or sees a chain. The full `CHAINS` registry remains
+ * available for resolving an arbitrary slug (e.g. a post id whose
+ * chain is one we'd otherwise hide).
+ */
+export const visibleChains = (): readonly FrontendChain[] =>
+  Object.values(CHAINS).filter((c) => SHOW_LOCAL_FORKS || !c.isLocalFork)
+
 export const explorerAddressUrl = (chain: FrontendChain, addr: string): string =>
   `${chain.explorer}/address/${addr}`
 

@@ -1,4 +1,4 @@
-import { CHAINS } from '../lib/chains'
+import { visibleChains } from '../lib/chains'
 import type { ChainFilter } from '../hooks/useChainFilter'
 
 interface ChainSelectorProps {
@@ -21,7 +21,7 @@ export function ChainSelector({ value, onChange }: ChainSelectorProps) {
         className="border border-black bg-[#f5f4ee] px-2 py-0.5 text-xs font-mono uppercase tracking-widest hover:bg-yellow-100 focus:outline-none focus:ring-2 focus:ring-red-600 cursor-pointer touch-manipulation"
       >
         <option value="">all chains</option>
-        {Object.values(CHAINS).map((c) => (
+        {visibleChains().map((c) => (
           <option key={c.slug} value={c.slug}>
             {c.badge}
             {c.isLocalFork ? ' · local' : ''}

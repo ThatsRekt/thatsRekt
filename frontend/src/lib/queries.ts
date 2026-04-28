@@ -296,3 +296,121 @@ export async function fetchPostDetail(id: string): Promise<PostDetail | null> {
   // Re-stamp the composite id so detail-page links and titles stay consistent.
   return { ...post, id }
 }
+
+// ---- contributors (whitelisters per chain) -----------------------------------
+
+/** A single contributor entry — current or past. */
+export interface Contributor {
+  /** Lowercased address. */
+  address: string
+  /** ISO timestamp of first whitelist event. */
+  firstWhitelistedAt: string | null
+  /** ISO timestamp of last whitelist add/remove. */
+  lastChangedAt: string | null
+}
+
+/** A single chain's whitelister set, split into active vs past. */
+export interface ChainContributors {
+  chainSlug: string
+  /** Currently whitelisted (still able to post + vote). */
+  active: Contributor[]
+  /** Previously whitelisted but since removed by governance. */
+  past: Contributor[]
+}
+
+const ENABLED_CHAINS_QUERY = /* GraphQL */ `
+  query EnabledChains {
+    chains { slug }
+  }
+`
+
+/**
+ * Fetch the whitelisted contributor addresses for the given chain slugs.
+ * Uses Mesh's prefixed `<Prefix>_whitelisters` queries.
+ *
+ * Mesh only exposes prefixed types/fields for chains in `MESH_CHAINS`
+ * (its enabled set). We intersect the caller's requested slugs with
+ * Mesh's `chains` query so we never reference a missing prefix.
+ */
+interface RawWhitelister {
+  id: string
+  isCurrentlyWhitelisted: boolean
+  firstWhitelistedAt: string | null
+  lastChangedAt: string | null
+}
+
+export async function fetchContributors(
+  chainSlugs: readonly string[],
+): Promise<ChainContributors[]> {
+  if (USE_MOCK) {
+    return chainSlugs.map((slug) => ({
+      chainSlug: slug,
+      active: [
+        {
+          address: '0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266',
+          firstWhitelistedAt: '2026-04-27T00:00:00.000Z',
+          lastChangedAt: '2026-04-27T00:00:00.000Z',
+        },
+      ],
+      past: [],
+    }))
+  }
+
+  // Step 1: ask Mesh which chains are actually stitched.
+  const enabled = await gqlClient.request<{ chains: { slug: string }[] }>(
+    ENABLED_CHAINS_QUERY,
+  )
+  const enabledSet = new Set(enabled.chains.map((c) => c.slug))
+
+  // Step 2: only build per-chain field aliases for slugs that are BOTH
+  // requested AND known to Mesh. The remainder return empty groups so
+  // the UI can still render the section.
+  const queryable = chainSlugs.filter(
+    (slug) => enabledSet.has(slug) && SLUG_TO_PREFIX[slug],
+  )
+
+  if (queryable.length === 0) {
+    return chainSlugs.map((slug) => ({ chainSlug: slug, active: [], past: [] }))
+  }
+
+  const fields = queryable.map((slug) => {
+    const prefix = SLUG_TO_PREFIX[slug]!
+    const aliasKey = slug.replaceAll('-', '_')
+    return `${aliasKey}: ${prefix}_whitelisters(orderBy: id_ASC) {
+      id
+      isCurrentlyWhitelisted
+      firstWhitelistedAt
+      lastChangedAt
+    }`
+  })
+
+  const query = /* GraphQL */ `
+    query Contributors {
+      ${fields.join('\n      ')}
+    }
+  `
+
+  const data = await gqlClient.request<
+    Record<string, RawWhitelister[] | null | undefined>
+  >(query)
+
+  return chainSlugs.map((slug) => {
+    const aliasKey = slug.replaceAll('-', '_')
+    const rows = data[aliasKey] ?? []
+    const active: Contributor[] = []
+    const past: Contributor[] = []
+    for (const row of rows) {
+      const c: Contributor = {
+        address: row.id,
+        firstWhitelistedAt: row.firstWhitelistedAt,
+        lastChangedAt: row.lastChangedAt,
+      }
+      if (row.isCurrentlyWhitelisted) {
+        active.push(c)
+      } else {
+        past.push(c)
+      }
+    }
+    return { chainSlug: slug, active, past }
+  })
+}

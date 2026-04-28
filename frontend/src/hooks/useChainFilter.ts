@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { CHAINS } from '../lib/chains'
+import { visibleChains } from '../lib/chains'
 
 const STORAGE_KEY = 'thatsrekt:chainFilter'
 
@@ -12,15 +12,18 @@ const STORAGE_KEY = 'thatsrekt:chainFilter'
  */
 export type ChainFilter = string | null
 
-const ALL_SLUGS = new Set(Object.keys(CHAINS))
-
 function readInitial(): ChainFilter {
   if (typeof window === 'undefined') return null
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY)
     if (raw === null) return null
     if (raw === '') return null
-    return ALL_SLUGS.has(raw) ? raw : null
+    // Validate against the *visible* set, not all chains. A stale
+    // localStorage value for a hidden local-fork slug should reset to
+    // "all" rather than silently filter to a chain the UI no longer
+    // exposes.
+    const visibleSlugs = new Set<string>(visibleChains().map((c) => c.slug))
+    return visibleSlugs.has(raw) ? raw : null
   } catch {
     return null
   }
