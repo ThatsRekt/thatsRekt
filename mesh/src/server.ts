@@ -130,12 +130,39 @@ const additionalTypeDefs = /* GraphQL */ `
     hasMore: Boolean!
   }
 
+  """One row of the global proposer leaderboard. Stats are summed across every chain the address has posted on (CREATE2 deterministic deploy + same EOA whitelisted on multiple chains → same lowercased address everywhere)."""
+  type ProposerLeaderboardEntry {
+    """Lowercased poster address."""
+    poster: String!
+    """Lifetime count of posts this address has authored, summed across all chains."""
+    postCount: Int!
+    """Σ Post.confirmations across all this address's posts, all chains."""
+    totalConfirmations: String!
+    """Σ Post.disconfirmations across all this address's posts, all chains."""
+    totalDisconfirmations: String!
+  }
+
+  type ProposerLeaderboardPage {
+    items: [ProposerLeaderboardEntry!]!
+    """Total distinct posters with at least one Proposer row across all chains."""
+    totalCount: Int!
+    """True if more posters exist beyond \`offset + limit\`."""
+    hasMore: Boolean!
+  }
+
   extend type Query {
     """Chains served by this gateway."""
     chains: [ChainInfo!]!
 
     """Cross-chain feed page. Posts are sort-merged by createdAtTimestamp DESC across all enabled chains. Pass \`chains: [\"anvil-base\"]\` to scope to a single chain (or omit to query all). Use \`offset + limit\` for pagination."""
     posts(limit: Int = 25, offset: Int = 0, chains: [String!]): UnifiedPostsPage!
+
+    """Global proposer leaderboard. Aggregates per-chain Proposer rows by lowercased address. \`orderBy\` is one of: \`postCount\`, \`totalConfirmations\` (default), \`totalDisconfirmations\`."""
+    proposerLeaderboard(
+      limit: Int = 25,
+      offset: Int = 0,
+      orderBy: String = "totalConfirmations"
+    ): ProposerLeaderboardPage!
   }
 `
 
@@ -201,6 +228,49 @@ const COUNT_POSTS_QUERY = /* GraphQL */ `
 const CountPostsResponse = z.object({
   postsConnection: z.object({ totalCount: z.number().int() }),
 })
+
+// --- Proposer leaderboard wire shapes ---
+//
+// Per-chain Proposer rows fetched in bulk and merged in Mesh. The
+// whitelister set is small (~tens) so pulling all of them per chain is
+// cheap; we don't paginate the per-chain query.
+const RawProposer = z.object({
+  id: z.string(),
+  postCount: z.number().int(),
+  totalConfirmations: z.string(),       // BigInt scalar arrives as string
+  totalDisconfirmations: z.string(),
+})
+type RawProposer = z.infer<typeof RawProposer>
+
+const FetchProposersResponse = z.object({
+  proposers: z.array(RawProposer),
+})
+
+const FETCH_PROPOSERS_QUERY = /* GraphQL */ `
+  query FetchProposers {
+    proposers(orderBy: id_ASC) {
+      id
+      postCount
+      totalConfirmations
+      totalDisconfirmations
+    }
+  }
+`
+
+// Aggregated stats per address across all chains. BigInts accumulate as
+// `bigint` (JS native) for safe addition; serialized as decimal strings
+// at the GraphQL boundary.
+type ProposerAgg = {
+  poster: string
+  postCount: number
+  totalConfirmations: bigint
+  totalDisconfirmations: bigint
+}
+
+const PROPOSER_ORDERINGS = ['postCount', 'totalConfirmations', 'totalDisconfirmations'] as const
+type ProposerOrderBy = (typeof PROPOSER_ORDERINGS)[number]
+const isProposerOrderBy = (s: string): s is ProposerOrderBy =>
+  (PROPOSER_ORDERINGS as readonly string[]).includes(s)
 
 const buildAdditionalResolvers = (chains: readonly ChainEntry[]) => ({
   Query: {
@@ -299,6 +369,95 @@ const buildAdditionalResolvers = (chains: readonly ChainEntry[]) => ({
         lastUpdatedAt: post.lastUpdatedAt,
         attackers: post.attackerLinks.map((l) => l.address.id),
         victims: post.victimLinks.map((l) => l.address.id),
+      }))
+
+      return { items, totalCount, hasMore }
+    },
+
+    proposerLeaderboard: async (
+      _root: unknown,
+      args: { limit: number; offset: number; orderBy: string },
+    ) => {
+      const { limit, offset } = args
+      const orderBy: ProposerOrderBy = isProposerOrderBy(args.orderBy)
+        ? args.orderBy
+        : 'totalConfirmations'
+
+      // Pull every Proposer row from every chain. Whitelister sets are
+      // small (tens) so this is cheap — no per-chain pagination needed.
+      const results = await Promise.allSettled(
+        chains.map(async (c) => {
+          const executor = makeExecutor(c.endpoint)
+          const raw = await executor({
+            document: parseQueryToDocument(FETCH_PROPOSERS_QUERY),
+            variables: {},
+            context: {},
+          }) as ExecutionResult
+          if (raw.errors?.length) {
+            console.error(`[mesh] ${c.slug} proposers errors:`, raw.errors)
+            return [] as RawProposer[]
+          }
+          const parsed = FetchProposersResponse.safeParse(raw.data)
+          if (!parsed.success) {
+            console.error(
+              `[mesh] ${c.slug} proposers schema mismatch:`,
+              parsed.error.flatten(),
+            )
+            return [] as RawProposer[]
+          }
+          return parsed.data.proposers
+        }),
+      )
+
+      // Aggregate by lowercased address. Same EOA whitelisted on multiple
+      // chains collides into one entry; sums add up.
+      const merged = new Map<string, ProposerAgg>()
+      for (const r of results) {
+        if (r.status !== 'fulfilled') continue
+        for (const row of r.value) {
+          const key = row.id.toLowerCase()
+          const acc = merged.get(key) ?? {
+            poster: key,
+            postCount: 0,
+            totalConfirmations: 0n,
+            totalDisconfirmations: 0n,
+          }
+          acc.postCount += row.postCount
+          acc.totalConfirmations += BigInt(row.totalConfirmations)
+          acc.totalDisconfirmations += BigInt(row.totalDisconfirmations)
+          merged.set(key, acc)
+        }
+      }
+
+      // Sort by chosen orderBy DESC; stable tie-break by lower address
+      // ASC so paging is deterministic.
+      const sorted = [...merged.values()]
+      sorted.sort((a, b) => {
+        let cmp = 0
+        if (orderBy === 'postCount') {
+          cmp = b.postCount - a.postCount
+        } else if (orderBy === 'totalConfirmations') {
+          if (b.totalConfirmations !== a.totalConfirmations) {
+            cmp = b.totalConfirmations > a.totalConfirmations ? 1 : -1
+          }
+        } else {
+          if (b.totalDisconfirmations !== a.totalDisconfirmations) {
+            cmp = b.totalDisconfirmations > a.totalDisconfirmations ? 1 : -1
+          }
+        }
+        if (cmp !== 0) return cmp
+        return a.poster < b.poster ? -1 : a.poster > b.poster ? 1 : 0
+      })
+
+      const totalCount = sorted.length
+      const slice = sorted.slice(offset, offset + limit)
+      const hasMore = offset + slice.length < totalCount
+
+      const items = slice.map((entry) => ({
+        poster: entry.poster,
+        postCount: entry.postCount,
+        totalConfirmations: entry.totalConfirmations.toString(),
+        totalDisconfirmations: entry.totalDisconfirmations.toString(),
       }))
 
       return { items, totalCount, hasMore }

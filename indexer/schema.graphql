@@ -27,6 +27,46 @@ type Whitelister @entity {
   changes: [WhitelistChange!]! @derivedFrom(field: "addr")
 }
 
+# Per-chain proposer leaderboard stats.
+#
+# postCount             — lifetime count of posts authored on this chain.
+# totalConfirmations    — Σ Post.confirmations across all this address's
+#                         posts on this chain. The primary leaderboard
+#                         signal: "how many confirmations did this
+#                         author rack up across everything they posted?"
+# totalDisconfirmations — Σ Post.disconfirmations, kept as a separate
+#                         signal so the UI can flag posters whose alerts
+#                         the community pushed back on.
+#
+# Lifetime semantics (NOT reversed on retract — the leaderboard captures
+# historical confirmation activity, not currently-live).
+#
+# A row is created on `WhitelistUpdated(_, true)` so every whitelisted
+# address has an entry (zeros until they post + get confirmed). Mesh
+# aggregates these per-chain rows into a single global leaderboard keyed
+# by lowercased address.
+type Proposer @entity {
+  "the address (lowercased)"
+  id: ID!
+
+  "lifetime count of posts authored on this chain"
+  postCount: Int!
+
+  "Σ Post.confirmations across all this address's posts on this chain"
+  totalConfirmations: BigInt!
+
+  "Σ Post.disconfirmations across all this address's posts on this chain"
+  totalDisconfirmations: BigInt!
+
+  "block.timestamp of the first PostCreated authored by this address (null until first post)"
+  firstPostedAt: DateTime
+  firstPostedAtBlock: Int
+
+  "bumped on every counter change"
+  lastUpdatedAt: DateTime!
+  lastUpdatedAtBlock: Int!
+}
+
 # A hack alert post.
 type Post @entity {
   "postId from the contract"

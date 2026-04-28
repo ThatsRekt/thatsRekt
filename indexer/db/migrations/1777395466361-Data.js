@@ -1,5 +1,5 @@
-module.exports = class Data1777394493200 {
-    name = 'Data1777394493200'
+module.exports = class Data1777395466361 {
+    name = 'Data1777395466361'
 
     async up(db) {
         await db.query(`CREATE TABLE "post_victim" ("id" character varying NOT NULL, "created_at_block" integer NOT NULL, "post_id" character varying, "address_id" character varying, CONSTRAINT "PK_a91e426ba6050e975aa9a6da553" PRIMARY KEY ("id"))`)
@@ -19,6 +19,7 @@ module.exports = class Data1777394493200 {
         await db.query(`CREATE TABLE "whitelist_change" ("id" character varying NOT NULL, "added" boolean NOT NULL, "block_number" integer NOT NULL, "timestamp" TIMESTAMP WITH TIME ZONE NOT NULL, "tx_hash" text NOT NULL, "addr_id" character varying, CONSTRAINT "PK_c3394ea7514bb4a21b8ca6e13f7" PRIMARY KEY ("id"))`)
         await db.query(`CREATE INDEX "IDX_d2b535d850a99527c8e73489e7" ON "whitelist_change" ("addr_id") `)
         await db.query(`CREATE TABLE "whitelister" ("id" character varying NOT NULL, "is_currently_whitelisted" boolean NOT NULL, "first_whitelisted_at" TIMESTAMP WITH TIME ZONE, "first_whitelisted_at_block" integer, "last_changed_at" TIMESTAMP WITH TIME ZONE, "last_changed_at_block" integer, CONSTRAINT "PK_f50124ac93478d0ad3ab4f0e6f0" PRIMARY KEY ("id"))`)
+        await db.query(`CREATE TABLE "proposer" ("id" character varying NOT NULL, "post_count" integer NOT NULL, "total_confirmations" numeric NOT NULL, "total_disconfirmations" numeric NOT NULL, "first_posted_at" TIMESTAMP WITH TIME ZONE, "first_posted_at_block" integer, "last_updated_at" TIMESTAMP WITH TIME ZONE NOT NULL, "last_updated_at_block" integer NOT NULL, CONSTRAINT "PK_4864e2acee4223120fcbdc75f29" PRIMARY KEY ("id"))`)
         await db.query(`CREATE TABLE "upgrade" ("id" character varying NOT NULL, "new_implementation" text NOT NULL, "block_number" integer NOT NULL, "timestamp" TIMESTAMP WITH TIME ZONE NOT NULL, "tx_hash" text NOT NULL, CONSTRAINT "PK_855aca5df3eceff6e4fe49245c4" PRIMARY KEY ("id"))`)
         await db.query(`CREATE TABLE "ownership_change" ("id" character varying NOT NULL, "previous_owner" text NOT NULL, "new_owner" text NOT NULL, "block_number" integer NOT NULL, "timestamp" TIMESTAMP WITH TIME ZONE NOT NULL, "tx_hash" text NOT NULL, CONSTRAINT "PK_6f6160b33237be687c69c50015d" PRIMARY KEY ("id"))`)
         await db.query(`ALTER TABLE "post_victim" ADD CONSTRAINT "FK_3927e367646ef7912bdbb1c3e95" FOREIGN KEY ("post_id") REFERENCES "post"("id") ON DELETE NO ACTION ON UPDATE NO ACTION`)
@@ -44,6 +45,7 @@ module.exports = class Data1777394493200 {
         await db.query(`ALTER TABLE "post_victim" DROP CONSTRAINT "FK_3927e367646ef7912bdbb1c3e95"`)
         await db.query(`DROP TABLE "ownership_change"`)
         await db.query(`DROP TABLE "upgrade"`)
+        await db.query(`DROP TABLE "proposer"`)
         await db.query(`DROP TABLE "whitelister"`)
         await db.query(`DROP INDEX "public"."IDX_d2b535d850a99527c8e73489e7"`)
         await db.query(`DROP TABLE "whitelist_change"`)

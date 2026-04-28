@@ -2,8 +2,11 @@ import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import {
   fetchContributors,
+  fetchProposerLeaderboard,
   type ChainContributors,
   type Contributor,
+  type ProposerEntry,
+  type ProposerOrderBy,
 } from '../lib/queries'
 import { visibleChains, getChainBySlug } from '../lib/chains'
 import { lookupContributor } from '../lib/contributors'
@@ -78,6 +81,8 @@ export function Contributors() {
       </header>
 
       <Maintainers />
+
+      <ProposerLeaderboard />
 
       {allEmpty ? (
         <EmptyState
@@ -399,5 +404,150 @@ function ContributorRow({
         )}
       </div>
     </li>
+  )
+}
+
+// =============================================================================
+// Proposer leaderboard
+// =============================================================================
+// Global ranking of every whitelisted address by lifetime confirmation
+// activity. Aggregated across all chains by Mesh; rendered here as a
+// sortable table.
+function ProposerLeaderboard() {
+  const [orderBy, setOrderBy] = useState<ProposerOrderBy>('totalConfirmations')
+
+  const { data, isLoading, error } = useQuery({
+    queryKey: ['proposer-leaderboard', orderBy],
+    queryFn: () => fetchProposerLeaderboard({ orderBy, limit: 100 }),
+  })
+
+  return (
+    <section className="space-y-4">
+      <header className="space-y-1">
+        <h2 className="font-black uppercase tracking-tighter text-2xl sm:text-3xl leading-none">
+          leaderboard
+        </h2>
+        <p className="text-xs uppercase tracking-widest text-neutral-700">
+          [global · across all chains]
+        </p>
+      </header>
+      <p className="text-sm text-neutral-700 max-w-2xl">
+        Global ranking of every whitelisted poster, aggregated across every
+        chain they've posted on. Counters are lifetime — retracted posts
+        keep their score.
+      </p>
+
+      {isLoading ? (
+        <p className="text-xs uppercase tracking-widest text-neutral-700">
+          loading leaderboard…
+        </p>
+      ) : error ? (
+        <EmptyState
+          title="couldn't load leaderboard."
+          hint={(error as Error).message}
+        />
+      ) : !data || data.items.length === 0 ? (
+        <EmptyState
+          title="no proposers yet."
+          hint="no address has been whitelisted on any indexed chain."
+        />
+      ) : (
+        <ProposerTable
+          rows={data.items}
+          orderBy={orderBy}
+          onSelectOrderBy={setOrderBy}
+        />
+      )}
+    </section>
+  )
+}
+
+function ProposerTable({
+  rows,
+  orderBy,
+  onSelectOrderBy,
+}: {
+  rows: ProposerEntry[]
+  orderBy: ProposerOrderBy
+  onSelectOrderBy: (next: ProposerOrderBy) => void
+}) {
+  return (
+    <div className="overflow-x-auto border-2 border-black">
+      <table className="w-full text-left text-sm">
+        <thead className="border-b-2 border-black bg-black/5 text-xs uppercase tracking-widest">
+          <tr>
+            <th className="px-3 py-2 w-12 text-right text-neutral-700">#</th>
+            <th className="px-3 py-2">poster</th>
+            <SortableHeader
+              label="confirmations"
+              column="totalConfirmations"
+              orderBy={orderBy}
+              onSelect={onSelectOrderBy}
+            />
+            <SortableHeader
+              label="disconfirmations"
+              column="totalDisconfirmations"
+              orderBy={orderBy}
+              onSelect={onSelectOrderBy}
+            />
+            <SortableHeader
+              label="posts"
+              column="postCount"
+              orderBy={orderBy}
+              onSelect={onSelectOrderBy}
+            />
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-black">
+          {rows.map((row, i) => (
+            <tr key={row.poster} className="hover:bg-black/5">
+              <td className="px-3 py-2 text-right text-neutral-700 font-mono tabular-nums">
+                {i + 1}
+              </td>
+              <td className="px-3 py-2">
+                <AddressLabel addr={row.poster} full />
+              </td>
+              <td className="px-3 py-2 font-mono tabular-nums text-emerald-700">
+                {row.totalConfirmations.toString()}
+              </td>
+              <td className="px-3 py-2 font-mono tabular-nums text-red-600">
+                {row.totalDisconfirmations.toString()}
+              </td>
+              <td className="px-3 py-2 font-mono tabular-nums">
+                {row.postCount}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+function SortableHeader({
+  label,
+  column,
+  orderBy,
+  onSelect,
+}: {
+  label: string
+  column: ProposerOrderBy
+  orderBy: ProposerOrderBy
+  onSelect: (next: ProposerOrderBy) => void
+}) {
+  const isActive = orderBy === column
+  return (
+    <th className="px-3 py-2">
+      <button
+        type="button"
+        onClick={() => onSelect(column)}
+        className={`uppercase tracking-widest text-xs ${
+          isActive ? 'font-black text-black' : 'text-neutral-700 hover:text-black'
+        }`}
+      >
+        {label}
+        {isActive ? ' ↓' : ''}
+      </button>
+    </th>
   )
 }

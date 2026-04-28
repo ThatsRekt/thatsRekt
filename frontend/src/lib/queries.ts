@@ -424,3 +424,106 @@ export async function fetchContributors(
     return { chainSlug: slug, active, past }
   })
 }
+
+// =============================================================================
+// Proposer leaderboard
+// =============================================================================
+// Global ranking of whitelisted posters by lifetime confirmation activity,
+// aggregated across all chains the address has posted on. The Mesh
+// resolver merges per-chain Proposer rows into one row per address.
+
+/** A single row of the global proposer leaderboard. */
+export interface ProposerEntry {
+  /** Lowercased address — same on every chain (CREATE2 deterministic). */
+  poster: string
+  /** Lifetime count of posts authored, summed across all chains. */
+  postCount: number
+  /** Σ Post.confirmations across all this address's posts, all chains. */
+  totalConfirmations: bigint
+  /** Σ Post.disconfirmations across all this address's posts, all chains. */
+  totalDisconfirmations: bigint
+}
+
+/** Sortable columns the leaderboard supports. */
+export type ProposerOrderBy =
+  | 'totalConfirmations'
+  | 'postCount'
+  | 'totalDisconfirmations'
+
+const PROPOSER_LEADERBOARD_QUERY = /* GraphQL */ `
+  query ProposerLeaderboard($limit: Int!, $offset: Int!, $orderBy: String!) {
+    proposerLeaderboard(limit: $limit, offset: $offset, orderBy: $orderBy) {
+      items {
+        poster
+        postCount
+        totalConfirmations
+        totalDisconfirmations
+      }
+      totalCount
+      hasMore
+    }
+  }
+`
+
+interface RawProposerEntry {
+  poster: string
+  postCount: number
+  totalConfirmations: string
+  totalDisconfirmations: string
+}
+
+interface ProposerLeaderboardPage {
+  items: ProposerEntry[]
+  totalCount: number
+  hasMore: boolean
+}
+
+export async function fetchProposerLeaderboard(opts: {
+  limit?: number
+  offset?: number
+  orderBy?: ProposerOrderBy
+} = {}): Promise<ProposerLeaderboardPage> {
+  const limit = opts.limit ?? 25
+  const offset = opts.offset ?? 0
+  const orderBy = opts.orderBy ?? 'totalConfirmations'
+
+  if (USE_MOCK) {
+    return {
+      items: [
+        {
+          poster: '0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266',
+          postCount: 12,
+          totalConfirmations: 47n,
+          totalDisconfirmations: 3n,
+        },
+        {
+          poster: '0x70997970c51812dc3a010c7d01b50e0d17dc79c8',
+          postCount: 5,
+          totalConfirmations: 11n,
+          totalDisconfirmations: 8n,
+        },
+      ],
+      totalCount: 2,
+      hasMore: false,
+    }
+  }
+
+  const data = await gqlClient.request<{
+    proposerLeaderboard: {
+      items: RawProposerEntry[]
+      totalCount: number
+      hasMore: boolean
+    }
+  }>(PROPOSER_LEADERBOARD_QUERY, { limit, offset, orderBy })
+
+  return {
+    items: data.proposerLeaderboard.items.map((r) => ({
+      poster: r.poster,
+      postCount: r.postCount,
+      totalConfirmations: BigInt(r.totalConfirmations),
+      totalDisconfirmations: BigInt(r.totalDisconfirmations),
+    })),
+    totalCount: data.proposerLeaderboard.totalCount,
+    hasMore: data.proposerLeaderboard.hasMore,
+  }
+}

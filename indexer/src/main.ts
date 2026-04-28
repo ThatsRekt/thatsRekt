@@ -21,6 +21,7 @@ import {
   Post,
   PostAttacker,
   PostVictim,
+  Proposer,
   Upgrade,
   Confirmation,
   ConfirmDirection,
@@ -34,6 +35,7 @@ type Caches = {
   posts: Map<string, Post>
   addresses: Map<string, Address>
   whitelisters: Map<string, Whitelister>
+  proposers: Map<string, Proposer>
   postAttackers: Map<string, PostAttacker>
   postVictims: Map<string, PostVictim>
   // append-only — never read back this batch
@@ -48,6 +50,7 @@ const newCaches = (): Caches => ({
   posts: new Map(),
   addresses: new Map(),
   whitelisters: new Map(),
+  proposers: new Map(),
   postAttackers: new Map(),
   postVictims: new Map(),
   confirmationLog: [],
@@ -113,6 +116,31 @@ async function getOrCreateWhitelister(
   }
   caches.whitelisters.set(id, w)
   return w
+}
+
+async function getOrCreateProposer(
+  ctx: Ctx,
+  caches: Caches,
+  rawAddr: string,
+  blockNumber: number,
+  ts: Date,
+): Promise<Proposer> {
+  const id = lc(rawAddr)
+  const cached = caches.proposers.get(id)
+  if (cached) return cached
+  let p = await ctx.store.get(Proposer, id)
+  if (!p) {
+    p = new Proposer({
+      id,
+      postCount: 0,
+      totalConfirmations: 0n,
+      totalDisconfirmations: 0n,
+      lastUpdatedAt: ts,
+      lastUpdatedAtBlock: blockNumber,
+    })
+  }
+  caches.proposers.set(id, p)
+  return p
 }
 
 async function getOrCreatePostAttacker(
@@ -193,6 +221,17 @@ async function handlePostCreated(ctx: Ctx, caches: Caches, log: Log): Promise<vo
   })
   caches.posts.set(postId, post)
 
+  // Bump the poster's leaderboard stats. Lifetime postCount; firstPostedAt
+  // sticks on first post and never moves; lastUpdatedAt tracks any change.
+  const proposer = await getOrCreateProposer(ctx, caches, e.poster, block.height, ts)
+  proposer.postCount += 1
+  if (proposer.firstPostedAt == null) {
+    proposer.firstPostedAt = ts
+    proposer.firstPostedAtBlock = block.height
+  }
+  proposer.lastUpdatedAt = ts
+  proposer.lastUpdatedAtBlock = block.height
+
   for (const rawAttacker of e.attackers) {
     const addr = await getOrCreateAddress(ctx, caches, rawAttacker)
     addr.attackerAppearances += 1
@@ -228,6 +267,24 @@ async function handleConfirmed(ctx: Ctx, caches: Caches, log: Log): Promise<void
   if (newDir === ConfirmDirection.Up) post.confirmations += 1
   else if (newDir === ConfirmDirection.Down) post.disconfirmations += 1
   post.netScore = post.confirmations - post.disconfirmations
+
+  // Mirror the same delta into the post author's Proposer leaderboard
+  // totals. Same transitions, same sign convention, just summed across
+  // every post the author has ever made. Lifetime semantics — these
+  // counters are NOT reversed when the post is later retracted.
+  const posterProposer = await getOrCreateProposer(
+    ctx,
+    caches,
+    post.poster.id,
+    block.height,
+    new Date(block.timestamp),
+  )
+  if (oldDir === ConfirmDirection.Up)        posterProposer.totalConfirmations -= 1n
+  else if (oldDir === ConfirmDirection.Down) posterProposer.totalDisconfirmations -= 1n
+  if (newDir === ConfirmDirection.Up)        posterProposer.totalConfirmations += 1n
+  else if (newDir === ConfirmDirection.Down) posterProposer.totalDisconfirmations += 1n
+  posterProposer.lastUpdatedAt = new Date(block.timestamp)
+  posterProposer.lastUpdatedAtBlock = block.height
 
   // Apply attacker score delta — load every attacker linked to this post.
   if (delta !== 0) {
@@ -457,6 +514,15 @@ async function handleWhitelistUpdated(
     w.firstWhitelistedAtBlock = block.height
   }
 
+  // Ensure every newly whitelisted address has a Proposer row even before
+  // they post — that way the leaderboard surfaces them with a 0/0 line
+  // instead of dropping them. De-whitelisting does NOT delete the row;
+  // lifetime stats survive removal so historical posters keep their
+  // standing.
+  if (e.status) {
+    await getOrCreateProposer(ctx, caches, e.account, block.height, ts)
+  }
+
   caches.whitelistChanges.push(
     new WhitelistChange({
       id: eventId(log),
@@ -553,8 +619,11 @@ processor.run(new TypeormDatabase({ supportHotBlocks: true }), async (ctx) => {
 
   // Persist. Order matters: parents (Whitelister, Address, Post) before
   // children (PostAttacker, PostVictim, Confirmation, Edit) due to FK constraints.
+  // Proposer has no FK dependencies on Post or Confirmation; safe to upsert
+  // in either order, grouping with the other independent aggregates.
   await ctx.store.upsert([...caches.whitelisters.values()])
   await ctx.store.upsert([...caches.addresses.values()])
+  await ctx.store.upsert([...caches.proposers.values()])
   await ctx.store.upsert([...caches.posts.values()])
   await ctx.store.upsert([...caches.postAttackers.values()])
   await ctx.store.upsert([...caches.postVictims.values()])

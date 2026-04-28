@@ -1,4 +1,5 @@
 export * from "./whitelister.model"
+export * from "./proposer.model"
 export * from "./post.model"
 export * from "./address.model"
 export * from "./postAttacker.model"
