@@ -273,8 +273,14 @@ function ProposerTable({
 }
 
 /**
- * Poster cell layout — name tag (when registered) + status chip + joined-ago,
- * then the full address with explorer + copy affordances.
+ * Poster cell — address is the primary visual element. Optional name
+ * tag, status chip, joined-ago, and social links all sit on a small
+ * metadata line below as casual annotations rather than a heading.
+ *
+ * When there's no label and no status (before the whitelisters query
+ * resolves, or for posters that aren't on the whitelist anymore on
+ * any indexed chain), the cell is just the address — same visual
+ * density as the early leaderboard design.
  */
 function PosterCell({
   address,
@@ -285,64 +291,79 @@ function PosterCell({
 }) {
   const label = lookupContributorGlobal(address)
   const isActive = status?.isActive ?? false
+  const hasMetadata = Boolean(label || status)
+
   return (
-    <div className="flex flex-col gap-0.5 min-w-0">
-      <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-        {label && (
-          <span className="font-black uppercase tracking-tight text-base">
-            {label.name}
-          </span>
-        )}
-        {status && (
-          <StatusChip isActive={isActive} />
-        )}
-        {status?.joinedAt && (
-          <span className="text-[10px] uppercase tracking-widest text-neutral-600">
-            joined {relativeTime(status.joinedAt)}
-          </span>
-        )}
-        {label?.tagline && (
-          <span className="text-[10px] uppercase tracking-widest text-neutral-700">
-            {label.tagline}
-          </span>
-        )}
-        {label?.twitter && (
-          <a
-            href={twitterUrl(label.twitter)}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-[10px] uppercase tracking-widest rekt-link"
-          >
-            x ↗
-          </a>
-        )}
-        {label?.github && (
-          <a
-            href={`https://github.com/${label.github}`}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-[10px] uppercase tracking-widest rekt-link"
-          >
-            gh ↗
-          </a>
-        )}
-        {label?.url && (
-          <a
-            href={label.url}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-[10px] uppercase tracking-widest rekt-link"
-          >
-            site ↗
-          </a>
-        )}
-      </div>
+    <div className="flex flex-col gap-1 min-w-0">
       <AddressLabel
         addr={address}
         chainSlug={LEADERBOARD_EXPLORER_CHAIN}
         full
       />
+      {hasMetadata && (
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-neutral-600">
+          {status && <StatusChip isActive={isActive} />}
+          {/*
+            Casual inline annotation — mixed-case so the label text
+            reads naturally; the uppercase / tracking-widest treatment
+            is reserved for actual section headings, not row labels.
+          */}
+          {label?.name && (
+            <span className="text-neutral-700">{label.name}</span>
+          )}
+          {status?.joinedAt && (
+            <Sep>joined {relativeTime(status.joinedAt)}</Sep>
+          )}
+          {label?.tagline && <Sep>{label.tagline}</Sep>}
+          {label?.twitter && (
+            <Sep>
+              <a
+                href={twitterUrl(label.twitter)}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="rekt-link"
+              >
+                x ↗
+              </a>
+            </Sep>
+          )}
+          {label?.github && (
+            <Sep>
+              <a
+                href={`https://github.com/${label.github}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="rekt-link"
+              >
+                gh ↗
+              </a>
+            </Sep>
+          )}
+          {label?.url && (
+            <Sep>
+              <a
+                href={label.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="rekt-link"
+              >
+                site ↗
+              </a>
+            </Sep>
+          )}
+        </div>
+      )}
     </div>
+  )
+}
+
+/** Tiny dot separator before each metadata fragment after the first. */
+function Sep({ children }: { children: React.ReactNode }) {
+  return (
+    <span className="inline-flex items-baseline gap-2">
+      <span className="text-neutral-400" aria-hidden>·</span>
+      <span>{children}</span>
+    </span>
   )
 }
 
