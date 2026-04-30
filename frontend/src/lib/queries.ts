@@ -478,6 +478,115 @@ interface ProposerLeaderboardPage {
   hasMore: boolean
 }
 
+// =============================================================================
+// Indexer status (chain-tip vs squid-tip lag)
+// =============================================================================
+// Surfaces "is the data on this page up to date?" by comparing the indexer's
+// last processed block to the chain tip read from a public RPC. The Mesh
+// gateway exposes one `<Prefix>_squidStatus` per chain — we query the
+// flagship (Base mainnet) since that's where production posts land.
+//
+// The chain-tip RPC is a single hard-coded routeme.sh endpoint matching
+// `landing-page` / damm convention. Mesh status is hit via the existing
+// `gqlClient`.
+
+/** Public Base mainnet RPC — same load-balanced endpoint used by other DAMM tooling. */
+const BASE_RPC_URL =
+  'https://lb.routeme.sh/rpc/8453/3bd2e340-f97c-46b3-80ed-17975de5af89'
+
+/** Average Base mainnet block time, used for human-readable lag formatting. */
+export const BASE_BLOCK_TIME_SECONDS = 2
+
+const BASE_SQUID_STATUS_QUERY = /* GraphQL */ `
+  query BaseSquidStatus {
+    Base_squidStatus {
+      height
+    }
+  }
+`
+
+export interface IndexerStatus {
+  /** Latest block on Base mainnet (from a public RPC). */
+  chainTip: number
+  /** Last block processed by the Subsquid indexer (from Mesh). */
+  indexerHeight: number
+  /** chainTip - indexerHeight (>= 0; clamped to 0 on slight overshoot). */
+  lag: number
+  /** When this snapshot was successfully fetched (Date.now() millis). */
+  lastFetchedAt: number
+}
+
+const fetchBaseChainTip = async (): Promise<number> => {
+  const res = await fetch(BASE_RPC_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      jsonrpc: '2.0',
+      method: 'eth_blockNumber',
+      params: [],
+      id: 1,
+    }),
+  })
+  if (!res.ok) {
+    throw new Error(`Base RPC ${res.status}: ${res.statusText}`)
+  }
+  const json = (await res.json()) as { result?: string; error?: { message: string } }
+  if (json.error) throw new Error(`Base RPC error: ${json.error.message}`)
+  if (typeof json.result !== 'string') {
+    throw new Error('Base RPC returned no block number')
+  }
+  const tip = Number.parseInt(json.result, 16)
+  if (!Number.isFinite(tip) || tip <= 0) {
+    throw new Error(`Base RPC returned invalid block number: ${json.result}`)
+  }
+  return tip
+}
+
+const fetchBaseIndexerHeight = async (): Promise<number> => {
+  const data = await gqlClient.request<{ Base_squidStatus: { height: number } | null }>(
+    BASE_SQUID_STATUS_QUERY,
+  )
+  const status = data.Base_squidStatus
+  if (!status || typeof status.height !== 'number') {
+    throw new Error('Base_squidStatus returned no height')
+  }
+  return status.height
+}
+
+/**
+ * Fetch indexer status: chain tip + squid height in parallel.
+ *
+ * Both legs must succeed — partial state is misleading (a green dot on
+ * "we don't actually know the chain tip" is worse than a gray "unknown").
+ * The caller decides how to render `isError`.
+ */
+export async function fetchIndexerStatus(): Promise<IndexerStatus> {
+  if (USE_MOCK) {
+    // Mock mode: pretend we're caught up.
+    const tip = 45_400_000
+    return {
+      chainTip: tip,
+      indexerHeight: tip,
+      lag: 0,
+      lastFetchedAt: Date.now(),
+    }
+  }
+  const [chainTip, indexerHeight] = await Promise.all([
+    fetchBaseChainTip(),
+    fetchBaseIndexerHeight(),
+  ])
+  // Indexer can momentarily report a height equal to tip + 1 in rare race
+  // conditions (RPC and Mesh see different heads). Clamp to 0 so the UI
+  // never shows a negative lag.
+  const lag = Math.max(0, chainTip - indexerHeight)
+  return {
+    chainTip,
+    indexerHeight,
+    lag,
+    lastFetchedAt: Date.now(),
+  }
+}
+
 export async function fetchProposerLeaderboard(opts: {
   limit?: number
   offset?: number

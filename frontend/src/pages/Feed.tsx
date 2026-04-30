@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react'
-import { useInfiniteQuery } from '@tanstack/react-query'
+import { useCallback, useMemo, useState } from 'react'
+import { useInfiniteQuery, useQueryClient } from '@tanstack/react-query'
 import { fetchFeedPage, type FeedPost, type SortOption } from '../lib/queries'
 import { selectArchive, type ArchivePost } from '../lib/archive'
 import { PostCard } from '../components/PostCard'
@@ -7,8 +7,11 @@ import { ChainSelector } from '../components/ChainSelector'
 import { ArchiveDivider } from '../components/ArchiveDivider'
 import { EmptyState } from '../components/EmptyState'
 import { InfoPopover } from '../components/InfoPopover'
+import { RefreshButton } from '../components/RefreshButton'
+import { StalenessIndicator } from '../components/StalenessIndicator'
 import { useChainFilter } from '../hooks/useChainFilter'
 import { useArchiveToggle } from '../hooks/useArchiveToggle'
+import { useIndexerStatus } from '../hooks/useIndexerStatus'
 
 const PAGE_SIZE = 25
 
@@ -27,9 +30,12 @@ export function Feed() {
   // refetches cleanly on switch.
   const chainSlugs = chainFilter ? [chainFilter] : undefined
 
+  const queryClient = useQueryClient()
+
   const {
     data,
     isLoading,
+    isFetching: isFeedFetching,
     error,
     fetchNextPage,
     hasNextPage,
@@ -40,6 +46,20 @@ export function Feed() {
     initialPageParam: 0,
     getNextPageParam: (lastPage) => lastPage.nextOffset ?? undefined,
   })
+
+  const indexerStatus = useIndexerStatus()
+
+  // Manual refresh: invalidate every variant of the feed query (so all
+  // sort × chainFilter combos held in cache get re-fetched on next view)
+  // and re-run the indexer-status query immediately. We don't await here
+  // — the feed/indexer fetching states drive the spinner separately.
+  const handleRefresh = useCallback(() => {
+    void queryClient.invalidateQueries({ queryKey: ['feed'] })
+    void indexerStatus.refetch()
+  }, [queryClient, indexerStatus])
+
+  // Combined "something is in flight" state for the refresh button.
+  const isRefreshing = isFeedFetching || indexerStatus.isFetching
 
   // Flatten + (optionally) reverse for "oldest" view. Mesh always returns
   // DESC; we reverse client-side and walk pages in the same order.
@@ -65,6 +85,10 @@ export function Feed() {
         onChainChange={setChainFilter}
         showArchive={showArchive}
         onShowArchiveChange={setShowArchive}
+        onRefresh={handleRefresh}
+        isRefreshing={isRefreshing}
+        indexerStatus={indexerStatus.status}
+        indexerStatusError={indexerStatus.isError}
       />
       <div className="mt-6">
         <FeedBody
@@ -199,6 +223,10 @@ function FilterBar({
   onChainChange,
   showArchive,
   onShowArchiveChange,
+  onRefresh,
+  isRefreshing,
+  indexerStatus,
+  indexerStatusError,
 }: {
   sort: SortOption
   onSortChange: (s: SortOption) => void
@@ -206,36 +234,49 @@ function FilterBar({
   onChainChange: (next: string | null) => void
   showArchive: boolean
   onShowArchiveChange: (next: boolean) => void
+  onRefresh: () => void
+  isRefreshing: boolean
+  indexerStatus: import('../lib/queries').IndexerStatus | undefined
+  indexerStatusError: boolean
 }) {
   return (
-    <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-2 border-b border-black pb-3">
-      <div className="flex items-baseline gap-3">
-        <span className="text-[10px] uppercase tracking-widest text-neutral-700">sort:</span>
-        <div className="flex gap-1">
-          {SORT_OPTIONS.map((opt) => {
-            const active = sort === opt.value
-            return (
-              <button
-                key={opt.value}
-                type="button"
-                onClick={() => onSortChange(opt.value)}
-                className={
-                  'px-2 py-0.5 text-xs uppercase tracking-widest border ' +
-                  (active
-                    ? 'border-black bg-black text-[#f5f4ee]'
-                    : 'border-transparent text-neutral-700 hover:border-black hover:text-black')
-                }
-              >
-                {opt.label}
-              </button>
-            )
-          })}
+    <div className="border-b border-black pb-3">
+      <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-2">
+        <div className="flex items-baseline gap-3">
+          <span className="text-[10px] uppercase tracking-widest text-neutral-700">sort:</span>
+          <div className="flex gap-1">
+            {SORT_OPTIONS.map((opt) => {
+              const active = sort === opt.value
+              return (
+                <button
+                  key={opt.value}
+                  type="button"
+                  onClick={() => onSortChange(opt.value)}
+                  className={
+                    'px-2 py-0.5 text-xs uppercase tracking-widest border ' +
+                    (active
+                      ? 'border-black bg-black text-[#f5f4ee]'
+                      : 'border-transparent text-neutral-700 hover:border-black hover:text-black')
+                  }
+                >
+                  {opt.label}
+                </button>
+              )
+            })}
+          </div>
         </div>
+
+        <ArchiveToggle value={showArchive} onChange={onShowArchiveChange} />
+
+        <ChainSelector value={chainFilter} onChange={onChainChange} />
       </div>
-
-      <ArchiveToggle value={showArchive} onChange={onShowArchiveChange} />
-
-      <ChainSelector value={chainFilter} onChange={onChainChange} />
+      {/* Refresh row: explicit re-fetch control + indexer staleness signal.
+          Sits just under the filter bar so it shares the same horizontal
+          rule but doesn't compete with the filters for attention. */}
+      <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1">
+        <RefreshButton onRefresh={onRefresh} isFetching={isRefreshing} />
+        <StalenessIndicator status={indexerStatus} isError={indexerStatusError} />
+      </div>
     </div>
   )
 }
