@@ -210,7 +210,9 @@ const buildPostDetailQuery = (prefix: string): string => /* GraphQL */ `
 `
 
 // Composite id is `{slug}-{onchainId}`. Extract both parts.
-const splitCompositeId = (compositeId: string): { slug: string; onchainId: string } => {
+export const splitCompositeId = (
+  compositeId: string,
+): { slug: string; onchainId: string } => {
   // Iterate the longest-known slugs first so 'anvil-base' beats 'base'.
   const slugs = Object.keys(SLUG_TO_PREFIX).sort((a, b) => b.length - a.length)
   for (const slug of slugs) {

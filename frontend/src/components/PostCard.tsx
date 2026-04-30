@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom'
-import type { FeedPost } from '../lib/queries'
+import { type FeedPost, splitCompositeId } from '../lib/queries'
 import {
   archivePostUrlId,
   formatAmountUsd,
@@ -8,6 +8,7 @@ import {
 import { relativeTime } from '../lib/format'
 import { AddressLabel } from './AddressLabel'
 import { ChainBadge } from './ChainBadge'
+import { ConfirmVoteButtons } from './ConfirmVoteButtons'
 
 /**
  * Discriminated union — `kind: 'live'` for on-chain posts, `kind:
@@ -36,6 +37,20 @@ function LivePostCard({ post }: { post: FeedPost }) {
   // Note is the longer free-form body; previewed below the title.
   const headline = post.title?.trim() || '(untitled)'
   const body = post.note?.trim()
+  // The on-chain `confirm` / `unconfirm` calls take the bare uint256 id,
+  // not our composite `{slug}-{onchainId}`. Extract the on-chain part.
+  // Currently the registry is only deployed on Base, so non-base posts
+  // have no working confirm path; we still split (it's pure) and let
+  // the buttons render — they'll succeed once those chains go live and
+  // this component is upgraded to chainId-aware routing.
+  const { onchainId } = splitCompositeId(post.id)
+  const numericPostId = (() => {
+    try {
+      return BigInt(onchainId)
+    } catch {
+      return null
+    }
+  })()
 
   return (
     <article className="space-y-3">
@@ -76,12 +91,21 @@ function LivePostCard({ post }: { post: FeedPost }) {
         </span>
       </div>
 
-      <Link
-        to={`/post/${post.id}`}
-        className="inline-block text-xs font-black uppercase tracking-widest rekt-link"
-      >
-        more →
-      </Link>
+      <div className="flex flex-wrap items-center gap-3">
+        {numericPostId !== null && (
+          <ConfirmVoteButtons
+            postId={numericPostId}
+            upCount={post.confirmations}
+            downCount={post.disconfirmations}
+          />
+        )}
+        <Link
+          to={`/post/${post.id}`}
+          className="inline-block text-xs font-black uppercase tracking-widest rekt-link"
+        >
+          more →
+        </Link>
+      </div>
     </article>
   )
 }
