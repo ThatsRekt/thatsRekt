@@ -1,24 +1,44 @@
 import { BecomeAPosterCallout } from '../components/BecomeAPosterCallout'
 import { AddressLabel } from '../components/AddressLabel'
 import { CopyableText } from '../components/CopyableText'
+import { DocsTOC, slugify, type TocEntry } from '../components/DocsTOC'
+import { StackDiagram } from '../components/diagrams/StackDiagram'
+import { PostLifecycleDiagram } from '../components/diagrams/PostLifecycleDiagram'
 
 /**
  * Single-page docs for integrators. Plain JSX (no MDX, no syntax
  * highlighter) — keeps the bundle lean. Migrate to a proper docs site
  * (Docusaurus / Mintlify / vitepress) when this page outgrows the format.
+ *
+ * Layout: on lg+ viewports the page bleeds wider than the app's
+ * `max-w-3xl` container (via `lg:-mx-32`) to make room for a sticky
+ * left-side TOC. On smaller viewports the TOC is hidden — the page is
+ * short enough that linear reading + browser anchor links suffice.
  */
+const TOC_ENTRIES: ReadonlyArray<TocEntry> = [
+  { id: slugify('what is thatsRekt'),                   label: 'what is it' },
+  { id: slugify('how posts work'),                      label: 'how posts work' },
+  { id: slugify('architecture'),                        label: 'architecture' },
+  { id: slugify('integrating from Solidity'),           label: 'solidity' },
+  { id: slugify('integrating from a dApp (GraphQL)'),   label: 'graphql' },
+  { id: slugify('reference'),                           label: 'reference' },
+]
+
 export function Docs() {
   return (
-    <article className="space-y-12">
-      <Hero />
-      <WhatIs />
-      <HowItWorks />
-      <BecomeAPosterCallout />
-      <Architecture />
-      <SolidityIntegration />
-      <DappIntegration />
-      <Reference />
-    </article>
+    <div className="lg:flex lg:gap-10 lg:-mx-32 lg:px-6">
+      <DocsTOC entries={TOC_ENTRIES} />
+      <article className="flex-1 space-y-12 min-w-0">
+        <Hero />
+        <WhatIs />
+        <HowItWorks />
+        <BecomeAPosterCallout />
+        <Architecture />
+        <SolidityIntegration />
+        <DappIntegration />
+        <Reference />
+      </article>
+    </div>
   )
 }
 
@@ -125,6 +145,29 @@ function Architecture() {
         One integration constant works everywhere your protocol is
         deployed.
       </p>
+
+      <SubSection heading="the stack at a glance">
+        <p className="text-sm leading-relaxed text-neutral-800 mb-2">
+          A poster submits an alert; the contract emits an event; the
+          indexer writes it to Postgres; the GraphQL gateway exposes
+          it; this site renders it. Reader contracts and dApps tap in
+          at whichever tier matches their needs — direct on-chain
+          reads (cheap, no infra), or rich GraphQL queries (free,
+          public).
+        </p>
+        <StackDiagram />
+      </SubSection>
+
+      <SubSection heading="post lifecycle">
+        <p className="text-sm leading-relaxed text-neutral-800 mb-2">
+          Each post lives forever in storage and events. Confirmer
+          activity updates the aggregate{' '}
+          <Code>attackerScore</Code> in real time — readers don't
+          need an indexer to consume the score, only a single view
+          call against the proxy.
+        </p>
+        <PostLifecycleDiagram />
+      </SubSection>
 
       <SubSection heading="public read functions">
         <p className="text-sm leading-relaxed text-neutral-800 mb-2">
@@ -532,9 +575,13 @@ function Section({
   heading: string
   children: React.ReactNode
 }) {
+  // Auto-derive an id from the heading so the TOC + browser hash links
+  // resolve without each call site having to repeat itself. `slugify` is
+  // shared with `DocsTOC` so the two stay in lockstep.
+  const id = slugify(heading)
   return (
-    <section className="space-y-5">
-      <h2 className="font-black uppercase tracking-tighter text-2xl sm:text-3xl leading-none">
+    <section className="space-y-5" id={id}>
+      <h2 className="font-black uppercase tracking-tighter text-2xl sm:text-3xl leading-none scroll-mt-6">
         {heading}
       </h2>
       {children}
