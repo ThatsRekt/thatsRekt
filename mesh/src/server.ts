@@ -23,6 +23,40 @@ import { z } from 'zod'
 import { enabledChains, type ChainEntry } from './chains.js'
 
 // ---------------------------------------------------------------------------
+// GraphiQL default query
+// ---------------------------------------------------------------------------
+//
+// Pre-filled into the in-browser GraphiQL editor at /graphql. Keeps the
+// first-time visitor journey tight: hit the URL → see a real query →
+// press Run → get data. The default Yoga buffer is all comments, which
+// throws "Unexpected EOF" if the visitor presses Run before typing.
+const GRAPHIQL_DEFAULT_QUERY = `# thatsRekt — public on-chain hack alert registry.
+# https://thatsrekt.com — site · https://thatsrekt.com/docs — integrator docs
+#
+# This sample fetches the latest 10 alerts merged across every indexed
+# chain. Press the ▶ button (or Cmd-Enter / Ctrl-Enter) to run.
+
+query LatestAlerts {
+  posts(limit: 10) {
+    items {
+      id
+      chain { slug name }
+      title
+      poster
+      attackedAt
+      attackers
+      victims
+      confirmations
+      disconfirmations
+      netScore
+    }
+    totalCount
+  }
+}
+`
+
+
+// ---------------------------------------------------------------------------
 // Per-upstream executor
 // ---------------------------------------------------------------------------
 
@@ -495,7 +529,15 @@ const main = async () => {
 
   const yoga = createYoga({
     schema,
-    graphiql: true,
+    graphiql: {
+      // First-time visitors hit /graphql in a browser and see this. The
+      // default Yoga welcome buffer is all comments — pressing Run on
+      // it throws "Unexpected EOF" because the parser sees no actual
+      // query. Pre-fill a real, runnable cross-chain query so anyone
+      // poking around can immediately see what the API returns.
+      title: 'thatsRekt · GraphQL',
+      defaultQuery: GRAPHIQL_DEFAULT_QUERY,
+    },
     landingPage: false,
   })
   const server = createServer(yoga)
