@@ -250,8 +250,8 @@ function DappIntegration() {
     <Section heading="integrating from a dApp (GraphQL)">
       <p className="text-base leading-relaxed text-neutral-800">
         For dApps and indexers that don't sit on-chain, query the
-        public Mesh GraphQL gateway. It stitches every per-chain squid
-        into a single endpoint and merges results across chains
+        public Mesh GraphQL gateway. It exposes a single endpoint
+        that fans out to every chain and sort-merges results
         automatically.
       </p>
 
@@ -311,8 +311,8 @@ query LatestPosts {
       <p className="text-xs leading-relaxed text-neutral-700">
         Available chain prefixes: <Inline>Base_</Inline>,{' '}
         <Inline>Optimism_</Inline>, <Inline>Sepolia_</Inline>, and so
-        on. The schema mirrors the per-chain Subsquid surface; full
-        introspection is available at the GraphQL endpoint.
+        on. Full schema introspection is available at the GraphQL
+        endpoint.
       </p>
     </Section>
   )
