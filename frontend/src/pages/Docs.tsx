@@ -400,17 +400,19 @@ query LatestPosts {
 
 /**
  * Chains we plan to support. Each entry is one row in the deployments
- * table. Production contracts will be CREATE2-identical across all of
- * them; until each is live, the proxy column shows "— TBD —" and the
- * status column shows "pending deploy".
+ * table. Production contracts are CREATE2-identical across every chain
+ * with the same governance + initial whitelisters — pending deploys
+ * resolve to the same canonical proxy address as Base mainnet.
  */
+const CANONICAL_PROXY = '0x390f7b37545CaD278dD3DADC92a20b9f45865936'
+
 const PLANNED_DEPLOYMENTS: ReadonlyArray<{
   name: string
   chainId: number
   proxy: string | null
 }> = [
   { name: 'ethereum', chainId: 1, proxy: null },
-  { name: 'base', chainId: 8453, proxy: null },
+  { name: 'base', chainId: 8453, proxy: CANONICAL_PROXY },
   { name: 'optimism', chainId: 10, proxy: null },
   { name: 'arbitrum', chainId: 42161, proxy: null },
   { name: 'polygon', chainId: 137, proxy: null },
