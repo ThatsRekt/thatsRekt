@@ -9,6 +9,7 @@
 #   make lan-up               # full LAN stack up (compose + frontend + Mesh)
 #   make lan-info             # print the host's LAN IP + the URLs to share
 #   make anvil-bootstrap      # deploy thatsRekt to both anvils (idempotent)
+#   make seed-mock-posts      # populate the feed with mock on-chain posts (no relay needed)
 #   make lan-down             # stop everything (compose + frontend)
 #   make dev-reset            # nuked something? full re-bootstrap in one shot
 #   make help                 # this list
@@ -108,6 +109,10 @@ anvil-bootstrap: ## Deploy thatsRekt to both anvils + emit .deployed.<chain>.jso
 .PHONY: anvil-reset
 anvil-reset: ## Wipe + re-deploy both anvils
 	$(CONTRACTS)/script/anvil/reset.sh
+
+.PHONY: seed-mock-posts
+seed-mock-posts: ## Seed a handful of mock on-chain posts on both anvils — no relay required. Uses anvil_impersonateAccount on the timelock to whitelist the dev EOA, then posts via cast send. Override count with POSTS_PER_CHAIN=N.
+	@$(SCRIPTS)/seed-mock-posts.sh
 
 .PHONY: dev-reset
 dev-reset: ## Full local stack re-bootstrap: anvils → contracts → indexer/.env → drop+remigrate DBs → restart processors+mesh (and relay if running). The "I just nuked something, get me back" button.
