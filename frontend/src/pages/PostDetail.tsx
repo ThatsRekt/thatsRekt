@@ -1,7 +1,9 @@
 import { useParams, Link } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { fetchPostDetail } from '../lib/queries'
+import { archiveSlugFromUrlId } from '../lib/archive'
 import { AddressLabel } from '../components/AddressLabel'
+import { ArchiveDetail } from '../components/ArchiveDetail'
 import { ChainBadge } from '../components/ChainBadge'
 import { Timeline } from '../components/Timeline'
 import { EmptyState } from '../components/EmptyState'
@@ -23,6 +25,17 @@ export function PostDetail() {
   const { id } = useParams<{ id: string }>()
   const postId = id ?? ''
 
+  // Archive entries are read-only frontend data — branch BEFORE the
+  // useQuery call so we never hit the network for `archive-*` ids.
+  const archiveSlug = archiveSlugFromUrlId(postId)
+  if (archiveSlug !== null) {
+    return <ArchiveDetail slug={archiveSlug} />
+  }
+
+  return <LivePostDetail postId={postId} />
+}
+
+function LivePostDetail({ postId }: { postId: string }) {
   const { data, isLoading, error } = useQuery({
     queryKey: ['post', postId],
     queryFn: () => fetchPostDetail(postId),

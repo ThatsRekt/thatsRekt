@@ -1,10 +1,14 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useInfiniteQuery } from '@tanstack/react-query'
 import { fetchFeedPage, type FeedPost, type SortOption } from '../lib/queries'
+import { selectArchive, type ArchivePost } from '../lib/archive'
 import { PostCard } from '../components/PostCard'
 import { ChainSelector } from '../components/ChainSelector'
+import { ArchiveDivider } from '../components/ArchiveDivider'
 import { EmptyState } from '../components/EmptyState'
+import { InfoPopover } from '../components/InfoPopover'
 import { useChainFilter } from '../hooks/useChainFilter'
+import { useArchiveToggle } from '../hooks/useArchiveToggle'
 
 const PAGE_SIZE = 25
 
@@ -16,6 +20,7 @@ const SORT_OPTIONS: { value: SortOption; label: string }[] = [
 export function Feed() {
   const [sort, setSort] = useState<SortOption>('newest')
   const { filter: chainFilter, setFilter: setChainFilter } = useChainFilter()
+  const { showArchive, setShowArchive } = useArchiveToggle()
 
   // Pass an array (single-element when scoped) — Mesh accepts a list.
   // queryKey includes the filter so TanStack discriminates per scope and
@@ -41,8 +46,15 @@ export function Feed() {
   const allPosts: FeedPost[] = data
     ? data.pages.flatMap((p) => p.items)
     : []
-  const displayed = sort === 'oldest' ? allPosts.slice().reverse() : allPosts
-  const totalCount = data?.pages[0]?.totalCount ?? 0
+  const livePosts = sort === 'oldest' ? allPosts.slice().reverse() : allPosts
+  const totalLiveCount = data?.pages[0]?.totalCount ?? 0
+
+  // Archive selection is in-memory + frozen at module load — useMemo
+  // keeps the filter/sort cheap on re-renders triggered by network state.
+  const archivePosts: readonly ArchivePost[] = useMemo(
+    () => (showArchive ? selectArchive({ chainSlug: chainFilter, sort }) : []),
+    [showArchive, chainFilter, sort],
+  )
 
   return (
     <div>
@@ -51,30 +63,125 @@ export function Feed() {
         onSortChange={setSort}
         chainFilter={chainFilter}
         onChainChange={setChainFilter}
+        showArchive={showArchive}
+        onShowArchiveChange={setShowArchive}
       />
       <div className="mt-6">
-        {isLoading ? (
-          <p className="text-xs uppercase tracking-widest text-neutral-700">loading…</p>
-        ) : error ? (
-          <EmptyState
-            title="couldn't load the feed."
-            hint={`is the indexer running? ${(error as Error).message}`}
-          />
-        ) : displayed.length === 0 ? (
-          <EmptyState
-            title="no posts yet."
-            hint="contract not deployed on any indexed chain, or no whitelister has posted an alert yet."
-          />
-        ) : (
-          <FeedList
-            posts={displayed}
-            totalCount={totalCount}
-            hasNextPage={!!hasNextPage}
-            isFetchingNextPage={isFetchingNextPage}
-            onLoadMore={() => fetchNextPage()}
-          />
-        )}
+        <FeedBody
+          isLoading={isLoading}
+          error={error as Error | null}
+          livePosts={livePosts}
+          totalLiveCount={totalLiveCount}
+          hasNextPage={!!hasNextPage}
+          isFetchingNextPage={isFetchingNextPage}
+          onLoadMore={() => fetchNextPage()}
+          archivePosts={archivePosts}
+          showArchive={showArchive}
+          // When sort=oldest, render the archive ABOVE the live section.
+          // Archives are by definition older than any on-chain post, so
+          // this preserves global chronology — "oldest first" reads as
+          // The DAO 2016 → today, top to bottom.
+          archiveAbove={sort === 'oldest'}
+        />
       </div>
+    </div>
+  )
+}
+
+interface FeedBodyProps {
+  isLoading: boolean
+  error: Error | null
+  livePosts: FeedPost[]
+  totalLiveCount: number
+  hasNextPage: boolean
+  isFetchingNextPage: boolean
+  onLoadMore: () => void
+  archivePosts: readonly ArchivePost[]
+  showArchive: boolean
+  archiveAbove: boolean
+}
+
+function FeedBody({
+  isLoading,
+  error,
+  livePosts,
+  totalLiveCount,
+  hasNextPage,
+  isFetchingNextPage,
+  onLoadMore,
+  archivePosts,
+  showArchive,
+  archiveAbove,
+}: FeedBodyProps) {
+  if (isLoading) {
+    return (
+      <p className="text-xs uppercase tracking-widest text-neutral-700">loading…</p>
+    )
+  }
+
+  if (error) {
+    return (
+      <EmptyState
+        title="couldn't load the feed."
+        hint={`is the indexer running? ${error.message}`}
+      />
+    )
+  }
+
+  const liveEmpty = livePosts.length === 0
+  const archiveEmpty = archivePosts.length === 0
+
+  // Both sections empty — single-block empty state with hint that
+  // depends on whether archive is hidden.
+  if (liveEmpty && archiveEmpty) {
+    return (
+      <EmptyState
+        title="no posts yet."
+        hint={
+          showArchive
+            ? 'no on-chain posts have been indexed, and no archive entries match the current chain filter.'
+            : 'no on-chain posts have been indexed. Toggle "show archive" above to see pre-platform attacks.'
+        }
+      />
+    )
+  }
+
+  const renderLive = !liveEmpty && (
+    <LiveSection
+      posts={livePosts}
+      totalCount={totalLiveCount}
+      hasNextPage={hasNextPage}
+      isFetchingNextPage={isFetchingNextPage}
+      onLoadMore={onLoadMore}
+    />
+  )
+  const renderArchive = !archiveEmpty && <ArchiveSection posts={archivePosts} />
+  const renderDivider = !liveEmpty && !archiveEmpty && <ArchiveDivider />
+
+  return (
+    <div>
+      {/* Launch-day affordance: live empty + archive on + archive
+          non-empty → tell the user the archive is what they're seeing.
+          Independent of section order — just a top-of-page hint. */}
+      {liveEmpty && showArchive && !archiveEmpty && (
+        <p className="mb-6 text-xs uppercase tracking-widest text-neutral-700">
+          no on-chain posts yet · showing pre-platform archive
+        </p>
+      )}
+
+      {archiveAbove ? (
+        <>
+          {renderArchive}
+          {renderDivider}
+          {renderLive}
+        </>
+      ) : (
+        <>
+          {renderLive}
+          {renderDivider}
+          {renderArchive}
+        </>
+      )}
     </div>
   )
 }
@@ -84,11 +191,15 @@ function FilterBar({
   onSortChange,
   chainFilter,
   onChainChange,
+  showArchive,
+  onShowArchiveChange,
 }: {
   sort: SortOption
   onSortChange: (s: SortOption) => void
   chainFilter: string | null
   onChainChange: (next: string | null) => void
+  showArchive: boolean
+  onShowArchiveChange: (next: boolean) => void
 }) {
   return (
     <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-2 border-b border-black pb-3">
@@ -115,37 +226,69 @@ function FilterBar({
           })}
         </div>
       </div>
+
+      <ArchiveToggle value={showArchive} onChange={onShowArchiveChange} />
+
       <ChainSelector value={chainFilter} onChange={onChainChange} />
     </div>
   )
 }
 
-interface FeedListProps {
-  posts: FeedPost[]
-  totalCount: number
-  hasNextPage: boolean
-  isFetchingNextPage: boolean
-  onLoadMore: () => void
+function ArchiveToggle({
+  value,
+  onChange,
+}: {
+  value: boolean
+  onChange: (next: boolean) => void
+}) {
+  return (
+    <div className="flex items-baseline gap-1">
+      <button
+        type="button"
+        onClick={() => onChange(!value)}
+        aria-pressed={value}
+        className={
+          'px-2 py-0.5 text-xs uppercase tracking-widest border ' +
+          (value
+            ? 'border-black bg-black text-[#f5f4ee]'
+            : 'border-black text-neutral-700 hover:bg-black hover:text-[#f5f4ee]')
+        }
+      >
+        {value ? '✓ ' : ''}show archive
+      </button>
+      <InfoPopover title="archive posts" ariaLabel="what is the archive?">
+        Pre-platform attacks compiled by the community. Archive posts
+        are off-chain context — they're not posted to the registry and
+        can't be confirmed or disconfirmed. They appear below the live
+        feed in their own section.
+      </InfoPopover>
+    </div>
+  )
 }
 
-function FeedList({
+function LiveSection({
   posts,
   totalCount,
   hasNextPage,
   isFetchingNextPage,
   onLoadMore,
-}: FeedListProps) {
+}: {
+  posts: FeedPost[]
+  totalCount: number
+  hasNextPage: boolean
+  isFetchingNextPage: boolean
+  onLoadMore: () => void
+}) {
   return (
     <div>
       {posts.map((post, i) => (
         <div key={post.id}>
           {i > 0 && <hr className="my-8 border-t-2 border-black" />}
-          <PostCard post={post} />
+          <PostCard item={{ kind: 'live', post }} />
         </div>
       ))}
-      <div className="rekt-divider mt-8">* * *</div>
       {hasNextPage ? (
-        <div className="flex flex-col items-center gap-2">
+        <div className="mt-8 flex flex-col items-center gap-2">
           <button
             type="button"
             onClick={onLoadMore}
@@ -159,10 +302,31 @@ function FeedList({
           </p>
         </div>
       ) : (
-        <p className="text-center text-xs uppercase tracking-widest text-neutral-700">
-          end of feed · {posts.length} post{posts.length === 1 ? '' : 's'}
+        <p className="mt-8 text-center text-xs uppercase tracking-widest text-neutral-700">
+          end of live feed · {posts.length} post{posts.length === 1 ? '' : 's'}
         </p>
       )}
     </div>
+  )
+}
+
+function ArchiveSection({ posts }: { posts: readonly ArchivePost[] }) {
+  // Subtle gray-cream tint differentiates the archive zone from live posts
+  // at a glance — the page bg is #f5f4ee (warm cream), this is a slightly
+  // darker / cooler tone. Keeps the brutalist aesthetic but signals
+  // "you've crossed into the archive subspace" without needing to read
+  // the divider text.
+  return (
+    <section className="bg-neutral-200/50 -mx-4 sm:-mx-6 px-4 sm:px-6 py-8 border-y-2 border-neutral-400/60">
+      {posts.map((post, i) => (
+        <div key={post.id}>
+          {i > 0 && <hr className="my-8 border-t-2 border-neutral-400/60" />}
+          <PostCard item={{ kind: 'archive', post }} />
+        </div>
+      ))}
+      <p className="mt-8 text-center text-xs uppercase tracking-widest text-neutral-600">
+        end of archive · {posts.length} entr{posts.length === 1 ? 'y' : 'ies'}
+      </p>
+    </section>
   )
 }
