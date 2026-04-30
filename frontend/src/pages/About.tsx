@@ -73,10 +73,14 @@ function HowItWorks() {
           and confirm or refute each other's claims.
         </Bullet>
         <Bullet label="who runs it">
-          A multisig manages the list of authorized posters{' '}
-          <strong className="font-black">instantly</strong> — a bad
-          actor can be kicked immediately. Contract upgrades are
-          separate and gated by a{' '}
+          A multisig manages the poster list. Bad actors can be
+          removed{' '}
+          <strong className="font-black">instantly</strong>, so
+          incident response stays fast. Adding a new poster goes
+          through a{' '}
+          <strong className="font-black">3-day timelock</strong>, so
+          operator rotation is visible before it lands. Contract
+          upgrades sit on a separate{' '}
           <strong className="font-black">7-day timelock</strong>, so
           integrators always have a week to back out of a malicious
           upgrade.

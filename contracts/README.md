@@ -4,37 +4,52 @@ A public-good on-chain registry of in-progress and confirmed DeFi exploits.
 
 Whitelisted operators (typically Twitter-monitor bots watching threat-intel firms like SlowMist, BlockSec, PeckShield) post structured alerts naming attacker addresses, victim contracts, and free-form context. Other whitelisters race to vouch (upvote) or refute (downvote). Aggregates are exposed as O(1) reads so any contract — DEX router, wallet, stablecoin issuer, risk dashboard — can plug in and inline-blacklist live attacker addresses.
 
-Designed as a public good: no economic admin power. Cross-chain identical-address deploy via the singleton CREATE2 factory. Logic is upgradeable behind a UUPS proxy gated by a 7-day TimelockController (see [Deployment Architecture](#deployment-architecture)).
+Designed as a public good: no economic admin power. Cross-chain identical-address deploy via the singleton CREATE2 factory. Logic is upgradeable behind a UUPS proxy gated by a 7-day TimelockController, with a separate 3-day TimelockController for poster onboarding (see [Deployment Architecture](#deployment-architecture)).
 
 ## Deployment Architecture
 
-Three contracts are deployed per chain, all via CREATE2 with constant salts so the addresses are identical on every chain:
+Four contracts are deployed per chain, all via CREATE2 with constant salts so addresses are identical across chains:
 
 1. **Implementation** (`ThatsRekt.sol`) — the logic contract. Held privately behind the proxy; integrators never call it directly. Salt is versioned per impl release (`thatsRekt.impl.v1.0.0`), so a new implementation gets a new address while the proxy stays put.
-2. **TimelockController** (OpenZeppelin) — gates every upgrade. Configured at deploy time with a **7-day delay**, the multisig as proposer + executor + canceller, and `admin = address(0)` so role changes can only happen via a timelocked proposal. Salt is versioned (`thatsRekt.timelock.v1`); only changes if the timelock contract itself is replaced.
-3. **ERC1967Proxy** — the canonical permanent address, what integrators bake in. Owned by the TimelockController. Salt is **not** versioned (`thatsRekt.proxy`) — this address must never change.
+2. **Upgrade TimelockController** (OpenZeppelin) — owns the proxy and gates every upgrade and every owner-level role rotation. **7-day delay**; multisig as proposer + executor + canceller; `admin = address(0)` so role changes can only happen via a timelocked proposal. Salt: `thatsRekt.upgradeTimelock.v1`.
+3. **Add TimelockController** (OpenZeppelin) — holds the `whitelistAdmin` slot. **3-day delay**; same proposer/executor/admin config. Used to onboard new posters and to rotate the operator role itself. Salt: `thatsRekt.addTimelock.v1`.
+4. **ERC1967Proxy** — the canonical permanent address, what integrators bake in. Owned by the upgrade TimelockController; whitelistAdmin is the add TimelockController; whitelistRemover is the multisig directly. Salt is **not** versioned (`thatsRekt.proxy`) — this address must never change.
 
-The multisig has no direct upgrade authority. Every upgrade follows the OZ TimelockController flow: propose with `schedule(...)`, wait 7 days, then `execute(...)` with the same args. Pseudocode:
+The multisig has no direct upgrade authority. Every upgrade follows the standard OZ TimelockController flow: propose with `schedule(...)`, wait 7 days, then `execute(...)` with the same args. Pseudocode:
 
 ```solidity
 bytes memory call = abi.encodeCall(ThatsRekt.upgradeToAndCall, (newImpl, ""));
-timelock.schedule(proxy, 0, call, bytes32(0), salt, 7 days);
+upgradeTimelock.schedule(proxy, 0, call, bytes32(0), salt, 7 days);
 // ... wait 7 days ...
-timelock.execute(proxy, 0, call, bytes32(0), salt);
+upgradeTimelock.execute(proxy, 0, call, bytes32(0), salt);
 ```
+
+Adding a new poster goes through the parallel 3-day flow on the add timelock:
+
+```solidity
+bytes memory call = abi.encodeCall(ThatsRekt.addWhitelisted, (newPoster));
+addTimelock.schedule(proxy, 0, call, bytes32(0), salt, 3 days);
+// ... wait 3 days ...
+addTimelock.execute(proxy, 0, call, bytes32(0), salt);
+```
+
+To skip the 3-day wait at launch (so the registry boots with operational posters), pass an `INITIAL_WHITELISTERS` list to `Deploy.s.sol`; it's the only legitimate bypass and only happens once during the proxy's `initialize`.
 
 ### Trust model
 
-Integrators trust the multisig — and the 7-day delay — for upgrade authority. The honest-case guarantee is that **a malicious upgrade cannot land in less than 7 days**: even with multisig keys compromised, integrators have a full week to disengage, monitor, and migrate before a hostile implementation is in force. The multisig can also call `proxy.renounceOwnership()` via the timelock when the design stabilizes, which permanently freezes upgrades and reduces the contract back to the immutable model of v0.
+Integrators trust the multisig — and the 7-day delay — for upgrade authority. The honest-case guarantee is that **a malicious upgrade cannot land in less than 7 days**. Even with multisig keys compromised, integrators have a full week to disengage, monitor, and migrate before a hostile implementation is in force. The multisig can call `proxy.renounceOwnership()` via the upgrade timelock when the design stabilizes, which permanently freezes upgrades and reduces the contract back to the immutable model of v0.
 
-Whitelist mutations are deliberately NOT gated by the timelock. The multisig holds the `whitelistAdmin` role directly so it can revoke a misbehaving poster instantly. The same 7-day window protects against a compromised whitelistAdmin: the timelock owner can rotate the role via `setWhitelistAdmin`, and that rotation goes through the standard delay — so integrators have the same disengage window for "this whitelistAdmin is acting hostile" as they do for malicious upgrades.
+Adding posters takes 3 days — long enough for integrators to react if the multisig schedules a hostile operator, short enough that real-world onboarding doesn't grind to a halt. **Removing posters is instant**, called directly by the multisig via the `whitelistRemover` slot. The asymmetry is the whole point: rotating *in* a new operator should be public and slow; kicking *out* a misbehaving one should be incident-response fast.
+
+The multisig also holds an instant kill-switch on the add timelock itself: `revokeWhitelistAdmin()` zeros the `whitelistAdmin` slot, blocking all new additions until the upgrade-timelock owner re-installs an admin via the 7-day path. This buys breathing room if the add timelock is captured, then forces public re-installation.
 
 ## Architecture
 
-Two-tier governance:
+Three-role governance with asymmetric delays:
 
-- **Owner** (the `TimelockController`, set on the proxy at `initialize`) — holds upgrade authority and the ability to rotate the whitelist admin via `setWhitelistAdmin`. Both are timelock-gated: `schedule()` -> wait 7 days -> `execute()`. Owner is fully rotatable via the inherited `Ownable2StepUpgradeable` two-step.
-- **Whitelist admin** (the multisig directly, set on the proxy at `initialize` and rotatable via owner-gated `setWhitelistAdmin`) — calls `addWhitelisted` / `removeWhitelisted` instantly, with no timelock. Posters need to be kickable the moment something goes wrong; waiting 7 days to remove a misbehaving operator isn't operationally viable.
+- **Owner** (the upgrade `TimelockController`, set on the proxy at `initialize`) — holds upgrade authority (`upgradeToAndCall`) and the 7-day re-install path for the whitelistAdmin slot, plus 7-day rotation of the whitelistRemover slot. Owner is fully rotatable via the inherited `Ownable2StepUpgradeable` two-step.
+- **Whitelist admin** (the add `TimelockController`, set at `initialize` and self-rotatable via the 3-day path or owner-rotatable via the 7-day path) — calls `addWhitelisted` (3-day delay in production) and `setWhitelistAdmin` (3-day delay) to install a new operator.
+- **Whitelist remover** (the multisig directly, set at `initialize` and rotatable only via owner) — calls `removeWhitelisted` (instant) and `revokeWhitelistAdmin` (instant kill-switch on the admin slot). No delay; this is the incident-response role.
 - **Whitelisted addresses** — can post alerts, vote up/down on others' alerts, retract / amend / extend their own posts. Cannot vote on own posts.
 - **Anyone** — can read posts, attacker scores, victim flags, voter sets, and the active-post linked list.
 
@@ -114,7 +129,7 @@ Cardinalities are kept in lockstep with the per-post `upvotes` / `downvotes` cou
 
 All three contracts (impl, timelock, proxy) are deployed at the same address on every supported EVM chain using the CREATE2 deployer at `0x4e59b44847b379578588920cA78FbF26c0B4956C`. Each chain has its own sovereign state — own whitelist, own posts, own karma. Cross-chain aggregation is an off-chain concern.
 
-Cross-chain identical addresses require identical init code on every chain. Concretely: the proxy's init code embeds the impl address and the `initialize(timelock)` calldata, and the timelock's init code embeds the multisig address as proposer / executor / canceller. So the multisig must live at the same address on every chain (typically deployed via the Safe Singleton Factory) — pass that same address everywhere and the impl, timelock, and proxy each land at one canonical cross-chain address.
+Cross-chain identical addresses require identical init code on every chain. Concretely: the proxy's init code embeds the impl address and the `initialize(upgradeTimelock, addTimelock, multisig, initialWhitelisters[])` calldata, and each timelock's init code embeds the multisig address as proposer / executor / canceller. So the multisig must live at the same address on every chain (typically deployed via the Safe Singleton Factory) — pass the same multisig and the same `INITIAL_WHITELISTERS` everywhere, and the impl, both timelocks, and the proxy each land at one canonical cross-chain address.
 
 ## Build / test / deploy
 
@@ -127,10 +142,19 @@ forge test --match-contract ThatsRektInvariants -vv
 ### Production deploy (mainnet) — `Deploy.s.sol`
 
 ```bash
-# GOVERNANCE_OWNER MUST be a deployed contract (Safe multisig).
-# The script asserts code.length > 0 and reverts on EOAs.
-cp .env.example .env  # fill in PRIVATE_KEY, RPC_URL, ETHERSCAN_API_KEY, GOVERNANCE_OWNER
-GOVERNANCE_OWNER=0x...<safe>...  forge script script/Deploy.s.sol \
+# Required env:
+#   GOVERNANCE_OWNER     — Safe multisig (must have code on the target chain).
+#                          Becomes proposer/executor on the 7-day upgrade TLC.
+#   WHITELIST_OPERATOR   — cold wallet (EOA or contract).
+#                          Becomes proposer/executor on the 3-day add TLC AND
+#                          holds the whitelistRemover slot.
+# Optional:
+#   INITIAL_WHITELISTERS — comma-separated address list, pre-populated into
+#                          the whitelist at init (bypasses the 3-day delay).
+GOVERNANCE_OWNER=0x...<safe>... \
+WHITELIST_OPERATOR=0x...<cold-wallet>... \
+INITIAL_WHITELISTERS=0xabc...,0xdef...,0x123... \
+forge script script/Deploy.s.sol \
     --rpc-url <chain-rpc> \
     --broadcast \
     --verify \
@@ -139,7 +163,7 @@ GOVERNANCE_OWNER=0x...<safe>...  forge script script/Deploy.s.sol \
 
 ### Dev / testnet deploy — `DeployDev.s.sol`
 
-For local Anvil and testnet (Sepolia) where standing up a Safe is friction. Accepts an EOA as `GOVERNANCE_OWNER` and uses **distinct CREATE2 salts** (`thatsRekt.impl.dev.v1.0.0`, `thatsRekt.timelock.dev.v1`, `thatsRekt.proxy.dev`) so dev deploys can never collide with production addresses.
+For local Anvil and testnet (Sepolia) where standing up a Safe is friction. Accepts an EOA as `GOVERNANCE_OWNER` and uses **distinct CREATE2 salts** (`thatsRekt.impl.dev.v1.0.0`, `thatsRekt.upgradeTimelock.dev.v1`, `thatsRekt.addTimelock.dev.v1`, `thatsRekt.proxy.dev`) so dev deploys can never collide with production addresses.
 
 The recommended dev EOA is **Anvil default account 0** (`0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266`, mnemonic: `test test test test test test test test test test test junk`). Reproducible across machines, no secret to manage. Same EOA on Anvil + Sepolia ⇒ **identical thatsRekt address on both** — convenient for parity testing. **Never use this on mainnet.**
 
@@ -161,7 +185,7 @@ GOVERNANCE_OWNER=0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
 
 **Output:** the script logs the deployed proxy address and current block number. Copy them into `indexer/.env` as `CONTRACT_SEPOLIA` / `START_BLOCK_SEPOLIA` (or the equivalent for whichever chain).
 
-The dev deploy uses the same upgrade flow as production (proxy owned by timelock, 7-day delay). To exercise upgrades on Anvil, advance time with `evm_increaseTime` rather than shortening the delay — keeps testnet behavior matching mainnet.
+The dev deploy uses the same flows as production (proxy owned by upgrade TLC at 7 days; whitelistAdmin held by add TLC at 3 days). To exercise upgrades or add-timelock flows on Anvil, advance time with `evm_increaseTime` rather than shortening the delays — keeps testnet behavior matching mainnet.
 
 ## Spec + design history
 

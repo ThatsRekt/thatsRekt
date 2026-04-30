@@ -23,12 +23,14 @@ export function Posters() {
         <p className="text-base leading-relaxed text-neutral-800">
           These are the addresses authorized to{' '}
           <strong className="font-black">post hack alerts</strong> and
-          confirm posts on the registry, per chain. The governance
-          multisig adds and removes them{' '}
-          <strong className="font-black">instantly</strong> — a
-          misbehaving poster can be kicked immediately. The on-chain
-          whitelist is the source of truth; the names below are a
-          courtesy lookup.
+          confirm posts on the registry, per chain. New posters are
+          added through a{' '}
+          <strong className="font-black">3-day timelock</strong> so
+          rotation is publicly visible; misbehaving posters are
+          removed{' '}
+          <strong className="font-black">instantly</strong> by the
+          governance multisig. The on-chain whitelist is the source of
+          truth; the names below are a courtesy lookup.
         </p>
       </header>
 
