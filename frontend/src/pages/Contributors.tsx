@@ -8,7 +8,7 @@ import {
   type ProposerEntry,
   type ProposerOrderBy,
 } from '../lib/queries'
-import { visibleChains, getChainBySlug } from '../lib/chains'
+import { liveIndexedChains, getChainBySlug } from '../lib/chains'
 import { lookupContributor } from '../lib/contributors'
 import { AddressLabel } from '../components/AddressLabel'
 import { ChainBadge } from '../components/ChainBadge'
@@ -16,7 +16,10 @@ import { EmptyState } from '../components/EmptyState'
 import { relativeTime } from '../lib/format'
 
 export function Contributors() {
-  const chains = visibleChains()
+  // Whitelisters live on-chain — only fan out queries to chains the
+  // live indexer actually ingests. Archive-only chains (ethereum, etc.)
+  // would resolve to empty sections and pollute the tab list.
+  const chains = liveIndexedChains()
   const slugs = chains.map((c) => c.slug)
 
   const { data, isLoading, error } = useQuery({
@@ -116,7 +119,7 @@ function ChainTabs({
   activeSlug,
   onSelect,
 }: {
-  chains: readonly ReturnType<typeof visibleChains>[number][]
+  chains: readonly ReturnType<typeof liveIndexedChains>[number][]
   groups: ChainContributors[]
   activeSlug: string | null
   onSelect: (slug: string) => void

@@ -4,11 +4,18 @@ Curated catalog of major DeFi hacks intended for seeding the production
 thatsRekt registry on launch day. The on-chain feed should not be empty
 when the first user lands — this dataset is the backstop.
 
-**Status:** Dataset only. No seeding script wired yet (deferred — see
-`tasks/historic-data-seed.md`).
+**Status:** Used by the frontend as the read-only "archive" feed
+section (see `tasks/archive-frontend-design.md`). The original plan to
+seed these on-chain (`tasks/historic-data-seed.md`) is dropped — old
+attacks live as a frontend archive, not as on-chain registry entries.
 
-The single source of truth is `data/historic-incidents.json` — a sorted
-(by `attackedAt` ASC) array of incident objects.
+The source of truth is `data/historic-incidents.json` — a sorted (by
+`attackedAt` ASC) array of incident objects. **A copy lives at
+`frontend/src/data/historic-incidents.json`** and is what the frontend
+imports. Vite/`tsc` can't reach outside `frontend/src/`, so the
+duplication is structural. **If you change this file, also update the
+frontend copy** (the dataset is essentially frozen, so this rarely
+comes up).
 
 ---
 
