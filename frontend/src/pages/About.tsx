@@ -2,25 +2,22 @@ import { Maintainers } from '../components/Maintainers'
 import { DonateAddress } from '../components/DonateAddress'
 
 /**
- * "About thatsRekt." Five-section narrative leading with the
- * elevator pitch:
+ * "About thatsRekt." Four-section narrative:
  *
- *   1. Hero            — what this is + why it matters
- *   2. How it works    — posts / governance / reads
- *   3. For integrators — the call-to-action for protocol teams
- *   4. Maintainers     — who runs it
- *   5. Donate          — how to support
+ *   1. Hero          — the elevator pitch
+ *   2. How it works  — posts / governance / reads (terse)
+ *   3. Maintainers   — who runs it
+ *   4. Donate        — how to support
  *
- * The directory of authorized posters used to live here; it now has
- * its own /posters route. This page focuses on the public-good
- * positioning rather than the operational details.
+ * The "for protocol teams" yellow callout was deliberately removed —
+ * a curious integrator can find /docs from the top nav without being
+ * funneled there. Better to under-sell than over-funnel.
  */
 export function About() {
   return (
     <article className="space-y-12">
       <Hero />
       <HowItWorks />
-      <ForIntegrators />
       <Maintainers />
       <DonateSection />
     </article>
@@ -36,18 +33,15 @@ function Hero() {
       <p className="text-xs uppercase tracking-widest text-red-600 font-black">
         [public good · open to read · permissioned to post]
       </p>
-      <p className="text-xl leading-tight text-neutral-900 font-black tracking-tight max-w-2xl">
-        thatsRekt is the on-chain hack alert registry — a shared
-        siren that DEXes, wallets, and stablecoins can plug into to
-        protect users from active exploits in real time.
+      <p className="text-lg sm:text-xl leading-tight text-neutral-900 font-black tracking-tight max-w-2xl">
+        thatsRekt is the on-chain hack alert registry — a shared siren
+        that DEXes, wallets, and stablecoins can plug into to protect
+        users from active exploits in real time.
       </p>
       <p className="text-base leading-relaxed text-neutral-800">
-        Every score, every post, every confirmer set is queryable
-        from any contract or app.{' '}
-        <strong className="font-black">No fees. No tokens. No profit motive.</strong>{' '}
-        Built so the broader ecosystem has reliable hack-detection
-        infrastructure — not so any one team can monetize knowing
-        about exploits first.
+        Every score, every post, every confirmer set is queryable from
+        any contract or app.{' '}
+        <strong className="font-black">No fees. No tokens. No profit motive.</strong>
       </p>
     </header>
   )
@@ -61,52 +55,24 @@ function HowItWorks() {
           how it works
         </h2>
       </header>
-      <div className="space-y-3">
-        <Bullet label="who posts">
-          A whitelist of vetted security teams + automated detectors,
-          managed by a governance multisig. They submit structured
-          alerts (attacker addresses, victim contracts, free-form
-          context) and confirm or refute each other's posts. The
-          on-chain whitelist is the source of truth — see{' '}
-          <em>posters</em> for the live roster per chain.
+      <div className="space-y-4 sm:space-y-3">
+        <Bullet label="posts">
+          Whitelisted security teams + automated detectors submit
+          alerts (attackers, victims, context). They confirm or refute
+          each other's posts.
         </Bullet>
-        <Bullet label="how governance works">
-          A multisig controls the whitelist and can upgrade the
-          contract — but every change goes through a{' '}
-          <strong className="font-black">7-day TimelockController</strong>.
-          Integrators always have a week to disengage if a malicious
-          change is queued.
+        <Bullet label="governance">
+          A multisig controls the whitelist and contract upgrades,
+          gated by a{' '}
+          <strong className="font-black">7-day timelock</strong> —
+          integrators always have a week to disengage.
         </Bullet>
-        <Bullet label="how reads work">
-          Anyone — any contract, any indexer, any app — can read the
-          registry. Two main signals: an address's{' '}
-          <em>attackerScore</em> (signed integer summed across
-          confirmer activity) and an address's <em>isVictim</em> flag.
-          See <em>docs</em> for code examples.
+        <Bullet label="reads">
+          Open to anyone. Two signals: an address's{' '}
+          <em>attackerScore</em> and its <em>isVictim</em> flag —
+          readable from any contract.
         </Bullet>
       </div>
-    </section>
-  )
-}
-
-function ForIntegrators() {
-  return (
-    <section className="space-y-3 border-2 border-black bg-yellow-50 p-5">
-      <h2 className="font-black uppercase tracking-widest text-xs">
-        for protocol teams
-      </h2>
-      <p className="text-sm leading-relaxed text-neutral-800">
-        If your DEX, wallet, lending market, or stablecoin can read
-        an on-chain score before letting a transaction settle, you
-        can save users from loss with a single view call. The
-        registry is permissionless to read. Drop in the interface,
-        pick a threshold, and ship.
-      </p>
-      <p className="text-sm leading-relaxed text-neutral-800">
-        See <strong className="font-black">docs</strong> for the
-        Solidity interface, GraphQL examples, and per-chain
-        deployment addresses.
-      </p>
     </section>
   )
 }
@@ -118,12 +84,15 @@ function Bullet({
   label: string
   children: React.ReactNode
 }) {
+  // Stacks vertically on mobile (label above text) so long labels
+  // don't clip into the right column. On sm+ goes side-by-side with
+  // a fixed-width label gutter for easy scanning.
   return (
-    <div className="flex gap-3 items-baseline">
-      <span className="font-black uppercase tracking-widest text-[10px] text-neutral-700 whitespace-nowrap shrink-0 w-32 sm:w-40">
+    <div className="flex flex-col sm:flex-row sm:gap-3 sm:items-baseline">
+      <span className="font-black uppercase tracking-widest text-[10px] text-neutral-700 sm:shrink-0 sm:w-28 mb-1 sm:mb-0">
         [{label}]
       </span>
-      <p className="text-sm leading-relaxed text-neutral-800">
+      <p className="text-sm leading-relaxed text-neutral-800 min-w-0">
         {children}
       </p>
     </div>
@@ -142,10 +111,9 @@ function DonateSection() {
         </p>
       </header>
       <p className="text-base leading-relaxed text-neutral-800">
-        If the registry has saved a user from a bad transaction, or
-        if you'd like to help cover the cost of running the gateway
-        and the indexers, donations to the address below — on any
-        EVM chain — are welcome.
+        If the registry has saved a user from a bad transaction, or if
+        you'd like to help cover the cost of running the gateway and
+        the indexers, donations are welcome on any EVM chain.
       </p>
 
       <div className="flex flex-col items-center space-y-3 text-center pt-2">

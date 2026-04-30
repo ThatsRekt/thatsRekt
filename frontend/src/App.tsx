@@ -31,11 +31,11 @@ export function App() {
 function Header() {
   return (
     <header className="border-b-2 border-black pb-3">
-      <div className="flex items-baseline justify-between">
-        <Link to="/" className="font-black uppercase tracking-tighter text-5xl leading-none">
+      <div className="flex flex-wrap items-baseline justify-between gap-y-2 gap-x-4">
+        <Link to="/" className="font-black uppercase tracking-tighter text-4xl sm:text-5xl leading-none">
           thats<span className="text-red-600">rekt</span>
         </Link>
-        <nav className="flex gap-4 text-xs uppercase tracking-widest">
+        <nav className="flex flex-wrap gap-x-4 gap-y-1 text-xs uppercase tracking-widest">
           <Link to="/" className="rekt-link">feed</Link>
           <Link to="/about" className="rekt-link">about</Link>
           <Link to="/posters" className="rekt-link">posters</Link>
