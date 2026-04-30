@@ -1,24 +1,27 @@
 import { Maintainers } from '../components/Maintainers'
-import { WhitelistersByChain } from '../components/WhitelistersByChain'
 import { DonateAddress } from '../components/DonateAddress'
 
 /**
- * "About thatsRekt." Single page that answers the four questions
- * a curious visitor brings to the site:
+ * "About thatsRekt." Five-section narrative leading with the
+ * elevator pitch:
  *
- *   1. What is this?      — hero + public-good copy
- *   2. Who runs it?       — maintainers
- *   3. Who can post?      — whitelisters per chain
- *   4. How can I help?    — donate
+ *   1. Hero            — what this is + why it matters
+ *   2. How it works    — posts / governance / reads
+ *   3. For integrators — the call-to-action for protocol teams
+ *   4. Maintainers     — who runs it
+ *   5. Donate          — how to support
  *
- * Replaces the old /contributors and /donate routes.
+ * The directory of authorized posters used to live here; it now has
+ * its own /posters route. This page focuses on the public-good
+ * positioning rather than the operational details.
  */
 export function About() {
   return (
     <article className="space-y-12">
       <Hero />
+      <HowItWorks />
+      <ForIntegrators />
       <Maintainers />
-      <ContributorsSection />
       <DonateSection />
     </article>
   )
@@ -30,58 +33,100 @@ function Hero() {
       <h1 className="font-black uppercase tracking-tighter text-4xl sm:text-5xl leading-none">
         about
       </h1>
-      <p className="text-xs uppercase tracking-widest text-neutral-700">
-        [public good · no profit motive]
+      <p className="text-xs uppercase tracking-widest text-red-600 font-black">
+        [public good · open to read · permissioned to post]
       </p>
-      <div className="space-y-4 pt-2">
-        <p className="text-base leading-relaxed text-neutral-800">
-          <strong className="font-black">thatsRekt is a public good.</strong>{' '}
-          Reads are open to anyone — every score, every post, every
-          confirmer set is queryable from any contract or app. Nobody
-          profits from running it, and nobody is meant to.
-        </p>
-        <p className="text-base leading-relaxed text-neutral-800">
-          Posting hack alerts is permissioned: only whitelisted
-          operators can post or confirm. A{' '}
-          <strong className="font-black">governance multisig rules the protocol</strong>
-          {' '}— it controls the whitelist and can upgrade the contract,
-          but every change goes through a{' '}
-          <strong className="font-black">7-day timelock</strong>.
-          Integrators always have a week to disengage if a malicious
-          change is queued.
-        </p>
-        <p className="text-base leading-relaxed text-neutral-800">
-          The point is to make hack alerts a piece of{' '}
-          <em>shared infrastructure</em> — something every DEX, wallet,
-          stablecoin, and risk dashboard can plug into and trust. Built
-          for the broader ecosystem, not for any one team.
-        </p>
-      </div>
+      <p className="text-xl leading-tight text-neutral-900 font-black tracking-tight max-w-2xl">
+        thatsRekt is the on-chain hack alert registry — a shared
+        siren that DEXes, wallets, and stablecoins can plug into to
+        protect users from active exploits in real time.
+      </p>
+      <p className="text-base leading-relaxed text-neutral-800">
+        Every score, every post, every confirmer set is queryable
+        from any contract or app.{' '}
+        <strong className="font-black">No fees. No tokens. No profit motive.</strong>{' '}
+        Built so the broader ecosystem has reliable hack-detection
+        infrastructure — not so any one team can monetize knowing
+        about exploits first.
+      </p>
     </header>
   )
 }
 
-function ContributorsSection() {
+function HowItWorks() {
   return (
     <section className="space-y-4">
       <header className="space-y-1">
         <h2 className="font-black uppercase tracking-tighter text-2xl sm:text-3xl leading-none">
-          contributors
+          how it works
         </h2>
-        <p className="text-xs uppercase tracking-widest text-neutral-700">
-          [whitelisted addresses · per chain]
-        </p>
       </header>
-      <p className="text-base leading-relaxed text-neutral-800">
-        These are the addresses authorized to{' '}
-        <strong className="font-black">post hack alerts</strong> and
-        confirm posts on the registry, per chain. They are added and
-        removed by the governance multisig through the 7-day timelock —
-        the on-chain whitelist is the source of truth, the names below
-        are a courtesy lookup.
-      </p>
-      <WhitelistersByChain />
+      <div className="space-y-3">
+        <Bullet label="who posts">
+          A whitelist of vetted security teams + automated detectors,
+          managed by a governance multisig. They submit structured
+          alerts (attacker addresses, victim contracts, free-form
+          context) and confirm or refute each other's posts. The
+          on-chain whitelist is the source of truth — see{' '}
+          <em>posters</em> for the live roster per chain.
+        </Bullet>
+        <Bullet label="how governance works">
+          A multisig controls the whitelist and can upgrade the
+          contract — but every change goes through a{' '}
+          <strong className="font-black">7-day TimelockController</strong>.
+          Integrators always have a week to disengage if a malicious
+          change is queued.
+        </Bullet>
+        <Bullet label="how reads work">
+          Anyone — any contract, any indexer, any app — can read the
+          registry. Two main signals: an address's{' '}
+          <em>attackerScore</em> (signed integer summed across
+          confirmer activity) and an address's <em>isVictim</em> flag.
+          See <em>docs</em> for code examples.
+        </Bullet>
+      </div>
     </section>
+  )
+}
+
+function ForIntegrators() {
+  return (
+    <section className="space-y-3 border-2 border-black bg-yellow-50 p-5">
+      <h2 className="font-black uppercase tracking-widest text-xs">
+        for protocol teams
+      </h2>
+      <p className="text-sm leading-relaxed text-neutral-800">
+        If your DEX, wallet, lending market, or stablecoin can read
+        an on-chain score before letting a transaction settle, you
+        can save users from loss with a single view call. The
+        registry is permissionless to read. Drop in the interface,
+        pick a threshold, and ship.
+      </p>
+      <p className="text-sm leading-relaxed text-neutral-800">
+        See <strong className="font-black">docs</strong> for the
+        Solidity interface, GraphQL examples, and per-chain
+        deployment addresses.
+      </p>
+    </section>
+  )
+}
+
+function Bullet({
+  label,
+  children,
+}: {
+  label: string
+  children: React.ReactNode
+}) {
+  return (
+    <div className="flex gap-3 items-baseline">
+      <span className="font-black uppercase tracking-widest text-[10px] text-neutral-700 whitespace-nowrap shrink-0 w-32 sm:w-40">
+        [{label}]
+      </span>
+      <p className="text-sm leading-relaxed text-neutral-800">
+        {children}
+      </p>
+    </div>
   )
 }
 
@@ -97,10 +142,10 @@ function DonateSection() {
         </p>
       </header>
       <p className="text-base leading-relaxed text-neutral-800">
-        If the registry has saved a user from a bad transaction, or if
-        you'd like to help cover the cost of running the gateway and
-        the indexers, donations to the address below — on any EVM chain
-        — are welcome.
+        If the registry has saved a user from a bad transaction, or
+        if you'd like to help cover the cost of running the gateway
+        and the indexers, donations to the address below — on any
+        EVM chain — are welcome.
       </p>
 
       <div className="flex flex-col items-center space-y-3 text-center pt-2">

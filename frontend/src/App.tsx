@@ -2,6 +2,7 @@ import { Routes, Route, Link } from 'react-router-dom'
 import { Feed } from './pages/Feed'
 import { PostDetail } from './pages/PostDetail'
 import { About } from './pages/About'
+import { Posters } from './pages/Posters'
 import { Leaderboard } from './pages/Leaderboard'
 import { Docs } from './pages/Docs'
 import { IS_MOCK_MODE } from './lib/queries'
@@ -15,8 +16,9 @@ export function App() {
         <Routes>
           <Route path="/" element={<Feed />} />
           <Route path="/post/:id" element={<PostDetail />} />
-          <Route path="/leaderboard" element={<Leaderboard />} />
           <Route path="/about" element={<About />} />
+          <Route path="/posters" element={<Posters />} />
+          <Route path="/leaderboard" element={<Leaderboard />} />
           <Route path="/docs" element={<Docs />} />
           <Route path="*" element={<NotFound />} />
         </Routes>
@@ -35,8 +37,9 @@ function Header() {
         </Link>
         <nav className="flex gap-4 text-xs uppercase tracking-widest">
           <Link to="/" className="rekt-link">feed</Link>
-          <Link to="/leaderboard" className="rekt-link">leaderboard</Link>
           <Link to="/about" className="rekt-link">about</Link>
+          <Link to="/posters" className="rekt-link">posters</Link>
+          <Link to="/leaderboard" className="rekt-link">leaderboard</Link>
           <Link to="/docs" className="rekt-link">docs</Link>
         </nav>
       </div>
