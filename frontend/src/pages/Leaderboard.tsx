@@ -76,20 +76,33 @@ function ProposerTable({
   onSelectOrderBy: (next: ProposerOrderBy) => void
 }) {
   return (
-    <div className="overflow-x-auto border-2 border-black">
-      <table className="w-full text-left text-sm">
+    <div className="border-2 border-black overflow-x-auto">
+      {/*
+        table-fixed + colgroup gives deterministic column widths so
+        long addresses can't blow out the layout. The poster column
+        is the only flex one — numeric columns are tight + right-
+        aligned for visual scanning.
+      */}
+      <table className="w-full text-left text-sm table-fixed">
+        <colgroup>
+          <col className="w-10 sm:w-12" />
+          <col />
+          <col className="w-20 sm:w-24" />
+          <col className="w-24 sm:w-28" />
+          <col className="w-16 sm:w-20" />
+        </colgroup>
         <thead className="border-b-2 border-black bg-black/5 text-xs uppercase tracking-widest">
           <tr>
-            <th className="px-3 py-2 w-12 text-right text-neutral-700">#</th>
-            <th className="px-3 py-2">poster</th>
+            <th className="px-2 sm:px-3 py-2 text-right text-neutral-700">#</th>
+            <th className="px-2 sm:px-3 py-2">poster</th>
             <SortableHeader
-              label="confirmations"
+              label="confirms"
               column="totalConfirmations"
               orderBy={orderBy}
               onSelect={onSelectOrderBy}
             />
             <SortableHeader
-              label="disconfirmations"
+              label="disconfirms"
               column="totalDisconfirmations"
               orderBy={orderBy}
               onSelect={onSelectOrderBy}
@@ -105,19 +118,24 @@ function ProposerTable({
         <tbody className="divide-y divide-black">
           {rows.map((row, i) => (
             <tr key={row.poster} className="hover:bg-black/5">
-              <td className="px-3 py-2 text-right text-neutral-700 font-mono tabular-nums">
+              <td className="px-2 sm:px-3 py-2 text-right text-neutral-700 font-mono tabular-nums">
                 {i + 1}
               </td>
-              <td className="px-3 py-2">
-                <AddressLabel addr={row.poster} full />
+              <td className="px-2 sm:px-3 py-2">
+                {/* Truncated address — leaderboard is global, so no
+                    chainSlug, and full 42-char strings are too wide
+                    to coexist with the numeric columns. The
+                    AddressLabel still renders a copy button for
+                    clipboard access. */}
+                <AddressLabel addr={row.poster} />
               </td>
-              <td className="px-3 py-2 font-mono tabular-nums text-emerald-700">
+              <td className="px-2 sm:px-3 py-2 text-right font-mono tabular-nums text-emerald-700">
                 {row.totalConfirmations.toString()}
               </td>
-              <td className="px-3 py-2 font-mono tabular-nums text-red-600">
+              <td className="px-2 sm:px-3 py-2 text-right font-mono tabular-nums text-red-600">
                 {row.totalDisconfirmations.toString()}
               </td>
-              <td className="px-3 py-2 font-mono tabular-nums">
+              <td className="px-2 sm:px-3 py-2 text-right font-mono tabular-nums">
                 {row.postCount}
               </td>
             </tr>
@@ -141,11 +159,11 @@ function SortableHeader({
 }) {
   const isActive = orderBy === column
   return (
-    <th className="px-3 py-2">
+    <th className="px-2 sm:px-3 py-2 text-right">
       <button
         type="button"
         onClick={() => onSelect(column)}
-        className={`uppercase tracking-widest text-xs ${
+        className={`uppercase tracking-widest text-xs whitespace-nowrap ${
           isActive ? 'font-black text-black' : 'text-neutral-700 hover:text-black'
         }`}
       >
