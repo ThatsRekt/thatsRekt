@@ -33,13 +33,22 @@ export function AddressLabel({ addr, chainSlug, full = false }: AddressLabelProp
   }
 
   return (
-    <span className="inline-flex items-center gap-1.5 align-middle">
+    // flex-wrap so the address text can wrap to a second line on narrow
+    // viewports while the icons stay grouped at the end. Without this,
+    // a 42-char full address would force horizontal scroll on phones.
+    <span className="inline-flex flex-wrap items-center gap-1.5 align-middle max-w-full">
       <button
         type="button"
         onClick={onCopy}
         title={copied ? 'copied!' : `copy ${addr}`}
         aria-label="Copy address"
-        className="font-mono text-sm hover:bg-yellow-100 active:bg-yellow-200 px-1 -mx-0.5 rounded transition-colors cursor-pointer touch-manipulation"
+        className={
+          'font-mono text-sm hover:bg-yellow-100 active:bg-yellow-200 px-1 -mx-0.5 rounded transition-colors cursor-pointer touch-manipulation min-w-0 ' +
+          // break-all only when showing the full address — short
+          // (truncated) addresses are short enough not to need wrapping
+          // and look better unbroken.
+          (full ? 'break-all text-left' : 'whitespace-nowrap')
+        }
       >
         {full ? addr : shortAddress(addr)}
       </button>
