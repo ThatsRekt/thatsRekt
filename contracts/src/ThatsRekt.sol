@@ -17,18 +17,22 @@ import {EnumerableSet} from "@openzeppelin/contracts/utils/structs/EnumerableSet
 ///         the proxy is the canonical permanent address (cross-chain identical
 ///         via CREATE2 with a constant salt).
 ///
-///         Two-tier governance:
-///           - `owner` (TimelockController in prod): controls upgrades and
-///             rotation of the whitelist admin. Every `owner` call is
-///             timelock-gated (7-day delay).
-///           - `whitelistAdmin` (multisig in prod): adds/removes whitelisted
-///             posters directly, no delay. Posters need to be kickable
-///             immediately when an incident demands it.
-///
-///         The owner can revoke the whitelist admin role via
-///         `setWhitelistAdmin`, which is itself timelock-gated — so a
-///         compromised whitelist admin can be rotated out, but only after
-///         the standard 7-day disengage window for integrators.
+///         Three-role governance (asymmetric delays):
+///           - `owner` (TimelockController(7d) in prod): upgrade authority
+///             (`_authorizeUpgrade`) and re-installation path for the
+///             whitelist admin slot via `setWhitelistAdmin`. 7-day delay
+///             gives integrators a long disengage window for impl swaps.
+///           - `whitelistAdmin` (TimelockController(3d) in prod): adds
+///             posters via `addWhitelisted` and self-rotates via
+///             `setWhitelistAdmin`. 3-day delay so installing a new
+///             poster (or replacing the operator) is publicly visible
+///             before it lands.
+///           - `whitelistRemover` (multisig in prod): removes posters
+///             instantly via `removeWhitelisted`, and can revoke the
+///             whitelist admin slot instantly via `revokeWhitelistAdmin`
+///             (zeros it; owner re-installs through the 7-day path).
+///             Kill-switch for incident response — compromised posters
+///             or a captured admin TLC can be neutralized in one tx.
 contract ThatsRekt is Initializable, Ownable2StepUpgradeable, UUPSUpgradeable {
     using EnumerableSet for EnumerableSet.AddressSet;
 
@@ -100,18 +104,35 @@ contract ThatsRekt is Initializable, Ownable2StepUpgradeable, UUPSUpgradeable {
 
     mapping(address => bool) public isWhitelisted;
 
-    /// @notice Address authorized to add/remove whitelisters directly,
-    ///         without going through the timelock. The multisig holds
-    ///         this role in production so posters can be added or
-    ///         removed instantly when an incident demands it.
-    /// @dev    Set on initialize; rotated via `setWhitelistAdmin`,
-    ///         which is `onlyOwner` and therefore still gated by the
-    ///         7-day timelock — integrators retain a week to disengage
-    ///         if governance moves whitelist authority somewhere
-    ///         hostile. The role itself is single-step (not 2-step)
-    ///         because it carries no upgrade authority; only the
-    ///         OwnableUpgradeable owner controls upgrades.
+    /// @notice Address authorized to ADD posters via `addWhitelisted`
+    ///         and to self-rotate via `setWhitelistAdmin`. In production
+    ///         this is a 3-day TimelockController whose proposer is the
+    ///         multisig — so adding a poster (or replacing the operator
+    ///         with a new one) takes 3 days minimum.
+    /// @dev    Set on initialize. Two rotation paths:
+    ///           * `setWhitelistAdmin` callable by self (3-day path) or
+    ///             by owner (7-day re-install path). Cannot accept
+    ///             `address(0)` — use `revokeWhitelistAdmin` for that.
+    ///           * `revokeWhitelistAdmin` callable by `whitelistRemover`
+    ///             (instant) — sets the slot to `address(0)` so all
+    ///             `addWhitelisted` calls revert until the owner
+    ///             re-installs an admin via the 7-day path.
+    ///         When this slot is `address(0)`, no one can add posters
+    ///         (the modifier rejects every caller, since msg.sender is
+    ///         always non-zero on external calls).
     address public whitelistAdmin;
+
+    /// @notice Address authorized to REMOVE posters via `removeWhitelisted`
+    ///         and to revoke the whitelistAdmin slot via
+    ///         `revokeWhitelistAdmin`. Both actions are instant — this
+    ///         is the kill-switch for incident response. In production
+    ///         this is the multisig directly (not behind any timelock).
+    /// @dev    Set on initialize; rotated via `setWhitelistRemover`
+    ///         (`onlyOwner`, so 7-day delay in prod). Cannot be zero;
+    ///         losing this role means losing the kill-switch, so
+    ///         rotation requires the 7-day owner path with full
+    ///         integrator visibility.
+    address public whitelistRemover;
 
     uint256 public postCount;
     mapping(uint256 => Post) private _posts;
@@ -143,6 +164,7 @@ contract ThatsRekt is Initializable, Ownable2StepUpgradeable, UUPSUpgradeable {
 
     event WhitelistUpdated(address indexed account, bool status);
     event WhitelistAdminTransferred(address indexed previousAdmin, address indexed newAdmin);
+    event WhitelistRemoverTransferred(address indexed previousRemover, address indexed newRemover);
     event PostCreated(
         uint256 indexed id,
         address indexed poster,
@@ -194,6 +216,8 @@ contract ThatsRekt is Initializable, Ownable2StepUpgradeable, UUPSUpgradeable {
 
     error NotWhitelisted();
     error NotWhitelistAdmin();
+    error NotWhitelistRemover();
+    error Unauthorized();
     error PosterCannotConfirm();
     error PostIsRemoved();
     error PostNotFound();
@@ -224,36 +248,78 @@ contract ThatsRekt is Initializable, Ownable2StepUpgradeable, UUPSUpgradeable {
         _disableInitializers();
     }
 
-    /// @notice Proxy entry point. Sets the initial owner (upgrade
-    ///         authority, gated by the timelock in production) and the
-    ///         initial whitelist admin (multisig in production —
-    ///         instant whitelist mutations, no delay).
-    /// @param  initialOwner Holds upgrade authority on the proxy.
-    ///                      Production deploys set this to a
-    ///                      TimelockController. Reverts on
-    ///                      `address(0)` via OwnableUpgradeable.
-    /// @param  initialWhitelistAdmin Holds direct add/remove authority
-    ///                      over the whitelist. Production deploys set
-    ///                      this to the multisig. Cannot be zero.
+    /// @notice Proxy entry point. Wires the three governance roles and
+    ///         optionally pre-populates the poster whitelist so the
+    ///         registry is operational at deploy time without waiting
+    ///         on the 3-day add timelock.
+    /// @param  initialOwner Holds upgrade authority + the 7-day
+    ///                      re-install path for the whitelistAdmin
+    ///                      slot. Production: TimelockController(7d).
+    ///                      Reverts on `address(0)` via
+    ///                      OwnableUpgradeable.
+    /// @param  initialWhitelistAdmin Holds the add path
+    ///                      (`addWhitelisted`) and the 3-day
+    ///                      self-rotate path (`setWhitelistAdmin`).
+    ///                      Production: TimelockController(3d) with
+    ///                      multisig as proposer/executor. Cannot be
+    ///                      zero at init — the slot may later be
+    ///                      zeroed by `revokeWhitelistAdmin`, but it
+    ///                      must start populated so the genesis
+    ///                      whitelist is actually mutable post-deploy.
+    /// @param  initialWhitelistRemover Holds the instant remove path
+    ///                      (`removeWhitelisted`) and the kill-switch
+    ///                      (`revokeWhitelistAdmin`). Production:
+    ///                      multisig directly. Cannot be zero — losing
+    ///                      this slot means losing the kill-switch.
+    /// @param  initialWhitelisters Posters to mark as whitelisted at
+    ///                      deploy time, bypassing the 3-day add
+    ///                      timelock. Each entry must be non-zero;
+    ///                      duplicates within the array are silently
+    ///                      tolerated (the second insert is a no-op,
+    ///                      no duplicate event). Pass an empty array
+    ///                      if no pre-population is desired.
     /// @dev    Idempotency is enforced by `Initializable` — re-calling
-    ///         `initialize` on an already-initialized proxy reverts with
-    ///         `InvalidInitialization()`. The owner role is fully
-    ///         transferable via the inherited Ownable2Step two-step flow
-    ///         (`transferOwnership` -> `acceptOwnership`); the
-    ///         whitelistAdmin role is rotated via the
-    ///         single-step `setWhitelistAdmin` (also onlyOwner).
+    ///         `initialize` on an already-initialized proxy reverts
+    ///         with `InvalidInitialization()`. The owner role is fully
+    ///         transferable via the inherited Ownable2Step two-step
+    ///         flow; the whitelistAdmin slot is rotated via
+    ///         `setWhitelistAdmin` (single-step), and the
+    ///         whitelistRemover slot via `setWhitelistRemover`
+    ///         (single-step, onlyOwner).
     function initialize(
         address initialOwner,
-        address initialWhitelistAdmin
+        address initialWhitelistAdmin,
+        address initialWhitelistRemover,
+        address[] calldata initialWhitelisters
     ) external initializer {
         if (initialWhitelistAdmin == address(0)) revert ZeroAddress();
+        if (initialWhitelistRemover == address(0)) revert ZeroAddress();
+
         __Ownable_init(initialOwner);
         __Ownable2Step_init();
         // UUPSUpgradeable has no `__UUPSUpgradeable_init` in OZ 5.x — it
         // holds no state, so there is nothing to wire up here. The
         // upgrade authority is enforced solely by `_authorizeUpgrade`.
-        whitelistAdmin = initialWhitelistAdmin;
+
+        whitelistAdmin   = initialWhitelistAdmin;
+        whitelistRemover = initialWhitelistRemover;
         emit WhitelistAdminTransferred(address(0), initialWhitelistAdmin);
+        emit WhitelistRemoverTransferred(address(0), initialWhitelistRemover);
+
+        // Pre-populate the poster whitelist. This is the only legitimate
+        // bypass of the 3-day add timelock and exists solely for the
+        // genesis bootstrap — the deploy script is the only context
+        // where the proxy's storage is writable without going through
+        // the role-gated entry points.
+        uint256 n = initialWhitelisters.length;
+        for (uint256 i; i < n; ++i) {
+            address a = initialWhitelisters[i];
+            if (a == address(0)) revert ZeroAddress();
+            if (!isWhitelisted[a]) {
+                isWhitelisted[a] = true;
+                emit WhitelistUpdated(a, true);
+            }
+        }
     }
 
     /// @notice UUPS upgrade authorization hook. Only the owner (i.e. the
@@ -277,31 +343,83 @@ contract ThatsRekt is Initializable, Ownable2StepUpgradeable, UUPSUpgradeable {
         _;
     }
 
+    modifier onlyWhitelistRemover() {
+        if (msg.sender != whitelistRemover) revert NotWhitelistRemover();
+        _;
+    }
+
     /*//////////////////////////////////////////////////////////////
-                       OWNER (governance role rotation)
+                       GOVERNANCE (role rotation)
     //////////////////////////////////////////////////////////////*/
 
-    /// @notice Rotate the whitelist admin role. Only callable by the
-    ///         proxy owner — in production that's the
-    ///         TimelockController, so this rotation is gated by the
-    ///         7-day delay. Integrators retain the same disengage
-    ///         window they have on upgrades.
-    /// @param  newAdmin New holder of the whitelist admin role.
-    ///                  Cannot be zero (use a paused-multisig pattern
-    ///                  if you want to effectively suspend posting).
-    function setWhitelistAdmin(address newAdmin) external onlyOwner {
+    /// @notice Rotate the `whitelistAdmin` slot. Two callers are
+    ///         authorized, each producing a different effective delay:
+    ///           * the current `whitelistAdmin` itself — 3-day path
+    ///             (the prod TLC's delay), used for normal operator
+    ///             rotation;
+    ///           * `owner` — 7-day path (the prod owner TLC's delay),
+    ///             used to re-install an admin after the slot has been
+    ///             zeroed by `revokeWhitelistAdmin`, or as a fallback
+    ///             if the admin role itself is bricked.
+    /// @dev    Rejects `address(0)` — that path lives on
+    ///         `revokeWhitelistAdmin` so the audit trail makes intent
+    ///         (rotate vs kill) explicit. After a revoke, the
+    ///         `whitelistAdmin` slot is zero, so the self-rotate path
+    ///         cannot be used (no msg.sender will match) — only the
+    ///         owner path can re-install. That asymmetry is the whole
+    ///         point of the kill-switch: a captured TLC cannot sneak a
+    ///         hostile admin back in within 3 days.
+    /// @param  newAdmin New holder of the whitelistAdmin slot. Must be
+    ///                  non-zero.
+    function setWhitelistAdmin(address newAdmin) external {
+        if (msg.sender != owner() && msg.sender != whitelistAdmin) {
+            revert Unauthorized();
+        }
         if (newAdmin == address(0)) revert ZeroAddress();
         address prev = whitelistAdmin;
         whitelistAdmin = newAdmin;
         emit WhitelistAdminTransferred(prev, newAdmin);
     }
 
+    /// @notice Rotate the `whitelistRemover` slot. Only callable by
+    ///         `owner`, so 7-day delay in production. Cannot be zero —
+    ///         losing this slot means losing both the instant remove
+    ///         path and the kill-switch.
+    /// @param  newRemover New holder of the whitelistRemover slot.
+    function setWhitelistRemover(address newRemover) external onlyOwner {
+        if (newRemover == address(0)) revert ZeroAddress();
+        address prev = whitelistRemover;
+        whitelistRemover = newRemover;
+        emit WhitelistRemoverTransferred(prev, newRemover);
+    }
+
+    /// @notice Kill-switch for the `whitelistAdmin` slot — sets it to
+    ///         `address(0)` instantly. After revoke, no one can call
+    ///         `addWhitelisted` until the owner re-installs an admin
+    ///         via `setWhitelistAdmin` (7-day path). Existing posters
+    ///         are unaffected; this only stops new additions.
+    /// @dev    Distinct from `setWhitelistAdmin` because its access
+    ///         control is different (whitelistRemover, not owner) and
+    ///         its delay is different (instant, not 7 days). Splitting
+    ///         the entry points lets indexers and governance dashboards
+    ///         distinguish "rotated to a new operator" from "operator
+    ///         was killed mid-incident" without parsing arguments.
+    function revokeWhitelistAdmin() external onlyWhitelistRemover {
+        address prev = whitelistAdmin;
+        whitelistAdmin = address(0);
+        emit WhitelistAdminTransferred(prev, address(0));
+    }
+
     /*//////////////////////////////////////////////////////////////
-                     WHITELIST ADMIN (instant whitelist mgmt)
+                  WHITELIST ADMIN (3-day path: add posters)
     //////////////////////////////////////////////////////////////*/
 
     /// @notice Add an address to the whitelist of authorized posters.
-    ///         Direct call from `whitelistAdmin` — no timelock delay.
+    ///         Called by `whitelistAdmin`, which is a 3-day
+    ///         TimelockController in production — so additions take 3
+    ///         days from proposal to execution.
+    /// @dev    Idempotent: re-adding an already-whitelisted address is
+    ///         a silent no-op (no event), matching the v1 semantics.
     function addWhitelisted(address account) external onlyWhitelistAdmin {
         if (!isWhitelisted[account]) {
             isWhitelisted[account] = true;
@@ -309,11 +427,17 @@ contract ThatsRekt is Initializable, Ownable2StepUpgradeable, UUPSUpgradeable {
         }
     }
 
+    /*//////////////////////////////////////////////////////////////
+                WHITELIST REMOVER (instant: remove posters)
+    //////////////////////////////////////////////////////////////*/
+
     /// @notice Remove an address from the whitelist of authorized
-    ///         posters. Direct call from `whitelistAdmin` — no
-    ///         timelock delay, so a misbehaving poster can be kicked
+    ///         posters. Called by `whitelistRemover` (multisig in
+    ///         prod) — no delay, so a misbehaving poster can be kicked
     ///         immediately.
-    function removeWhitelisted(address account) external onlyWhitelistAdmin {
+    /// @dev    Idempotent: removing a non-whitelisted address is a
+    ///         silent no-op (no event).
+    function removeWhitelisted(address account) external onlyWhitelistRemover {
         if (isWhitelisted[account]) {
             isWhitelisted[account] = false;
             emit WhitelistUpdated(account, false);
@@ -826,6 +950,7 @@ contract ThatsRekt is Initializable, Ownable2StepUpgradeable, UUPSUpgradeable {
     ///      ERC-7201 namespaced storage internally, so they do not
     ///      collide with this sequential layout.
     ///      v1.0 gap was [50]; v1.1 added `postTitle` (1 slot for the
-    ///      mapping reference), so the gap is [49].
-    uint256[49] private __gap;
+    ///      mapping reference) → [49]; v1.2 added `whitelistRemover`
+    ///      (1 slot) → [48].
+    uint256[48] private __gap;
 }

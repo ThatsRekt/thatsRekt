@@ -81,17 +81,23 @@ function HowItWorks() {
         identities are public on-chain.
       </SubSection>
       <SubSection heading="governance">
-        Two-tier. The multisig manages the whitelist (adds + removes
-        posters) <strong className="font-black">instantly</strong> —
-        a misbehaving poster can be kicked the second it's noticed.
-        Contract upgrades are separate and gated by a{' '}
-        <strong className="font-black">7-day TimelockController</strong>,
-        so integrators always have a week to disengage if a hostile
-        upgrade is queued. The owner (timelock) can rotate who holds
-        whitelist authority via <Code>setWhitelistAdmin</Code>, and
-        that rotation is itself timelock-gated — so a compromised
-        whitelist admin can be revoked through the normal 7-day
-        window.
+        Three roles, asymmetric delays — adding posters is slow and
+        public, kicking them out is instant.{' '}
+        <strong className="font-black">Removing a misbehaving poster</strong>{' '}
+        is direct multisig action, no delay.{' '}
+        <strong className="font-black">Adding a new poster</strong>{' '}
+        goes through a separate{' '}
+        <strong className="font-black">3-day TimelockController</strong>{' '}
+        — long enough for integrators to react if the multisig
+        schedules a hostile operator, short enough that real-world
+        onboarding doesn't grind. Contract upgrades are gated by a{' '}
+        <strong className="font-black">7-day TimelockController</strong>{' '}
+        on the owner role, so integrators always have a week to
+        disengage if a hostile upgrade is queued. The multisig can
+        also instantly{' '}
+        <Code>revokeWhitelistAdmin()</Code> — a kill-switch that zeros
+        the admin slot, blocking new additions until the owner
+        re-installs through the 7-day path.
       </SubSection>
       <SubSection heading="integrators">
         Anyone reading the registry. Two main signals: an address's{' '}
@@ -468,11 +474,14 @@ function Reference() {
 
       <SubSection heading="governance">
         <p className="text-sm leading-relaxed text-neutral-800 mb-3">
-          One Safe multisig governs every chain. It manages the
-          whitelist (adds + removes posters)
-          <strong className="font-black"> instantly</strong> —
-          posters need to be kickable the moment something goes wrong.
-          Contract upgrades are separate and gated by a{' '}
+          One Safe multisig governs every chain — same address on
+          all of them via CREATE2. Three roles, asymmetric delays:
+          posters are <strong className="font-black">removed
+          instantly</strong>{' '}
+          (incident-response is fast), but{' '}
+          <strong className="font-black">added on a 3-day timelock</strong>{' '}
+          (operator rotation is publicly visible before it lands).
+          Contract upgrades sit on a separate{' '}
           <strong className="font-black">7-day timelock</strong>,
           giving integrators a week to disengage if a hostile upgrade
           is queued.

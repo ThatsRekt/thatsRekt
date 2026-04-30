@@ -10,10 +10,13 @@ import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.s
 
 /// @notice Tests for the dev/testnet deploy script. Verifies it
 ///         (a) accepts an EOA owner (the production script's main
-///             blocker on testnet), (b) wires the system correctly
-///             (proxy → impl, proxy.owner == timelock, EOA holds
-///             timelock roles), (c) uses CREATE2 salts that cannot
-///             collide with production Deploy.s.sol salts.
+///             blocker on testnet),
+///         (b) wires the three-role system correctly (proxy → impl,
+///             proxy.owner == upgrade TLC, proxy.whitelistAdmin == add
+///             TLC, proxy.whitelistRemover == EOA), with the EOA
+///             holding proposer/executor on both timelocks,
+///         (c) uses CREATE2 salts that cannot collide with production
+///             Deploy.s.sol salts.
 ///
 /// @dev Tests call `deploy(address)` directly rather than going through
 ///      the env-reading `run()` because Foundry runs tests in parallel
@@ -29,38 +32,43 @@ contract DeployDevTest is Test {
         deployer = new DeployDev();
     }
 
-    /// @notice Happy path: EOA is accepted; impl + timelock + proxy all
-    ///         deploy at the predicted CREATE2 addresses; the proxy is
-    ///         owned by the timelock; the EOA holds the timelock's
-    ///         proposer / executor / canceller roles.
+    /// @notice Happy path: EOA is accepted; impl + both TLCs + proxy
+    ///         all deploy at the predicted CREATE2 addresses; the
+    ///         three-role wiring matches production semantics.
     function test_deploy_eoa_owner_accepted() public {
         deployer.deploy(DEV_EOA);
 
-        address impl = _predict(deployer.IMPL_SALT(), keccak256(type(ThatsRekt).creationCode));
-        bytes memory tlInit = _timelockInitCode(DEV_EOA);
-        address timelock = _predict(deployer.TIMELOCK_SALT(), keccak256(tlInit));
-        bytes memory proxyInit = _proxyInitCode(impl, timelock, DEV_EOA);
-        address proxy = _predict(deployer.PROXY_SALT(), keccak256(proxyInit));
+        address impl     = _predict(deployer.IMPL_SALT(),     keccak256(type(ThatsRekt).creationCode));
+        address upgrade  = _predict(deployer.UPGRADE_TIMELOCK_SALT(), keccak256(_timelockInitCode(7 days, DEV_EOA)));
+        address add_     = _predict(deployer.ADD_TIMELOCK_SALT(),     keccak256(_timelockInitCode(3 days, DEV_EOA)));
+        address proxy    = _predict(deployer.PROXY_SALT(), keccak256(_proxyInitCode(impl, upgrade, add_, DEV_EOA, new address[](0))));
 
-        assertGt(impl.code.length, 0, "impl not deployed");
-        assertGt(timelock.code.length, 0, "timelock not deployed");
-        assertGt(proxy.code.length, 0, "proxy not deployed");
+        assertGt(impl.code.length, 0,    "impl not deployed");
+        assertGt(upgrade.code.length, 0, "upgrade timelock not deployed");
+        assertGt(add_.code.length, 0,    "add timelock not deployed");
+        assertGt(proxy.code.length, 0,   "proxy not deployed");
 
-        // Proxy is owned by the timelock — the EOA cannot upgrade directly,
-        // it has to go through the 7-day delay just like production.
-        assertEq(ThatsRekt(proxy).owner(), timelock, "proxy.owner != timelock");
-        // EOA holds the whitelistAdmin role — instant whitelist mgmt in dev,
-        // mirroring how the multisig holds it in prod.
-        assertEq(ThatsRekt(proxy).whitelistAdmin(), DEV_EOA, "whitelistAdmin != DEV_EOA");
+        // Proxy is owned by the upgrade timelock — the EOA cannot
+        // upgrade directly, it has to go through the 7-day delay.
+        assertEq(ThatsRekt(proxy).owner(),            upgrade, "proxy.owner != upgrade timelock");
+        assertEq(ThatsRekt(proxy).whitelistAdmin(),   add_,    "proxy.whitelistAdmin != add timelock");
+        assertEq(ThatsRekt(proxy).whitelistRemover(), DEV_EOA, "proxy.whitelistRemover != DEV_EOA");
 
-        // EOA holds proposer/executor/canceller on the timelock.
-        TimelockController tl = TimelockController(payable(timelock));
-        assertTrue(tl.hasRole(tl.PROPOSER_ROLE(), DEV_EOA), "EOA missing PROPOSER_ROLE");
-        assertTrue(tl.hasRole(tl.EXECUTOR_ROLE(), DEV_EOA), "EOA missing EXECUTOR_ROLE");
-        assertTrue(tl.hasRole(tl.CANCELLER_ROLE(), DEV_EOA), "EOA missing CANCELLER_ROLE");
+        // EOA holds proposer/executor/canceller on both timelocks.
+        TimelockController upTL  = TimelockController(payable(upgrade));
+        TimelockController addTL = TimelockController(payable(add_));
 
-        // Delay matches production — testnet behavior matches mainnet.
-        assertEq(tl.getMinDelay(), 7 days, "timelock delay drifted from production");
+        assertTrue(upTL.hasRole(upTL.PROPOSER_ROLE(), DEV_EOA),  "EOA missing PROPOSER on upgrade TLC");
+        assertTrue(upTL.hasRole(upTL.EXECUTOR_ROLE(), DEV_EOA),  "EOA missing EXECUTOR on upgrade TLC");
+        assertTrue(upTL.hasRole(upTL.CANCELLER_ROLE(), DEV_EOA), "EOA missing CANCELLER on upgrade TLC");
+
+        assertTrue(addTL.hasRole(addTL.PROPOSER_ROLE(), DEV_EOA),  "EOA missing PROPOSER on add TLC");
+        assertTrue(addTL.hasRole(addTL.EXECUTOR_ROLE(), DEV_EOA),  "EOA missing EXECUTOR on add TLC");
+        assertTrue(addTL.hasRole(addTL.CANCELLER_ROLE(), DEV_EOA), "EOA missing CANCELLER on add TLC");
+
+        // Delays match production — testnet behavior matches mainnet.
+        assertEq(upTL.getMinDelay(),  7 days, "upgrade TLC delay drifted");
+        assertEq(addTL.getMinDelay(), 3 days, "add TLC delay drifted");
     }
 
     /// @notice Idempotent: running twice on the same chain is a no-op
@@ -93,22 +101,30 @@ contract DeployDevTest is Test {
     ///         safety invariant of the dual-script design.
     function test_salts_distinct_from_production() public {
         Deploy prod = new Deploy();
-        assertTrue(deployer.IMPL_SALT() != prod.IMPL_SALT(), "IMPL_SALT collision with prod");
-        assertTrue(deployer.TIMELOCK_SALT() != prod.TIMELOCK_SALT(), "TIMELOCK_SALT collision with prod");
-        assertTrue(deployer.PROXY_SALT() != prod.PROXY_SALT(), "PROXY_SALT collision with prod");
+        assertTrue(deployer.IMPL_SALT()             != prod.IMPL_SALT(),             "IMPL_SALT collision");
+        assertTrue(deployer.UPGRADE_TIMELOCK_SALT() != prod.UPGRADE_TIMELOCK_SALT(), "UPGRADE_TIMELOCK_SALT collision");
+        assertTrue(deployer.ADD_TIMELOCK_SALT()     != prod.ADD_TIMELOCK_SALT(),     "ADD_TIMELOCK_SALT collision");
+        assertTrue(deployer.PROXY_SALT()            != prod.PROXY_SALT(),            "PROXY_SALT collision");
+        // The two dev-side timelock salts must also be different from
+        // each other — otherwise the first deploy would squat the
+        // second's address.
+        assertTrue(
+            deployer.UPGRADE_TIMELOCK_SALT() != deployer.ADD_TIMELOCK_SALT(),
+            "UPGRADE_TIMELOCK_SALT == ADD_TIMELOCK_SALT (would collide)"
+        );
     }
 
-    /// @notice Same dev EOA used across two chains ⇒ same proxy address.
-    ///         This is the property that makes Anvil + Sepolia testnet
-    ///         deployments share a canonical thatsRekt address — the
-    ///         CREATE2 prediction is purely a function of (factory,
-    ///         salt, initCode), and identical owner ⇒ identical timelock
-    ///         init code ⇒ identical predicted addresses.
+    /// @notice Same dev EOA + same initial whitelisters across two chains
+    ///         ⇒ same proxy address. CREATE2 prediction is purely a
+    ///         function of (factory, salt, initCode), and identical
+    ///         owner ⇒ identical timelock init code ⇒ identical
+    ///         predicted addresses.
     function test_same_eoa_yields_same_proxy_address() public view {
-        address impl = _predict(deployer.IMPL_SALT(), keccak256(type(ThatsRekt).creationCode));
-        bytes memory tlInit = _timelockInitCode(DEV_EOA);
-        address timelock = _predict(deployer.TIMELOCK_SALT(), keccak256(tlInit));
-        bytes memory proxyInit = _proxyInitCode(impl, timelock, DEV_EOA);
+        address impl    = _predict(deployer.IMPL_SALT(), keccak256(type(ThatsRekt).creationCode));
+        address upgrade = _predict(deployer.UPGRADE_TIMELOCK_SALT(), keccak256(_timelockInitCode(7 days, DEV_EOA)));
+        address add_    = _predict(deployer.ADD_TIMELOCK_SALT(),     keccak256(_timelockInitCode(3 days, DEV_EOA)));
+
+        bytes memory proxyInit = _proxyInitCode(impl, upgrade, add_, DEV_EOA, new address[](0));
 
         // Predict the same address twice — should match (sanity check
         // that prediction is pure).
@@ -119,11 +135,11 @@ contract DeployDevTest is Test {
         // A different EOA must yield a different proxy address (so
         // different testnets with different owners don't collide).
         address otherEoa = address(0x1234);
-        bytes memory otherTlInit = _timelockInitCode(otherEoa);
-        address otherTimelock = _predict(deployer.TIMELOCK_SALT(), keccak256(otherTlInit));
+        address otherUp  = _predict(deployer.UPGRADE_TIMELOCK_SALT(), keccak256(_timelockInitCode(7 days, otherEoa)));
+        address otherAdd = _predict(deployer.ADD_TIMELOCK_SALT(),     keccak256(_timelockInitCode(3 days, otherEoa)));
         address otherProxy = _predict(
             deployer.PROXY_SALT(),
-            keccak256(_proxyInitCode(impl, otherTimelock, otherEoa))
+            keccak256(_proxyInitCode(impl, otherUp, otherAdd, otherEoa, new address[](0)))
         );
         assertTrue(proxy1 != otherProxy, "different owners should yield different proxies");
     }
@@ -138,25 +154,27 @@ contract DeployDevTest is Test {
         return address(uint160(uint256(keccak256(abi.encodePacked(bytes1(0xff), factory, salt, initCodeHash)))));
     }
 
-    function _timelockInitCode(address owner) internal pure returns (bytes memory) {
+    function _timelockInitCode(uint256 delay, address owner) internal pure returns (bytes memory) {
         address[] memory proposers = new address[](1);
         proposers[0] = owner;
         address[] memory executors = new address[](1);
         executors[0] = owner;
         return abi.encodePacked(
             type(TimelockController).creationCode,
-            abi.encode(uint256(7 days), proposers, executors, address(0))
+            abi.encode(delay, proposers, executors, address(0))
         );
     }
 
-    function _proxyInitCode(address impl, address timelock, address whitelistAdmin)
-        internal
-        pure
-        returns (bytes memory)
-    {
+    function _proxyInitCode(
+        address impl,
+        address upgradeTimelock,
+        address addTimelock,
+        address whitelistRemover,
+        address[] memory initialWhitelisters
+    ) internal pure returns (bytes memory) {
         bytes memory initCalldata = abi.encodeCall(
             ThatsRekt.initialize,
-            (timelock, whitelistAdmin)
+            (upgradeTimelock, addTimelock, whitelistRemover, initialWhitelisters)
         );
         return abi.encodePacked(type(ERC1967Proxy).creationCode, abi.encode(impl, initCalldata));
     }

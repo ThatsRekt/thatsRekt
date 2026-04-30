@@ -9,14 +9,14 @@ import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.s
 /// @notice Dev/testnet variant of `Deploy.s.sol` that accepts an EOA as
 ///         `GOVERNANCE_OWNER`. Mirrors the production deploy in every way
 ///         except (a) it does NOT require the owner to be a contract, and
-///         (b) it uses a distinct set of CREATE2 salts so dev deploys can
+///         (b) it uses dev-namespaced CREATE2 salts so dev deploys can
 ///         never collide with production deploys at the same address.
 ///
-///         Use case: spinning up thatsRekt on Sepolia or a local Anvil
-///         fork without standing up a Safe. The EOA holds the timelock's
-///         proposer / executor / canceller roles directly. Upgrades still
-///         go through the 7-day timelock — testnet behavior matches
-///         production behavior exactly.
+///         The same EOA fills proposer/executor on both timelocks AND
+///         holds the `whitelistRemover` slot directly. Same operational
+///         model as prod, just with one principal instead of three —
+///         the timelocks still enforce 7-day / 3-day delays so testnet
+///         behavior matches production behavior exactly.
 ///
 ///         Recommended dev EOA: Anvil default account 0
 ///           address: 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
@@ -24,8 +24,9 @@ import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.s
 ///         Reproducible across machines, no secret to manage. NEVER use
 ///         this on mainnet.
 ///
-///         Same EOA across Anvil + Sepolia ⇒ identical thatsRekt CREATE2
-///         address on both, convenient for parity testing.
+///         Env vars:
+///           * GOVERNANCE_OWNER     (required) — EOA or contract.
+///           * INITIAL_WHITELISTERS (optional) — comma-separated address list.
 contract DeployDev is Script {
     /*//////////////////////////////////////////////////////////////
                             DEV-NAMESPACED SALTS
@@ -34,24 +35,26 @@ contract DeployDev is Script {
     /// @dev Versioned per impl deploy. Bump on every new impl version.
     bytes32 public constant IMPL_SALT = keccak256("thatsRekt.impl.dev.v1.0.0");
 
-    /// @dev Versioned per timelock deploy. Bump only if the
-    ///      TimelockController's bytecode/config changes.
-    bytes32 public constant TIMELOCK_SALT = keccak256("thatsRekt.timelock.dev.v1");
+    /// @dev 7-day TimelockController (owner slot). Bump on bytecode/config change.
+    bytes32 public constant UPGRADE_TIMELOCK_SALT = keccak256("thatsRekt.upgradeTimelock.dev.v1");
+
+    /// @dev 3-day TimelockController (whitelistAdmin slot). Bump on bytecode/config change.
+    bytes32 public constant ADD_TIMELOCK_SALT = keccak256("thatsRekt.addTimelock.dev.v1");
 
     /// @dev Unversioned — the canonical dev proxy address. Same across
     ///      every testnet that runs DeployDev with the same
-    ///      GOVERNANCE_OWNER.
+    ///      GOVERNANCE_OWNER + INITIAL_WHITELISTERS.
     bytes32 public constant PROXY_SALT = keccak256("thatsRekt.proxy.dev");
 
-    /// @dev Identical to production's 7 days. Keeping the delay matches
-    ///      means upgrade flows behave the same on testnet as on mainnet.
-    ///      For tight dev loops on Anvil, advance time with
-    ///      `vm.warp` / `evm_increaseTime` instead of shortening this.
-    uint256 public constant TIMELOCK_DELAY = 7 days;
+    /// @dev Identical to production. Keeping the delays matched means
+    ///      upgrade and rotation flows behave the same on testnet as on
+    ///      mainnet. For tight dev loops on Anvil, advance time with
+    ///      `vm.warp` / `evm_increaseTime` instead of shortening these.
+    uint256 public constant UPGRADE_DELAY = 7 days;
+    uint256 public constant ADD_DELAY     = 3 days;
 
     /// @notice CLI entrypoint — reads `GOVERNANCE_OWNER` from env and
-    ///         deploys. This is the path `forge script` takes when
-    ///         invoked without arguments (matches production Deploy.s.sol).
+    ///         deploys. Matches production Deploy.s.sol.
     function run() external {
         address owner = vm.envAddress("GOVERNANCE_OWNER");
         require(owner != address(0), "GOVERNANCE_OWNER env var is zero");
@@ -69,31 +72,39 @@ contract DeployDev is Script {
     function deploy(address owner) public {
         require(owner != address(0), "owner is zero");
 
+        address[] memory initialWhitelisters = _readInitialWhitelisters();
+
         // === 1. Implementation.
         bytes memory implInitCode = type(ThatsRekt).creationCode;
         address impl = _create2(IMPL_SALT, implInitCode, "impl");
 
-        // === 2. TimelockController. Owner holds proposer + executor +
-        // canceller. Admin = address(0) so role changes can only happen
-        // via a timelocked proposal. Same secure config as production.
+        // === 2 & 3. Two TimelockControllers, same EOA as proposer +
+        // executor on both. Admin = address(0) for parity with prod.
         address[] memory proposers = new address[](1);
         proposers[0] = owner;
         address[] memory executors = new address[](1);
         executors[0] = owner;
-        bytes memory tlInitCode = abi.encodePacked(
-            type(TimelockController).creationCode,
-            abi.encode(TIMELOCK_DELAY, proposers, executors, address(0))
-        );
-        address timelock = _create2(TIMELOCK_SALT, tlInitCode, "timelock");
 
-        // === 3. ERC1967Proxy.
-        //   - owner            = timelock (upgrade authority, 7-day gated)
-        //   - whitelistAdmin   = the EOA directly (instant whitelist mgmt
-        //                        — same operational model as prod where
-        //                        the multisig holds whitelist authority)
+        bytes memory upgradeTLInitCode = abi.encodePacked(
+            type(TimelockController).creationCode,
+            abi.encode(UPGRADE_DELAY, proposers, executors, address(0))
+        );
+        address upgradeTimelock = _create2(UPGRADE_TIMELOCK_SALT, upgradeTLInitCode, "upgradeTimelock");
+
+        bytes memory addTLInitCode = abi.encodePacked(
+            type(TimelockController).creationCode,
+            abi.encode(ADD_DELAY, proposers, executors, address(0))
+        );
+        address addTimelock = _create2(ADD_TIMELOCK_SALT, addTLInitCode, "addTimelock");
+
+        // === 4. ERC1967Proxy.
+        //   - owner            = upgradeTimelock (7-day)
+        //   - whitelistAdmin   = addTimelock     (3-day)
+        //   - whitelistRemover = the EOA directly (instant — same model
+        //                        as prod where the multisig holds this)
         bytes memory initCalldata = abi.encodeCall(
             ThatsRekt.initialize,
-            (timelock, owner)
+            (upgradeTimelock, addTimelock, owner, initialWhitelisters)
         );
         bytes memory proxyInitCode = abi.encodePacked(
             type(ERC1967Proxy).creationCode,
@@ -102,15 +113,29 @@ contract DeployDev is Script {
         address proxy = _create2(PROXY_SALT, proxyInitCode, "proxy");
 
         console2.log("=== DeployDev (testnet / dev) ===");
-        console2.log("Implementation:    ", impl);
-        console2.log("TimelockController:", timelock);
-        console2.log("Proxy:             ", proxy);
-        console2.log("EOA owner:         ", owner);
-        console2.log("Timelock delay:    ", TIMELOCK_DELAY);
+        console2.log("Implementation:        ", impl);
+        console2.log("Upgrade TLC (7-day):   ", upgradeTimelock);
+        console2.log("Add TLC (3-day):       ", addTimelock);
+        console2.log("EOA (remover/proposer):", owner);
+        console2.log("Proxy:                 ", proxy);
+        console2.log("Initial whitelisters:  ", initialWhitelisters.length);
+        for (uint256 i; i < initialWhitelisters.length; ++i) {
+            console2.log("  -", initialWhitelisters[i]);
+        }
         console2.log("");
         console2.log("Indexer config:");
         console2.log("  CONTRACT_<chain>=     ", proxy);
         console2.log("  START_BLOCK_<chain>=  ", block.number);
+    }
+
+    /// @dev See Deploy.s.sol. Empty/unset → empty array.
+    function _readInitialWhitelisters() internal view returns (address[] memory) {
+        try vm.envString("INITIAL_WHITELISTERS") returns (string memory raw) {
+            if (bytes(raw).length == 0) return new address[](0);
+            return vm.envAddress("INITIAL_WHITELISTERS", ",");
+        } catch {
+            return new address[](0);
+        }
     }
 
     /// @dev See Deploy.s.sol for rationale. Idempotent — returns the

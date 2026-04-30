@@ -2,6 +2,7 @@
 pragma solidity 0.8.25;
 
 import {Test} from "forge-std/Test.sol";
+import {Vm} from "forge-std/Vm.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {ThatsRekt} from "../src/ThatsRekt.sol";
 
@@ -23,27 +24,37 @@ contract ThatsRektTest is Test {
     }
 
     /// @dev Deploys a fresh impl + ERC1967Proxy initialized so that
-    ///      `owner_` is BOTH the upgrade owner AND the whitelist admin.
-    ///      In production these are two separate principals (timelock
-    ///      and multisig) but for the per-feature unit tests it's
-    ///      simpler to have one address hold both. Tests that need to
-    ///      exercise the two-tier separation explicitly use
-    ///      `_deployProxiedTwoTier` below.
+    ///      `owner_` simultaneously holds owner, whitelistAdmin, AND
+    ///      whitelistRemover. In production these are three distinct
+    ///      principals (7-day TLC, 3-day TLC, multisig) but for the
+    ///      per-feature unit tests it's simpler to have one address
+    ///      wear all three hats. Tests that exercise the three-role
+    ///      separation explicitly use `_deployProxiedRoles` below.
     function _deployProxied(address owner_) internal returns (ThatsRekt) {
-        return _deployProxiedTwoTier(owner_, owner_);
+        return _deployProxiedRoles(owner_, owner_, owner_, _emptyList());
     }
 
-    function _deployProxiedTwoTier(address owner_, address whitelistAdmin_) internal returns (ThatsRekt) {
+    function _deployProxiedRoles(
+        address owner_,
+        address whitelistAdmin_,
+        address whitelistRemover_,
+        address[] memory initialWhitelisters_
+    ) internal returns (ThatsRekt) {
         ThatsRekt impl = new ThatsRekt();
         bytes memory initCalldata = abi.encodeCall(
             ThatsRekt.initialize,
-            (owner_, whitelistAdmin_)
+            (owner_, whitelistAdmin_, whitelistRemover_, initialWhitelisters_)
         );
         ERC1967Proxy proxy = new ERC1967Proxy(address(impl), initCalldata);
         return ThatsRekt(address(proxy));
     }
 
-    /// helper - whitelist via owner prank
+    /// @dev Helper for tests that don't pre-populate the whitelist.
+    function _emptyList() internal pure returns (address[] memory) {
+        return new address[](0);
+    }
+
+    /// helper - whitelist via owner prank (governance = admin in default setup)
     function _whitelist(address a) internal {
         vm.prank(governance);
         reg.addWhitelisted(a);
@@ -1118,17 +1129,26 @@ contract ThatsRektTest is Test {
     }
 
     function test_initialize_setsInitialWhitelistAdmin() public {
-        address newOwner = makeAddr("newOwner");
-        address newAdmin = makeAddr("newAdmin");
-        ThatsRekt fresh = _deployProxiedTwoTier(newOwner, newAdmin);
-        assertEq(fresh.whitelistAdmin(), newAdmin);
+        address ownerAddr = makeAddr("owner");
+        address adminAddr = makeAddr("admin");
+        address removerAddr = makeAddr("remover");
+        ThatsRekt fresh = _deployProxiedRoles(ownerAddr, adminAddr, removerAddr, _emptyList());
+        assertEq(fresh.whitelistAdmin(), adminAddr);
+    }
+
+    function test_initialize_setsInitialWhitelistRemover() public {
+        address ownerAddr = makeAddr("owner");
+        address adminAddr = makeAddr("admin");
+        address removerAddr = makeAddr("remover");
+        ThatsRekt fresh = _deployProxiedRoles(ownerAddr, adminAddr, removerAddr, _emptyList());
+        assertEq(fresh.whitelistRemover(), removerAddr);
     }
 
     function test_initialize_revertsOnZeroOwner() public {
         ThatsRekt impl = new ThatsRekt();
         bytes memory initCalldata = abi.encodeCall(
             ThatsRekt.initialize,
-            (address(0), makeAddr("admin"))
+            (address(0), makeAddr("admin"), makeAddr("remover"), _emptyList())
         );
         // OwnableInvalidOwner(address(0)) from OwnableUpgradeable.
         vm.expectRevert();
@@ -1139,146 +1159,502 @@ contract ThatsRektTest is Test {
         ThatsRekt impl = new ThatsRekt();
         bytes memory initCalldata = abi.encodeCall(
             ThatsRekt.initialize,
-            (makeAddr("owner"), address(0))
+            (makeAddr("owner"), address(0), makeAddr("remover"), _emptyList())
         );
-        vm.expectRevert();
+        vm.expectRevert(ThatsRekt.ZeroAddress.selector);
+        new ERC1967Proxy(address(impl), initCalldata);
+    }
+
+    function test_initialize_revertsOnZeroWhitelistRemover() public {
+        ThatsRekt impl = new ThatsRekt();
+        bytes memory initCalldata = abi.encodeCall(
+            ThatsRekt.initialize,
+            (makeAddr("owner"), makeAddr("admin"), address(0), _emptyList())
+        );
+        vm.expectRevert(ThatsRekt.ZeroAddress.selector);
         new ERC1967Proxy(address(impl), initCalldata);
     }
 
     /*//////////////////////////////////////////////////////////////
-                  PHASE 11b - TWO-TIER WHITELIST ADMIN
+              PHASE 11a - INITIAL WHITELIST PRE-POPULATION
     //////////////////////////////////////////////////////////////*/
 
-    function test_twoTier_ownerAlone_cannotAddWhitelisted() public {
-        address timelock = makeAddr("timelock");
-        address multisig = makeAddr("multisig");
-        ThatsRekt fresh = _deployProxiedTwoTier(timelock, multisig);
-        vm.prank(timelock);
-        vm.expectRevert(ThatsRekt.NotWhitelistAdmin.selector);
-        fresh.addWhitelisted(alice);
+    function test_initialize_prepopulates_whitelist() public {
+        address[] memory initialList = new address[](3);
+        initialList[0] = alice;
+        initialList[1] = bob;
+        initialList[2] = carol;
+
+        // Each entry should emit WhitelistUpdated(addr, true) during init.
+        // Order matches the input array.
+        ThatsRekt impl = new ThatsRekt();
+        bytes memory initCalldata = abi.encodeCall(
+            ThatsRekt.initialize,
+            (governance, governance, governance, initialList)
+        );
+
+        vm.expectEmit(true, false, false, true);
+        emit ThatsRekt.WhitelistUpdated(alice, true);
+        vm.expectEmit(true, false, false, true);
+        emit ThatsRekt.WhitelistUpdated(bob, true);
+        vm.expectEmit(true, false, false, true);
+        emit ThatsRekt.WhitelistUpdated(carol, true);
+
+        ERC1967Proxy proxy = new ERC1967Proxy(address(impl), initCalldata);
+        ThatsRekt fresh = ThatsRekt(address(proxy));
+
+        assertTrue(fresh.isWhitelisted(alice));
+        assertTrue(fresh.isWhitelisted(bob));
+        assertTrue(fresh.isWhitelisted(carol));
+        assertFalse(fresh.isWhitelisted(dave), "uninitialized address must not be whitelisted");
     }
 
-    function test_twoTier_whitelistAdmin_canAddRemove() public {
-        address timelock = makeAddr("timelock");
-        address multisig = makeAddr("multisig");
-        ThatsRekt fresh = _deployProxiedTwoTier(timelock, multisig);
+    function test_initialize_emptyInitialList_works() public {
+        ThatsRekt fresh = _deployProxiedRoles(governance, governance, governance, _emptyList());
+        // No revert; just no whitelisted addresses initially.
+        assertFalse(fresh.isWhitelisted(alice));
+        assertFalse(fresh.isWhitelisted(bob));
+    }
 
-        vm.prank(multisig);
+    function test_initialize_duplicateInitialList_isIdempotent() public {
+        // alice twice in the list — second insert should be a silent no-op
+        // (same as `addWhitelisted` semantics for already-listed addrs).
+        address[] memory initialList = new address[](3);
+        initialList[0] = alice;
+        initialList[1] = bob;
+        initialList[2] = alice; // duplicate
+
+        // Recorder captures all emitted logs so we can assert exactly two
+        // WhitelistUpdated events fire (alice, bob), not three.
+        vm.recordLogs();
+        ThatsRekt fresh = _deployProxiedRoles(governance, governance, governance, initialList);
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+
+        bytes32 sig = keccak256("WhitelistUpdated(address,bool)");
+        uint256 count;
+        for (uint256 i; i < logs.length; ++i) {
+            if (logs[i].topics.length > 0 && logs[i].topics[0] == sig) ++count;
+        }
+        assertEq(count, 2, "duplicate initial whitelister must not emit twice");
+
+        assertTrue(fresh.isWhitelisted(alice));
+        assertTrue(fresh.isWhitelisted(bob));
+    }
+
+    function test_initialize_zeroInitialList_reverts() public {
+        // address(0) inside the initial list reverts ZeroAddress, even if
+        // owner/admin/remover are all valid. This protects against
+        // accidentally pre-populating the whitelist with the zero address
+        // (which would let any unset-storage caller post).
+        address[] memory initialList = new address[](2);
+        initialList[0] = alice;
+        initialList[1] = address(0);
+
+        ThatsRekt impl = new ThatsRekt();
+        bytes memory initCalldata = abi.encodeCall(
+            ThatsRekt.initialize,
+            (governance, governance, governance, initialList)
+        );
+        vm.expectRevert(ThatsRekt.ZeroAddress.selector);
+        new ERC1967Proxy(address(impl), initCalldata);
+    }
+
+    /*//////////////////////////////////////////////////////////////
+              PHASE 11b - THREE-ROLE GOVERNANCE (split admin/remover)
+    //////////////////////////////////////////////////////////////*/
+
+    /// owner alone has neither add nor remove authority.
+    function test_threeRole_ownerAlone_cannotAddOrRemove() public {
+        address ownerAddr   = makeAddr("ownerOnly");
+        address adminAddr   = makeAddr("adminOnly");
+        address removerAddr = makeAddr("removerOnly");
+        ThatsRekt fresh = _deployProxiedRoles(ownerAddr, adminAddr, removerAddr, _emptyList());
+
+        vm.prank(ownerAddr);
+        vm.expectRevert(ThatsRekt.NotWhitelistAdmin.selector);
+        fresh.addWhitelisted(alice);
+
+        // Pre-populate alice through the admin so we can attempt remove.
+        vm.prank(adminAddr);
+        fresh.addWhitelisted(alice);
+
+        vm.prank(ownerAddr);
+        vm.expectRevert(ThatsRekt.NotWhitelistRemover.selector);
+        fresh.removeWhitelisted(alice);
+    }
+
+    /// admin can add but cannot remove (remove is the remover's lane).
+    function test_threeRole_admin_cannotRemove() public {
+        address ownerAddr   = makeAddr("ownerOnly");
+        address adminAddr   = makeAddr("adminOnly");
+        address removerAddr = makeAddr("removerOnly");
+        ThatsRekt fresh = _deployProxiedRoles(ownerAddr, adminAddr, removerAddr, _emptyList());
+
+        vm.prank(adminAddr);
         fresh.addWhitelisted(alice);
         assertTrue(fresh.isWhitelisted(alice));
 
-        vm.prank(multisig);
+        vm.prank(adminAddr);
+        vm.expectRevert(ThatsRekt.NotWhitelistRemover.selector);
+        fresh.removeWhitelisted(alice);
+
+        // alice still whitelisted — the failed remove had no effect.
+        assertTrue(fresh.isWhitelisted(alice));
+    }
+
+    /// remover can remove but cannot add (add is the admin's lane).
+    function test_threeRole_remover_cannotAdd() public {
+        address ownerAddr   = makeAddr("ownerOnly");
+        address adminAddr   = makeAddr("adminOnly");
+        address removerAddr = makeAddr("removerOnly");
+        ThatsRekt fresh = _deployProxiedRoles(ownerAddr, adminAddr, removerAddr, _emptyList());
+
+        vm.prank(removerAddr);
+        vm.expectRevert(ThatsRekt.NotWhitelistAdmin.selector);
+        fresh.addWhitelisted(alice);
+
+        // Pre-populate via admin so we can verify remover can in fact remove.
+        vm.prank(adminAddr);
+        fresh.addWhitelisted(alice);
+
+        vm.prank(removerAddr);
         fresh.removeWhitelisted(alice);
         assertFalse(fresh.isWhitelisted(alice));
     }
 
-    function test_setWhitelistAdmin_onlyOwner_canRotate() public {
-        address timelock = makeAddr("timelock");
-        address multisig = makeAddr("multisig");
-        address newMultisig = makeAddr("newMultisig");
-        ThatsRekt fresh = _deployProxiedTwoTier(timelock, multisig);
+    /*//////////////////////////////////////////////////////////////
+              PHASE 11c - setWhitelistAdmin (3-day + 7-day paths)
+    //////////////////////////////////////////////////////////////*/
 
-        // Current admin can't self-rotate.
-        vm.prank(multisig);
-        vm.expectRevert();
-        fresh.setWhitelistAdmin(newMultisig);
+    /// admin self-rotate path: the current whitelistAdmin can replace
+    /// itself. In production this is the 3-day TLC scheduling a call.
+    function test_setWhitelistAdmin_admin_canSelfRotate() public {
+        address ownerAddr = makeAddr("ownerSR");
+        address adminAddr = makeAddr("adminSR");
+        address newAdmin  = makeAddr("newAdmin");
+        ThatsRekt fresh = _deployProxiedRoles(ownerAddr, adminAddr, ownerAddr, _emptyList());
 
-        // Random EOA can't either.
-        vm.prank(alice);
-        vm.expectRevert();
-        fresh.setWhitelistAdmin(newMultisig);
+        vm.prank(adminAddr);
+        fresh.setWhitelistAdmin(newAdmin);
+        assertEq(fresh.whitelistAdmin(), newAdmin);
 
-        // Owner can.
-        vm.prank(timelock);
-        fresh.setWhitelistAdmin(newMultisig);
-        assertEq(fresh.whitelistAdmin(), newMultisig);
-
-        // Old admin no longer authorized; new admin is.
-        vm.prank(multisig);
+        // Old admin can no longer add; new one can.
+        vm.prank(adminAddr);
         vm.expectRevert(ThatsRekt.NotWhitelistAdmin.selector);
         fresh.addWhitelisted(alice);
 
-        vm.prank(newMultisig);
+        vm.prank(newAdmin);
         fresh.addWhitelisted(alice);
         assertTrue(fresh.isWhitelisted(alice));
     }
 
+    /// owner re-install path: the owner can also call setWhitelistAdmin.
+    /// In production this is the 7-day TLC, used after a revoke or as
+    /// a fallback if the admin role is bricked.
+    function test_setWhitelistAdmin_owner_canRotate() public {
+        address ownerAddr = makeAddr("ownerR");
+        address adminAddr = makeAddr("adminR");
+        address newAdmin  = makeAddr("newAdminR");
+        ThatsRekt fresh = _deployProxiedRoles(ownerAddr, adminAddr, ownerAddr, _emptyList());
+
+        vm.prank(ownerAddr);
+        fresh.setWhitelistAdmin(newAdmin);
+        assertEq(fresh.whitelistAdmin(), newAdmin);
+    }
+
+    /// Random callers (not owner, not admin) cannot rotate.
+    function test_setWhitelistAdmin_randomCaller_reverts() public {
+        address ownerAddr = makeAddr("ownerRC");
+        address adminAddr = makeAddr("adminRC");
+        ThatsRekt fresh = _deployProxiedRoles(ownerAddr, adminAddr, ownerAddr, _emptyList());
+
+        vm.prank(alice);
+        vm.expectRevert(ThatsRekt.Unauthorized.selector);
+        fresh.setWhitelistAdmin(makeAddr("attempted"));
+    }
+
+    /// The remover cannot rotate (only revoke). Important separation —
+    /// otherwise the multisig could install hostile admin instantly.
+    function test_setWhitelistAdmin_remover_reverts() public {
+        address ownerAddr   = makeAddr("ownerRem");
+        address adminAddr   = makeAddr("adminRem");
+        address removerAddr = makeAddr("removerRem");
+        ThatsRekt fresh = _deployProxiedRoles(ownerAddr, adminAddr, removerAddr, _emptyList());
+
+        vm.prank(removerAddr);
+        vm.expectRevert(ThatsRekt.Unauthorized.selector);
+        fresh.setWhitelistAdmin(makeAddr("attempted"));
+    }
+
     function test_setWhitelistAdmin_revertsOnZero() public {
-        address timelock = makeAddr("timelock");
-        address multisig = makeAddr("multisig");
-        ThatsRekt fresh = _deployProxiedTwoTier(timelock, multisig);
-        vm.prank(timelock);
+        address ownerAddr = makeAddr("ownerZ");
+        address adminAddr = makeAddr("adminZ");
+        ThatsRekt fresh = _deployProxiedRoles(ownerAddr, adminAddr, ownerAddr, _emptyList());
+
+        // Owner path: zero rejected (use revokeWhitelistAdmin for that).
+        vm.prank(ownerAddr);
+        vm.expectRevert(ThatsRekt.ZeroAddress.selector);
+        fresh.setWhitelistAdmin(address(0));
+
+        // Admin self-rotate path: zero rejected too.
+        vm.prank(adminAddr);
         vm.expectRevert(ThatsRekt.ZeroAddress.selector);
         fresh.setWhitelistAdmin(address(0));
     }
 
     function test_setWhitelistAdmin_emitsTransferred() public {
-        address timelock = makeAddr("timelock");
-        address multisig = makeAddr("multisig");
-        address newMultisig = makeAddr("newMultisig");
-        ThatsRekt fresh = _deployProxiedTwoTier(timelock, multisig);
+        address ownerAddr = makeAddr("ownerE");
+        address adminAddr = makeAddr("adminE");
+        address newAdmin  = makeAddr("newAdminE");
+        ThatsRekt fresh = _deployProxiedRoles(ownerAddr, adminAddr, ownerAddr, _emptyList());
+
         vm.expectEmit(true, true, false, false);
-        emit ThatsRekt.WhitelistAdminTransferred(multisig, newMultisig);
-        vm.prank(timelock);
-        fresh.setWhitelistAdmin(newMultisig);
+        emit ThatsRekt.WhitelistAdminTransferred(adminAddr, newAdmin);
+        vm.prank(ownerAddr);
+        fresh.setWhitelistAdmin(newAdmin);
     }
 
-    /// Governance (the upgrade-authority owner) can be rotated via
-    /// Ownable2Step's two-step transfer. The whitelistAdmin role is
-    /// orthogonal — it stays with whoever holds it until the owner
-    /// explicitly rotates via setWhitelistAdmin. This test exercises
-    /// the full intended flow:
-    ///   1. transfer + accept owner → upgrade authority moves
-    ///   2. old owner still has whitelist authority (the default
-    ///      test setup makes them the same address — see _deployProxied)
-    ///   3. new owner rotates whitelistAdmin via setWhitelistAdmin
-    ///   4. old owner is now fully de-authorized
+    /*//////////////////////////////////////////////////////////////
+                PHASE 11d - revokeWhitelistAdmin (kill switch)
+    //////////////////////////////////////////////////////////////*/
+
+    /// Only the whitelistRemover can revoke. Sets slot to address(0).
+    function test_revokeWhitelistAdmin_onlyRemover() public {
+        address ownerAddr   = makeAddr("ownerK");
+        address adminAddr   = makeAddr("adminK");
+        address removerAddr = makeAddr("removerK");
+        ThatsRekt fresh = _deployProxiedRoles(ownerAddr, adminAddr, removerAddr, _emptyList());
+
+        // Owner can't.
+        vm.prank(ownerAddr);
+        vm.expectRevert(ThatsRekt.NotWhitelistRemover.selector);
+        fresh.revokeWhitelistAdmin();
+
+        // Admin can't (would be a self-suicide path otherwise).
+        vm.prank(adminAddr);
+        vm.expectRevert(ThatsRekt.NotWhitelistRemover.selector);
+        fresh.revokeWhitelistAdmin();
+
+        // Random EOA can't.
+        vm.prank(alice);
+        vm.expectRevert(ThatsRekt.NotWhitelistRemover.selector);
+        fresh.revokeWhitelistAdmin();
+
+        // Remover can.
+        vm.expectEmit(true, true, false, false);
+        emit ThatsRekt.WhitelistAdminTransferred(adminAddr, address(0));
+        vm.prank(removerAddr);
+        fresh.revokeWhitelistAdmin();
+
+        assertEq(fresh.whitelistAdmin(), address(0));
+    }
+
+    /// After revoke, addWhitelisted is bricked — no caller can satisfy
+    /// `msg.sender == whitelistAdmin` because msg.sender is never zero.
+    function test_revokeWhitelistAdmin_blocksAddsByEveryone() public {
+        address ownerAddr   = makeAddr("ownerB");
+        address adminAddr   = makeAddr("adminB");
+        address removerAddr = makeAddr("removerB");
+        ThatsRekt fresh = _deployProxiedRoles(ownerAddr, adminAddr, removerAddr, _emptyList());
+
+        vm.prank(removerAddr);
+        fresh.revokeWhitelistAdmin();
+
+        vm.prank(adminAddr);
+        vm.expectRevert(ThatsRekt.NotWhitelistAdmin.selector);
+        fresh.addWhitelisted(alice);
+
+        vm.prank(ownerAddr);
+        vm.expectRevert(ThatsRekt.NotWhitelistAdmin.selector);
+        fresh.addWhitelisted(alice);
+
+        vm.prank(removerAddr);
+        vm.expectRevert(ThatsRekt.NotWhitelistAdmin.selector);
+        fresh.addWhitelisted(alice);
+    }
+
+    /// After revoke, removes still work — kicking misbehaving posters
+    /// doesn't depend on the admin slot. This is the whole point of the
+    /// kill switch: stop new additions, keep incident-response live.
+    function test_revokeWhitelistAdmin_removesStillWork() public {
+        address ownerAddr   = makeAddr("ownerRSW");
+        address adminAddr   = makeAddr("adminRSW");
+        address removerAddr = makeAddr("removerRSW");
+        ThatsRekt fresh = _deployProxiedRoles(ownerAddr, adminAddr, removerAddr, _emptyList());
+
+        // Pre-populate alice as a poster.
+        vm.prank(adminAddr);
+        fresh.addWhitelisted(alice);
+
+        // Revoke admin.
+        vm.prank(removerAddr);
+        fresh.revokeWhitelistAdmin();
+
+        // alice can still be removed by remover.
+        vm.prank(removerAddr);
+        fresh.removeWhitelisted(alice);
+        assertFalse(fresh.isWhitelisted(alice));
+    }
+
+    /// After revoke, only the owner path can re-install the admin slot.
+    /// The 3-day self-rotate path is unreachable because no one matches
+    /// the (now zero) `whitelistAdmin` slot.
+    function test_revokeWhitelistAdmin_ownerCanReinstall() public {
+        address ownerAddr   = makeAddr("ownerRE");
+        address adminAddr   = makeAddr("adminRE");
+        address removerAddr = makeAddr("removerRE");
+        address newAdmin    = makeAddr("newAdminRE");
+        ThatsRekt fresh = _deployProxiedRoles(ownerAddr, adminAddr, removerAddr, _emptyList());
+
+        vm.prank(removerAddr);
+        fresh.revokeWhitelistAdmin();
+        assertEq(fresh.whitelistAdmin(), address(0));
+
+        // Owner re-installs via the 7-day path.
+        vm.prank(ownerAddr);
+        fresh.setWhitelistAdmin(newAdmin);
+        assertEq(fresh.whitelistAdmin(), newAdmin);
+
+        // New admin can add.
+        vm.prank(newAdmin);
+        fresh.addWhitelisted(alice);
+        assertTrue(fresh.isWhitelisted(alice));
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                  PHASE 11e - setWhitelistRemover (7-day rotate)
+    //////////////////////////////////////////////////////////////*/
+
+    function test_setWhitelistRemover_onlyOwner() public {
+        address ownerAddr   = makeAddr("ownerSR2");
+        address adminAddr   = makeAddr("adminSR2");
+        address removerAddr = makeAddr("removerSR2");
+        address newRemover  = makeAddr("newRemoverSR2");
+        ThatsRekt fresh = _deployProxiedRoles(ownerAddr, adminAddr, removerAddr, _emptyList());
+
+        // Admin can't.
+        vm.prank(adminAddr);
+        vm.expectRevert();
+        fresh.setWhitelistRemover(newRemover);
+
+        // Current remover can't (no self-rotate on the remover slot).
+        vm.prank(removerAddr);
+        vm.expectRevert();
+        fresh.setWhitelistRemover(newRemover);
+
+        // Random EOA can't.
+        vm.prank(alice);
+        vm.expectRevert();
+        fresh.setWhitelistRemover(newRemover);
+
+        // Owner can.
+        vm.prank(ownerAddr);
+        fresh.setWhitelistRemover(newRemover);
+        assertEq(fresh.whitelistRemover(), newRemover);
+
+        // Old remover loses authority.
+        vm.prank(adminAddr);
+        fresh.addWhitelisted(alice);
+        vm.prank(removerAddr);
+        vm.expectRevert(ThatsRekt.NotWhitelistRemover.selector);
+        fresh.removeWhitelisted(alice);
+
+        // New remover gains it.
+        vm.prank(newRemover);
+        fresh.removeWhitelisted(alice);
+        assertFalse(fresh.isWhitelisted(alice));
+    }
+
+    function test_setWhitelistRemover_revertsOnZero() public {
+        address ownerAddr   = makeAddr("ownerSR3");
+        address adminAddr   = makeAddr("adminSR3");
+        address removerAddr = makeAddr("removerSR3");
+        ThatsRekt fresh = _deployProxiedRoles(ownerAddr, adminAddr, removerAddr, _emptyList());
+
+        vm.prank(ownerAddr);
+        vm.expectRevert(ThatsRekt.ZeroAddress.selector);
+        fresh.setWhitelistRemover(address(0));
+    }
+
+    function test_setWhitelistRemover_emitsTransferred() public {
+        address ownerAddr   = makeAddr("ownerSR4");
+        address adminAddr   = makeAddr("adminSR4");
+        address removerAddr = makeAddr("removerSR4");
+        address newRemover  = makeAddr("newRemoverSR4");
+        ThatsRekt fresh = _deployProxiedRoles(ownerAddr, adminAddr, removerAddr, _emptyList());
+
+        vm.expectEmit(true, true, false, false);
+        emit ThatsRekt.WhitelistRemoverTransferred(removerAddr, newRemover);
+        vm.prank(ownerAddr);
+        fresh.setWhitelistRemover(newRemover);
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                  PHASE 11f - Owner two-step transfer
+    //////////////////////////////////////////////////////////////*/
+
+    /// Governance (the owner role) is rotated via Ownable2Step's
+    /// two-step `transferOwnership` / `acceptOwnership` flow. The
+    /// whitelistAdmin and whitelistRemover slots are orthogonal —
+    /// they stay with whoever holds them until the new owner
+    /// explicitly rotates them. This test exercises the full flow.
     function test_governance_canBeRotated() public {
         address newGov = makeAddr("newGov");
 
         // 1. current owner proposes the new owner
         vm.prank(governance);
         reg.transferOwnership(newGov);
-
-        // 2. pending until accepted; current owner unchanged
         assertEq(reg.pendingOwner(), newGov);
         assertEq(reg.owner(), governance);
 
-        // 3. new owner accepts
+        // 2. new owner accepts
         vm.prank(newGov);
         reg.acceptOwnership();
-
-        // 4. ownership has fully transferred
         assertEq(reg.owner(), newGov);
         assertEq(reg.pendingOwner(), address(0));
 
-        // 5. new owner does NOT inherit whitelist authority — that's a
-        //    separate role. The default test setup has owner ==
-        //    whitelistAdmin == governance, so after transferring the
-        //    owner role to newGov the OLD address (governance) still
-        //    holds whitelistAdmin.
+        // 3. new owner does NOT inherit whitelist authority — that's a
+        //    separate role. Default test setup has owner == admin ==
+        //    remover == governance, so after transferring ownership the
+        //    OLD address (governance) still holds admin + remover.
         vm.prank(newGov);
         vm.expectRevert(ThatsRekt.NotWhitelistAdmin.selector);
         reg.addWhitelisted(alice);
+
+        vm.prank(newGov);
+        vm.expectRevert(ThatsRekt.NotWhitelistRemover.selector);
+        reg.removeWhitelisted(alice);
 
         vm.prank(governance);
         reg.addWhitelisted(alice);
         assertTrue(reg.isWhitelisted(alice));
 
-        // 6. new owner rotates whitelistAdmin to itself (or anywhere
-        //    else) using its owner authority
+        // 4. new owner rotates whitelistAdmin to itself via the 7-day
+        //    re-install path.
         vm.prank(newGov);
         reg.setWhitelistAdmin(newGov);
 
-        // 7. old governance is now fully de-authorized
+        // 5. new owner rotates whitelistRemover to itself via owner-only.
+        vm.prank(newGov);
+        reg.setWhitelistRemover(newGov);
+
+        // 6. old governance is now fully de-authorized on every slot.
         vm.prank(governance);
         vm.expectRevert(ThatsRekt.NotWhitelistAdmin.selector);
         reg.addWhitelisted(bob);
 
-        // 8. new owner can now manage the whitelist
+        vm.prank(governance);
+        vm.expectRevert(ThatsRekt.NotWhitelistRemover.selector);
+        reg.removeWhitelisted(alice);
+
+        // 7. new owner can now manage the whitelist end-to-end.
         vm.prank(newGov);
         reg.addWhitelisted(bob);
         assertTrue(reg.isWhitelisted(bob));
+
+        vm.prank(newGov);
+        reg.removeWhitelisted(alice);
+        assertFalse(reg.isWhitelisted(alice));
     }
 
     /*//////////////////////////////////////////////////////////////

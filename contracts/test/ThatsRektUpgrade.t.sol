@@ -59,14 +59,19 @@ contract ThatsRektUpgradeTest is Test {
     function test_initialize_revertsOnSecondCall() public {
         ThatsRekt reg = _deployProxied(multisig);
         vm.expectRevert(Initializable.InvalidInitialization.selector);
-        reg.initialize(makeAddr("anotherOwner"), makeAddr("anotherAdmin"));
+        reg.initialize(
+            makeAddr("anotherOwner"),
+            makeAddr("anotherAdmin"),
+            makeAddr("anotherRemover"),
+            new address[](0)
+        );
     }
 
     function test_initialize_revertsOnZeroOwner() public {
         ThatsRekt impl = new ThatsRekt();
         bytes memory initCalldata = abi.encodeCall(
             ThatsRekt.initialize,
-            (address(0), makeAddr("admin"))
+            (address(0), makeAddr("admin"), makeAddr("remover"), new address[](0))
         );
         // Proxy ctor delegate-calls initialize, which reverts in
         // OwnableUpgradeable; the revert bubbles up unchanged.
@@ -78,7 +83,17 @@ contract ThatsRektUpgradeTest is Test {
         ThatsRekt impl = new ThatsRekt();
         bytes memory initCalldata = abi.encodeCall(
             ThatsRekt.initialize,
-            (makeAddr("owner"), address(0))
+            (makeAddr("owner"), address(0), makeAddr("remover"), new address[](0))
+        );
+        vm.expectRevert(ThatsRekt.ZeroAddress.selector);
+        new ERC1967Proxy(address(impl), initCalldata);
+    }
+
+    function test_initialize_revertsOnZeroWhitelistRemover() public {
+        ThatsRekt impl = new ThatsRekt();
+        bytes memory initCalldata = abi.encodeCall(
+            ThatsRekt.initialize,
+            (makeAddr("owner"), makeAddr("admin"), address(0), new address[](0))
         );
         vm.expectRevert(ThatsRekt.ZeroAddress.selector);
         new ERC1967Proxy(address(impl), initCalldata);
@@ -91,7 +106,7 @@ contract ThatsRektUpgradeTest is Test {
         // closes the well-known foothold of taking over the impl's
         // owner slot via a public initialize on the logic contract.
         vm.expectRevert(Initializable.InvalidInitialization.selector);
-        impl.initialize(multisig, multisig);
+        impl.initialize(multisig, multisig, multisig, new address[](0));
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -197,7 +212,7 @@ contract ThatsRektUpgradeTest is Test {
                               STORAGE GAP
     //////////////////////////////////////////////////////////////*/
 
-    /// The contract reserves 50 trailing slots (`__gap`) for forward-
+    /// The contract reserves trailing slots (`__gap`) for forward-
     /// compatible storage growth. We can't see private storage names
     /// from a test, but we can read the slots directly via vm.load
     /// and assert they are zero on a freshly initialized proxy. This
@@ -206,14 +221,33 @@ contract ThatsRektUpgradeTest is Test {
     function test_storageGap_isZeroedOnFreshProxy() public {
         ThatsRekt reg = _deployProxied(multisig);
 
-        // Layout at time of writing (verified via `forge inspect`):
-        //   slots 0-13 = sequential state vars
-        //   slots 14-63 = __gap[50]
+        // Sequential storage layout (OZ inherited contracts use ERC-7201
+        // namespaced storage in 5.x and don't take consecutive slots):
+        //
+        //   slot  0  isWhitelisted        (mapping → reads as 0)
+        //   slot  1  whitelistAdmin
+        //   slot  2  whitelistRemover     (added in v1.2)
+        //   slot  3  postCount
+        //   slot  4  _posts               (mapping)
+        //   slot  5  confirmationOf       (mapping)
+        //   slot  6  _confirmers          (mapping)
+        //   slot  7  _disconfirmers       (mapping)
+        //   slot  8  attackerScore        (mapping)
+        //   slot  9  attackerAppearances  (mapping)
+        //   slot 10  isVictim             (mapping)
+        //   slot 11  _victimActivePosts   (mapping)
+        //   slot 12  headPostId
+        //   slot 13  tailPostId
+        //   slot 14  nextPostId           (mapping)
+        //   slot 15  prevPostId           (mapping)
+        //   slot 16  postTitle            (mapping; v1.1)
+        //   slot 17–64  __gap[48]         (v1.2 shrank from [49] for whitelistRemover)
+        //
         // If a future change adds state, this test will start reading
         // non-zero values from the lower gap slots — that's the signal
         // to reduce the gap size in src/ThatsRekt.sol accordingly.
-        uint256 GAP_START = 14;
-        uint256 GAP_LEN = 50;
+        uint256 GAP_START = 17;
+        uint256 GAP_LEN = 48;
         for (uint256 i; i < GAP_LEN; ++i) {
             bytes32 v = vm.load(address(reg), bytes32(GAP_START + i));
             assertEq(uint256(v), 0, "gap slot is non-zero on fresh proxy");
@@ -320,24 +354,21 @@ contract ThatsRektUpgradeTest is Test {
     }
 
     function _deployProxied(address owner_) internal returns (ThatsRekt) {
-        return _deployProxiedTwoTier(owner_, owner_);
-    }
-
-    function _deployProxiedTwoTier(address owner_, address whitelistAdmin_) internal returns (ThatsRekt) {
+        // Single principal wears all three hats for these upgrade-flow tests.
         ThatsRekt impl = new ThatsRekt();
         bytes memory initCalldata = abi.encodeCall(
             ThatsRekt.initialize,
-            (owner_, whitelistAdmin_)
+            (owner_, owner_, owner_, new address[](0))
         );
         ERC1967Proxy proxy = new ERC1967Proxy(address(impl), initCalldata);
         return ThatsRekt(address(proxy));
     }
 
     function _deployTimelockedProxy() internal returns (ThatsRekt reg, TimelockController timelock) {
-        // Multisig holds proposer + executor + canceller; admin = address(0).
-        // Mirrors the production Deploy.s.sol config exactly:
-        //   - owner          = timelock (upgrade authority, 7-day gated)
-        //   - whitelistAdmin = multisig (instant whitelist mgmt)
+        // Mirror Deploy.s.sol but collapse the two TLCs into one for these
+        // upgrade-focused tests — we only exercise the upgrade path here,
+        // and a single 7-day TLC is enough to model that. Multisig is
+        // the proposer/executor; admin = address(0) for parity with prod.
         address[] memory proposers = new address[](1);
         proposers[0] = multisig;
         address[] memory executors = new address[](1);
@@ -347,14 +378,18 @@ contract ThatsRektUpgradeTest is Test {
         ThatsRekt impl = new ThatsRekt();
         bytes memory initCalldata = abi.encodeCall(
             ThatsRekt.initialize,
-            (address(timelock), multisig)
+            //   - owner            = timelock       (7-day upgrade)
+            //   - whitelistAdmin   = multisig       (instant in test, gated by 3-day TLC in prod)
+            //   - whitelistRemover = multisig       (instant)
+            (address(timelock), multisig, multisig, new address[](0))
         );
         ERC1967Proxy proxy = new ERC1967Proxy(address(impl), initCalldata);
         reg = ThatsRekt(address(proxy));
 
-        // Sanity: proxy is owned by the timelock; whitelist admin is multisig.
+        // Sanity: proxy is owned by the timelock; admin + remover are multisig.
         assertEq(reg.owner(), address(timelock));
         assertEq(reg.whitelistAdmin(), multisig);
+        assertEq(reg.whitelistRemover(), multisig);
     }
 
     /// @dev Schedule a single call from the timelock to `target`, warp past

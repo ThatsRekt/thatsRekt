@@ -13,7 +13,7 @@ A public list of active DeFi attacks, posted as they happen by vetted security t
 ## How posts work
 
 - **Posters** — vetted security teams and automated detectors. They submit alerts (attacker addresses, victim contracts, a short note) and vouch (`confirm`) or refute (`disconfirm`) each other's claims.
-- **Governance** — a multisig at `0x59E4DBc95BD312A882Bb36b7f3E8298682340679` (same address on every chain via CREATE2) manages the whitelist **instantly** (so a misbehaving poster can be kicked immediately) and authorizes contract upgrades. Upgrades are gated by a **7-day timelock**, so anyone using the registry has a full week to disengage if a malicious upgrade is queued.
+- **Governance** — a multisig at `0x59E4DBc95BD312A882Bb36b7f3E8298682340679` (same address on every chain via CREATE2). It can **remove a misbehaving poster instantly** (incident response), but **adding a new poster takes 3 days** through a dedicated timelock so the rotation is publicly visible before it lands. Contract upgrades are gated by a separate **7-day timelock**, so anyone using the registry has a full week to disengage if a malicious upgrade is queued.
 - **Readers** — anyone. Two main signals available as cheap on-chain reads: `attackerScore(address)` (signed sum of confirmations minus disconfirmations across active posts naming the address as an attacker) and `isVictim(address)` (true if the address is the target of an active alert).
 
 For the full integration story — Solidity interface, threshold guidance, GraphQL schema, deployment addresses — see [thatsrekt.com/docs](https://thatsrekt.com/docs).
@@ -51,10 +51,14 @@ The registry is only as useful as its posters. If you run a threat-intel feed, a
 
 ## Governance
 
-- **Multisig:** `0x59E4DBc95BD312A882Bb36b7f3E8298682340679` (identical on every chain via CREATE2)
-- **Whitelist:** managed directly by the multisig — instant adds and removes. Posters need to be kickable the moment something goes wrong.
-- **Upgrades:** gated by a 7-day TimelockController. The multisig has no direct upgrade authority — even with keys compromised, no upgrade can land in less than 7 days.
-- **Whitelist admin rotation:** the timelock owner can move whitelist authority via `setWhitelistAdmin`, also gated by the 7-day delay — so a compromised whitelist admin can be revoked through the same disengage window integrators rely on for upgrades.
+Three roles with asymmetric delays — adding posters is slow and public, kicking them out is instant.
+
+- **Multisig:** `0x59E4DBc95BD312A882Bb36b7f3E8298682340679` (identical on every chain via CREATE2). Proposes on every timelock; holds the kill-switch directly.
+- **Adding posters:** gated by a **3-day TimelockController** (the `whitelistAdmin` slot). The multisig schedules `addWhitelisted(addr)`, waits 3 days, then executes. Long enough for integrators to react if the multisig schedules a hostile operator; short enough that real-world onboarding doesn't grind.
+- **Removing posters:** **instant.** The multisig holds the `whitelistRemover` slot directly and calls `removeWhitelisted(addr)` immediately when an incident demands it.
+- **Kill-switch:** the multisig can also call `revokeWhitelistAdmin()` instantly — this zeros the `whitelistAdmin` slot, blocking all new additions until the upgrade timelock owner re-installs an admin via the 7-day path. Buys breathing room if the add timelock itself is captured.
+- **Upgrades:** gated by a separate **7-day TimelockController** (the `owner` slot). The multisig has no direct upgrade authority — even with keys compromised, no upgrade can land in less than 7 days.
+- **Initial poster set:** to avoid waiting 3 days for the registry's first posters, the launch deploy script pre-populates the whitelist via `INITIAL_WHITELISTERS`. This is the only legitimate bypass of the add timelock and only happens once at `initialize`.
 
 ## License
 
