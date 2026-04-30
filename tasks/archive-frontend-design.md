@@ -19,20 +19,28 @@ is for new attacks going forward; old attacks live as a frontend archive.
 Single `/` feed, two stacked sections:
 
 ```
-┌────────────────────────────────┐
-│   live on-chain posts          │  sorted by createdAtTimestamp
-│   (newest first by default)    │  (chain filter applies)
-├────────────────────────────────┤
-│   ═══ archive · pre-platform   │  divider only when both sections non-empty
-├────────────────────────────────┤
-│   archive cards                │  sorted by attackedAt
-│   (newest first by default)    │  (chain filter applies)
-└────────────────────────────────┘
+sort=newest                          sort=oldest
+┌────────────────────────────────┐   ┌────────────────────────────────┐
+│   live on-chain posts          │   │   archive cards                │
+│   (newest first)               │   │   (oldest first — 2016 → 2024) │
+├── archive · pre-platform ──────┤   ├── archive · pre-platform ──────┤
+│   archive cards                │   │   live on-chain posts          │
+│   (newest first — 2024 → 2016) │   │   (oldest first)               │
+└────────────────────────────────┘   └────────────────────────────────┘
 ```
 
-Section order is fixed: **live always above archive.** Sort direction
-(`newest`/`oldest`) flips order *within* each section but never swaps the
-sections themselves.
+Section order **swaps with sort direction** so global chronology reads
+top-to-bottom. `oldest` puts the archive above (since archives are by
+definition older than any on-chain post — the oldest things are at the
+top); `newest` puts the live feed above. The divider always sits
+between the two sections.
+
+Within each section, the sort direction also flips order — i.e. archive
+DESC by `attackedAt` for `newest`, ASC for `oldest`.
+
+The archive section has a subtle gray-cream backdrop that bleeds to the
+gutters so the archive zone reads as a distinct visual subspace, not
+just more cards on the same canvas.
 
 ## Controls
 
@@ -43,23 +51,32 @@ sort: [newest] [oldest]    [✓ show archive (i)]    chain: [all chains ▾]
 ```
 
 - **Toggle:** checkbox-style button matching the sort tabs' aesthetic.
-  Defaults `on`. Persists via URL search param (`?archive=off` when hidden).
-- **Tooltip** on the `(i)` icon, native `title=`:
-  > Pre-platform attacks compiled by the community. Archive posts are
-  > off-chain context — they're not posted to the registry and can't be
-  > confirmed/disconfirmed.
+  Defaults `on`. Persists via `localStorage`.
+- **Info popover** on the `(i)` icon — custom component (`InfoPopover`),
+  not the native `title=` tooltip. Opens instantly on hover and toggles
+  on click; closes on Escape, click-outside, or mouse-leave (with a
+  small grace period). Styled to match the rekt aesthetic — sharp
+  borders, hard offset shadow, monospace title strip, normal-case body.
+  Copy:
+  > **archive posts** — Pre-platform attacks compiled by the community.
+  > Archive posts are off-chain context — they're not posted to the
+  > registry and can't be confirmed or disconfirmed. They appear below
+  > the live feed in their own section.
 
 ## Sort + filter interaction
 
-| sort | toggle | chain | live section | divider | archive section |
-|---|---|---|---|---|---|
-| newest | on | all | DESC by `createdAtTimestamp` | shown | DESC by `attackedAt` (2024 → 2016) |
-| oldest | on | all | ASC | shown | ASC by `attackedAt` (2016 → 2024) |
-| newest | off | all | DESC | hidden | not rendered |
-| newest | on | base | live filtered to base | hidden* | hidden (0 base archives) |
-| newest | on | ethereum | empty | hidden | full archive DESC |
+| sort | toggle | chain | section order (top → bottom) |
+|---|---|---|---|
+| newest | on | all | live (DESC `createdAtTimestamp`) → divider → archive (DESC `attackedAt`, 2024 → 2016) |
+| oldest | on | all | archive (ASC `attackedAt`, 2016 → 2024) → divider → live (ASC) |
+| newest | off | all | live only (DESC), no divider |
+| oldest | off | all | live only (ASC), no divider |
+| newest | on | base | live filtered to base, no divider, no archive (0 base archives) |
+| newest | on | ethereum | (no live ETH indexer) → archive only, no divider |
 
-\* divider hides whenever either section is empty.
+The divider hides whenever either section is empty. The "no on-chain
+posts yet · showing pre-platform archive" hint appears above the
+archive when live is empty (regardless of sort direction).
 
 ## Data layer
 

@@ -6,6 +6,7 @@ import { PostCard } from '../components/PostCard'
 import { ChainSelector } from '../components/ChainSelector'
 import { ArchiveDivider } from '../components/ArchiveDivider'
 import { EmptyState } from '../components/EmptyState'
+import { InfoPopover } from '../components/InfoPopover'
 import { useChainFilter } from '../hooks/useChainFilter'
 import { useArchiveToggle } from '../hooks/useArchiveToggle'
 
@@ -76,6 +77,11 @@ export function Feed() {
           onLoadMore={() => fetchNextPage()}
           archivePosts={archivePosts}
           showArchive={showArchive}
+          // When sort=oldest, render the archive ABOVE the live section.
+          // Archives are by definition older than any on-chain post, so
+          // this preserves global chronology — "oldest first" reads as
+          // The DAO 2016 → today, top to bottom.
+          archiveAbove={sort === 'oldest'}
         />
       </div>
     </div>
@@ -92,6 +98,7 @@ interface FeedBodyProps {
   onLoadMore: () => void
   archivePosts: readonly ArchivePost[]
   showArchive: boolean
+  archiveAbove: boolean
 }
 
 function FeedBody({
@@ -104,6 +111,7 @@ function FeedBody({
   onLoadMore,
   archivePosts,
   showArchive,
+  archiveAbove,
 }: FeedBodyProps) {
   if (isLoading) {
     return (
@@ -138,29 +146,42 @@ function FeedBody({
     )
   }
 
+  const renderLive = !liveEmpty && (
+    <LiveSection
+      posts={livePosts}
+      totalCount={totalLiveCount}
+      hasNextPage={hasNextPage}
+      isFetchingNextPage={isFetchingNextPage}
+      onLoadMore={onLoadMore}
+    />
+  )
+  const renderArchive = !archiveEmpty && <ArchiveSection posts={archivePosts} />
+  const renderDivider = !liveEmpty && !archiveEmpty && <ArchiveDivider />
+
   return (
     <div>
-      {!liveEmpty && (
-        <LiveSection
-          posts={livePosts}
-          totalCount={totalLiveCount}
-          hasNextPage={hasNextPage}
-          isFetchingNextPage={isFetchingNextPage}
-          onLoadMore={onLoadMore}
-        />
-      )}
-
-      {/* Launch-day affordance: empty live section + archive on → tell
-          the user the archive is what they're seeing. */}
+      {/* Launch-day affordance: live empty + archive on + archive
+          non-empty → tell the user the archive is what they're seeing.
+          Independent of section order — just a top-of-page hint. */}
       {liveEmpty && showArchive && !archiveEmpty && (
         <p className="mb-6 text-xs uppercase tracking-widest text-neutral-700">
           no on-chain posts yet · showing pre-platform archive
         </p>
       )}
 
-      {!liveEmpty && !archiveEmpty && <ArchiveDivider />}
-
-      {!archiveEmpty && <ArchiveSection posts={archivePosts} />}
+      {archiveAbove ? (
+        <>
+          {renderArchive}
+          {renderDivider}
+          {renderLive}
+        </>
+      ) : (
+        <>
+          {renderLive}
+          {renderDivider}
+          {renderArchive}
+        </>
+      )}
     </div>
   )
 }
@@ -220,9 +241,6 @@ function ArchiveToggle({
   value: boolean
   onChange: (next: boolean) => void
 }) {
-  const TOOLTIP =
-    "Pre-platform attacks compiled by the community. Archive posts are off-chain context — they're not posted to the registry and can't be confirmed/disconfirmed."
-
   return (
     <div className="flex items-baseline gap-1">
       <button
@@ -238,13 +256,12 @@ function ArchiveToggle({
       >
         {value ? '✓ ' : ''}show archive
       </button>
-      <span
-        title={TOOLTIP}
-        aria-label={TOOLTIP}
-        className="inline-flex items-center justify-center w-4 h-4 rounded-full border border-neutral-500 text-[10px] font-mono text-neutral-700 cursor-help"
-      >
-        i
-      </span>
+      <InfoPopover title="archive posts" ariaLabel="what is the archive?">
+        Pre-platform attacks compiled by the community. Archive posts
+        are off-chain context — they're not posted to the registry and
+        can't be confirmed or disconfirmed. They appear below the live
+        feed in their own section.
+      </InfoPopover>
     </div>
   )
 }
@@ -294,17 +311,22 @@ function LiveSection({
 }
 
 function ArchiveSection({ posts }: { posts: readonly ArchivePost[] }) {
+  // Subtle gray-cream tint differentiates the archive zone from live posts
+  // at a glance — the page bg is #f5f4ee (warm cream), this is a slightly
+  // darker / cooler tone. Keeps the brutalist aesthetic but signals
+  // "you've crossed into the archive subspace" without needing to read
+  // the divider text.
   return (
-    <div>
+    <section className="bg-neutral-200/50 -mx-4 sm:-mx-6 px-4 sm:px-6 py-8 border-y-2 border-neutral-400/60">
       {posts.map((post, i) => (
         <div key={post.id}>
-          {i > 0 && <hr className="my-8 border-t-2 border-black" />}
+          {i > 0 && <hr className="my-8 border-t-2 border-neutral-400/60" />}
           <PostCard item={{ kind: 'archive', post }} />
         </div>
       ))}
-      <p className="mt-8 text-center text-xs uppercase tracking-widest text-neutral-700">
+      <p className="mt-8 text-center text-xs uppercase tracking-widest text-neutral-600">
         end of archive · {posts.length} entr{posts.length === 1 ? 'y' : 'ies'}
       </p>
-    </div>
+    </section>
   )
 }

@@ -48,12 +48,7 @@ lan-up: ## Bring up the full LAN stack (db + processors + Mesh + frontend dev). 
 	@echo "==> Starting compose stack (db, anvils, processors, graphqls, mesh)"
 	cd $(INDEXER) && $(COMPOSE) up -d
 	@echo "==> Starting frontend dev server (LAN-bound on :5173)"
-	@if [ -f $(VITE_PID) ] && kill -0 $$(cat $(VITE_PID)) 2>/dev/null; then \
-		echo "    vite already running (pid $$(cat $(VITE_PID)))"; \
-	else \
-		cd $(FRONTEND) && (pnpm dev:lan > /tmp/thatsrekt-vite.log 2>&1 & echo $$! > $(VITE_PID)); \
-		echo "    vite started (pid $$(cat $(VITE_PID))) — logs at /tmp/thatsrekt-vite.log"; \
-	fi
+	@VITE_PID_FILE=$(VITE_PID) $(SCRIPTS)/ensure-vite.sh
 	@$(MAKE) -s lan-info
 
 .PHONY: lan-rebuild
