@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Routes, Route, Link, useLocation } from 'react-router-dom'
+import { Routes, Route, Link, Navigate, useLocation } from 'react-router-dom'
 import { Feed } from './pages/Feed'
 import { PostDetail } from './pages/PostDetail'
 import { About } from './pages/About'
@@ -7,6 +7,7 @@ import { Posters } from './pages/Posters'
 import { Leaderboard } from './pages/Leaderboard'
 import { Docs } from './pages/Docs'
 import { IS_MOCK_MODE } from './lib/queries'
+import { useHasPosts } from './hooks/useHasPosts'
 
 const NAV_LINKS: { to: string; label: string }[] = [
   { to: '/', label: 'feed' },
@@ -15,6 +16,9 @@ const NAV_LINKS: { to: string; label: string }[] = [
   { to: '/leaderboard', label: 'leaderboard' },
   { to: '/docs', label: 'docs' },
 ]
+
+/** Routes that should disappear from nav + redirect to `/` when no posts exist. */
+const POST_GATED_ROUTES = new Set(['/leaderboard'])
 
 export function App() {
   return (
@@ -27,7 +31,7 @@ export function App() {
           <Route path="/post/:id" element={<PostDetail />} />
           <Route path="/about" element={<About />} />
           <Route path="/posters" element={<Posters />} />
-          <Route path="/leaderboard" element={<Leaderboard />} />
+          <Route path="/leaderboard" element={<LeaderboardGate />} />
           <Route path="/docs" element={<Docs />} />
           <Route path="*" element={<NotFound />} />
         </Routes>
@@ -37,10 +41,43 @@ export function App() {
   )
 }
 
+/**
+ * Gate the `/leaderboard` route on post existence. While we're still
+ * checking, render a brutalist "checking…" placeholder rather than
+ * flashing the full Leaderboard or bouncing the user — both options
+ * look like bugs. Once we know:
+ *   - 0 posts → bounce to `/` (preserves bookmarked URL semantics)
+ *   - ≥1 post → render the real Leaderboard page
+ */
+function LeaderboardGate() {
+  const { hasPosts, isLoading } = useHasPosts()
+  if (isLoading) {
+    return (
+      <div className="py-16 text-center">
+        <p className="text-sm uppercase tracking-widest text-neutral-700">
+          checking…
+        </p>
+      </div>
+    )
+  }
+  if (!hasPosts) return <Navigate to="/" replace />
+  return <Leaderboard />
+}
+
 function Header() {
   const [menuOpen, setMenuOpen] = useState(false)
   const wrapperRef = useRef<HTMLElement>(null)
   const location = useLocation()
+  const { hasPosts, isLoading: hasPostsLoading } = useHasPosts()
+
+  // Hide post-gated nav links (currently just /leaderboard) while we
+  // don't yet know if posts exist, and after we know they don't. This
+  // avoids a flicker where the link appears for a tick and then
+  // vanishes once the gate query resolves.
+  const visibleNavLinks = NAV_LINKS.filter((l) => {
+    if (!POST_GATED_ROUTES.has(l.to)) return true
+    return !hasPostsLoading && hasPosts
+  })
 
   // Close on route change.
   useEffect(() => {
@@ -78,7 +115,7 @@ function Header() {
 
         {/* Desktop nav — hidden on mobile, replaced by hamburger. */}
         <nav className="hidden sm:flex flex-wrap gap-x-4 gap-y-1 text-xs uppercase tracking-widest">
-          {NAV_LINKS.map((l) => (
+          {visibleNavLinks.map((l) => (
             <Link key={l.to} to={l.to} className="rekt-link">
               {l.label}
             </Link>
@@ -116,7 +153,7 @@ function Header() {
           className="sm:hidden absolute right-0 top-full z-30 mt-1 w-56 border-2 border-black bg-[#f5f4ee] shadow-[4px_4px_0_0_#000]"
         >
           <ul className="divide-y-2 divide-black">
-            {NAV_LINKS.map((l) => (
+            {visibleNavLinks.map((l) => (
               <li key={l.to}>
                 <Link
                   to={l.to}
