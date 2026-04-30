@@ -1,4 +1,6 @@
 import { BecomeAPosterCallout } from '../components/BecomeAPosterCallout'
+import { AddressLabel } from '../components/AddressLabel'
+import { CopyableText } from '../components/CopyableText'
 
 /**
  * Single-page docs for integrators. Plain JSX (no MDX, no syntax
@@ -121,8 +123,11 @@ function Architecture() {
           <li>
             <Code>attackerReport(address)</Code> →{' '}
             <Inline>(int256 score, uint256 appearances)</Inline>.
-            Signed score from confirmer activity, plus how many posts
-            list this address as an attacker.
+            Signed score from confirmer activity (each{' '}
+            <Inline>Up</Inline> +1, each <Inline>Down</Inline> -1
+            across every active post that names the address), plus
+            how many active posts currently list it as an attacker.
+            Both decrement when a post is retracted.
           </li>
           <li>
             <Code>isVictim(address)</Code> →{' '}
@@ -311,14 +316,8 @@ function DappIntegration() {
         that fans out to every chain and sort-merges results
         automatically.
       </p>
-      <div className="border-2 border-black bg-neutral-50 px-4 py-3">
-        <p className="text-[10px] uppercase tracking-widest text-neutral-700 mb-1">
-          [endpoint]
-        </p>
-        <p className="font-mono text-sm break-all">
-          {PUBLIC_GRAPHQL_ENDPOINT}
-        </p>
-      </div>
+      <CopyableText label="[endpoint]" value={PUBLIC_GRAPHQL_ENDPOINT} />
+
 
       <CodeBlock>{`# fetch the latest 10 posts across all indexed chains
 query LatestPosts {
@@ -463,36 +462,39 @@ function Reference() {
 
       <SubSection heading="governance">
         <p className="text-sm leading-relaxed text-neutral-800 mb-3">
-          The Safe multisig that proposes + executes on the
-          TimelockController. CREATE2-deterministic — the{' '}
-          <strong className="font-black">same address on every chain</strong>{' '}
-          thatsRekt is deployed to. Every governance call (whitelist
-          additions/removals, contract upgrades) flows through the
-          7-day delay.
+          One Safe multisig governs every chain. It manages the
+          whitelist (adds + removes posters) and authorizes contract
+          upgrades. Both actions flow through a{' '}
+          <strong className="font-black">7-day timelock</strong>.
         </p>
-        <div className="border-2 border-black bg-neutral-50 px-4 py-3 font-mono text-xs sm:text-sm break-all">
-          {GOVERNANCE_MULTISIG_ADDRESS}
+        <div className="border-2 border-black bg-neutral-50 px-3 sm:px-4 py-3">
+          <p className="text-[10px] uppercase tracking-widest text-neutral-700 mb-1">
+            [governance multisig]
+          </p>
+          <AddressLabel
+            addr={GOVERNANCE_MULTISIG_ADDRESS}
+            chainSlug="ethereum"
+            full
+          />
         </div>
       </SubSection>
 
       <SubSection heading="public endpoints">
-        <ul className="space-y-2 text-sm">
-          <li>
-            <strong className="font-black">GraphQL gateway:</strong>{' '}
-            <Inline>{PUBLIC_GRAPHQL_ENDPOINT}</Inline>
-          </li>
-          <li>
-            <strong className="font-black">Source:</strong>{' '}
-            <a
-              href="https://github.com/JeronimoHoulin/thatsRekt"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="rekt-link"
-            >
-              github.com/JeronimoHoulin/thatsRekt ↗
-            </a>
-          </li>
-        </ul>
+        <CopyableText
+          label="[graphql gateway]"
+          value={PUBLIC_GRAPHQL_ENDPOINT}
+        />
+        <p className="text-sm pt-2">
+          <strong className="font-black">Source:</strong>{' '}
+          <a
+            href="https://github.com/JeronimoHoulin/thatsRekt"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="rekt-link"
+          >
+            github.com/JeronimoHoulin/thatsRekt ↗
+          </a>
+        </p>
       </SubSection>
     </Section>
   )
