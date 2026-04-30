@@ -1,4 +1,5 @@
 import { WhitelistersByChain } from '../components/WhitelistersByChain'
+import { BecomeAPosterCallout } from '../components/BecomeAPosterCallout'
 
 /**
  * Posters page — the directory of every whitelisted address that
@@ -28,6 +29,8 @@ export function Posters() {
           are a courtesy lookup.
         </p>
       </header>
+
+      <BecomeAPosterCallout />
 
       <WhitelistersByChain />
     </article>
