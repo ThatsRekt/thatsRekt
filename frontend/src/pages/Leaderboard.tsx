@@ -11,7 +11,7 @@ import { liveIndexedChains } from '../lib/chains'
 import { AddressLabel } from '../components/AddressLabel'
 import { EmptyState } from '../components/EmptyState'
 import { lookupContributorGlobal } from '../lib/contributors'
-import { relativeTime, twitterUrl } from '../lib/format'
+import { relativeTime } from '../lib/format'
 
 /**
  * Default chain for the leaderboard's explorer links. Posters are the
@@ -273,14 +273,14 @@ function ProposerTable({
 }
 
 /**
- * Poster cell — address is the primary visual element. Optional name
- * tag, status chip, joined-ago, and social links all sit on a small
- * metadata line below as casual annotations rather than a heading.
+ * Poster cell — address is the primary visual element. Below it, a
+ * single tight metadata line with just the essentials: status chip,
+ * optional name tag, and "joined X ago".
  *
- * When there's no label and no status (before the whitelisters query
- * resolves, or for posters that aren't on the whitelist anymore on
- * any indexed chain), the cell is just the address — same visual
- * density as the early leaderboard design.
+ * Tagline and social links (x / gh / site) deliberately omitted from
+ * this view — the leaderboard is a ranking table, not a poster bio,
+ * and the metadata line was widening the column past the address.
+ * For full poster bios see /posters.
  */
 function PosterCell({
   address,
@@ -291,7 +291,7 @@ function PosterCell({
 }) {
   const label = lookupContributorGlobal(address)
   const isActive = status?.isActive ?? false
-  const hasMetadata = Boolean(label || status)
+  const hasMetadata = Boolean(status || label?.name)
 
   return (
     <div className="flex flex-col gap-1 min-w-0">
@@ -303,53 +303,13 @@ function PosterCell({
       {hasMetadata && (
         <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-neutral-600">
           {status && <StatusChip isActive={isActive} />}
-          {/*
-            Casual inline annotation — mixed-case so the label text
-            reads naturally; the uppercase / tracking-widest treatment
-            is reserved for actual section headings, not row labels.
-          */}
           {label?.name && (
+            // Casual inline annotation — mixed-case, lighter weight.
+            // Reserves uppercase / tracking-widest for section headings.
             <span className="text-neutral-700">{label.name}</span>
           )}
           {status?.joinedAt && (
             <Sep>joined {relativeTime(status.joinedAt)}</Sep>
-          )}
-          {label?.tagline && <Sep>{label.tagline}</Sep>}
-          {label?.twitter && (
-            <Sep>
-              <a
-                href={twitterUrl(label.twitter)}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="rekt-link"
-              >
-                x ↗
-              </a>
-            </Sep>
-          )}
-          {label?.github && (
-            <Sep>
-              <a
-                href={`https://github.com/${label.github}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="rekt-link"
-              >
-                gh ↗
-              </a>
-            </Sep>
-          )}
-          {label?.url && (
-            <Sep>
-              <a
-                href={label.url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="rekt-link"
-              >
-                site ↗
-              </a>
-            </Sep>
           )}
         </div>
       )}
@@ -357,7 +317,7 @@ function PosterCell({
   )
 }
 
-/** Tiny dot separator before each metadata fragment after the first. */
+/** Tiny dot separator before a metadata fragment. */
 function Sep({ children }: { children: React.ReactNode }) {
   return (
     <span className="inline-flex items-baseline gap-2">
