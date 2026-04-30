@@ -71,9 +71,13 @@ MOCK_POSTS=(
     "Mock Yield — proxy admin grabs implementation slot|0xacacacacacacacacacacacacacacacacacacacac|0x7777777777777777777777777777777777777777|Proxy admin role was on a 1-of-1 multisig managed by a single dev. Compromise → upgraded impl to a drainer → executed in same tx."
 )
 
-# --- Helper: whitelist DEV_EOA via timelock impersonation -------------------
+# --- Helper: whitelist DEV_EOA directly (it holds the whitelistAdmin role) ---
+# Post the two-tier governance refactor, addWhitelisted is gated by the
+# whitelistAdmin role, not onlyOwner. In dev (DeployDev.s.sol) the dev EOA
+# IS the whitelistAdmin, so we can call directly with its key — no timelock
+# impersonation needed.
 whitelist_dev_eoa() {
-    local rpc="$1" proxy="$2" timelock="$3"
+    local rpc="$1" proxy="$2"
 
     local already
     already="$(cast call "$proxy" "isWhitelisted(address)(bool)" "$DEV_EOA" --rpc-url "$rpc" 2>/dev/null || echo "false")"
@@ -82,13 +86,8 @@ whitelist_dev_eoa() {
         return 0
     fi
 
-    # Fund the timelock so it can pay gas while impersonated.
-    cast rpc anvil_setBalance "$timelock" "0x56BC75E2D63100000" --rpc-url "$rpc" >/dev/null
-
-    cast rpc anvil_impersonateAccount "$timelock" --rpc-url "$rpc" >/dev/null
     cast send "$proxy" "addWhitelisted(address)" "$DEV_EOA" \
-        --from "$timelock" --unlocked --rpc-url "$rpc" >/dev/null
-    cast rpc anvil_stopImpersonatingAccount "$timelock" --rpc-url "$rpc" >/dev/null
+        --rpc-url "$rpc" --private-key "$DEV_KEY" >/dev/null
 
     local now_wl
     now_wl="$(cast call "$proxy" "isWhitelisted(address)(bool)" "$DEV_EOA" --rpc-url "$rpc")"
@@ -152,7 +151,6 @@ for entry in "${CHAINS[@]}"; do
     fi
 
     proxy="$(jq -r .proxy "$deployed_json")"
-    timelock="$(jq -r .timelock "$deployed_json")"
 
     echo
     echo "==> $slug ($rpc)"
@@ -164,7 +162,7 @@ for entry in "${CHAINS[@]}"; do
         exit 1
     fi
 
-    whitelist_dev_eoa "$rpc" "$proxy" "$timelock"
+    whitelist_dev_eoa "$rpc" "$proxy"
     seed_posts "$rpc" "$proxy" "$POSTS_PER_CHAIN" "$slug"
 
     # Sanity-check the post count moved.

@@ -39,7 +39,7 @@ contract DeployDevTest is Test {
         address impl = _predict(deployer.IMPL_SALT(), keccak256(type(ThatsRekt).creationCode));
         bytes memory tlInit = _timelockInitCode(DEV_EOA);
         address timelock = _predict(deployer.TIMELOCK_SALT(), keccak256(tlInit));
-        bytes memory proxyInit = _proxyInitCode(impl, timelock);
+        bytes memory proxyInit = _proxyInitCode(impl, timelock, DEV_EOA);
         address proxy = _predict(deployer.PROXY_SALT(), keccak256(proxyInit));
 
         assertGt(impl.code.length, 0, "impl not deployed");
@@ -49,6 +49,9 @@ contract DeployDevTest is Test {
         // Proxy is owned by the timelock — the EOA cannot upgrade directly,
         // it has to go through the 7-day delay just like production.
         assertEq(ThatsRekt(proxy).owner(), timelock, "proxy.owner != timelock");
+        // EOA holds the whitelistAdmin role — instant whitelist mgmt in dev,
+        // mirroring how the multisig holds it in prod.
+        assertEq(ThatsRekt(proxy).whitelistAdmin(), DEV_EOA, "whitelistAdmin != DEV_EOA");
 
         // EOA holds proposer/executor/canceller on the timelock.
         TimelockController tl = TimelockController(payable(timelock));
@@ -105,7 +108,7 @@ contract DeployDevTest is Test {
         address impl = _predict(deployer.IMPL_SALT(), keccak256(type(ThatsRekt).creationCode));
         bytes memory tlInit = _timelockInitCode(DEV_EOA);
         address timelock = _predict(deployer.TIMELOCK_SALT(), keccak256(tlInit));
-        bytes memory proxyInit = _proxyInitCode(impl, timelock);
+        bytes memory proxyInit = _proxyInitCode(impl, timelock, DEV_EOA);
 
         // Predict the same address twice — should match (sanity check
         // that prediction is pure).
@@ -119,7 +122,8 @@ contract DeployDevTest is Test {
         bytes memory otherTlInit = _timelockInitCode(otherEoa);
         address otherTimelock = _predict(deployer.TIMELOCK_SALT(), keccak256(otherTlInit));
         address otherProxy = _predict(
-            deployer.PROXY_SALT(), keccak256(_proxyInitCode(impl, otherTimelock))
+            deployer.PROXY_SALT(),
+            keccak256(_proxyInitCode(impl, otherTimelock, otherEoa))
         );
         assertTrue(proxy1 != otherProxy, "different owners should yield different proxies");
     }
@@ -145,8 +149,15 @@ contract DeployDevTest is Test {
         );
     }
 
-    function _proxyInitCode(address impl, address timelock) internal pure returns (bytes memory) {
-        bytes memory initCalldata = abi.encodeCall(ThatsRekt.initialize, (timelock));
+    function _proxyInitCode(address impl, address timelock, address whitelistAdmin)
+        internal
+        pure
+        returns (bytes memory)
+    {
+        bytes memory initCalldata = abi.encodeCall(
+            ThatsRekt.initialize,
+            (timelock, whitelistAdmin)
+        );
         return abi.encodePacked(type(ERC1967Proxy).creationCode, abi.encode(impl, initCalldata));
     }
 }

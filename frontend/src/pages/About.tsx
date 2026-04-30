@@ -73,10 +73,13 @@ function HowItWorks() {
           and confirm or refute each other's claims.
         </Bullet>
         <Bullet label="who runs it">
-          A multisig controls the list of authorized posters, gated by
-          a <strong className="font-black">7-day timelock</strong> —
-          if it misbehaves, anyone using the registry has a week to
-          back out before changes take effect.
+          A multisig manages the list of authorized posters{' '}
+          <strong className="font-black">instantly</strong> — a bad
+          actor can be kicked immediately. Contract upgrades are
+          separate and gated by a{' '}
+          <strong className="font-black">7-day timelock</strong>, so
+          integrators always have a week to back out of a malicious
+          upgrade.
         </Bullet>
         <Bullet label="who reads it">
           Anyone. Wallets, exchanges, and lending markets can ask

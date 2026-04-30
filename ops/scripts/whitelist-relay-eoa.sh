@@ -32,7 +32,6 @@ if [[ ! -f "$DEPLOYED_JSON" ]]; then
 fi
 
 PROXY="$(jq -r .proxy "$DEPLOYED_JSON")"
-TIMELOCK="$(jq -r .timelock "$DEPLOYED_JSON")"
 
 # --- Reuse existing EOA if it's still whitelisted ----------------------------
 if [[ -f "$RELAY_EOA_ADDR_FILE" && -f "$RELAY_EOA_KEY_FILE" ]]; then
@@ -56,15 +55,17 @@ else
     chmod 600 "$RELAY_EOA_KEY_FILE"
 fi
 
-# --- Fund the EOA + the timelock --------------------------------------------
+# --- Fund the new relay EOA -------------------------------------------------
 cast rpc anvil_setBalance "$RELAY_EOA" "0x56BC75E2D63100000" --rpc-url "$ANVIL_RPC" >/dev/null  # 100 ETH
-cast rpc anvil_setBalance "$TIMELOCK"  "0x56BC75E2D63100000" --rpc-url "$ANVIL_RPC" >/dev/null
 
-# --- Impersonate timelock + addWhitelisted -----------------------------------
-cast rpc anvil_impersonateAccount "$TIMELOCK" --rpc-url "$ANVIL_RPC" >/dev/null
+# --- addWhitelisted via the dev EOA (whitelist admin) ----------------------
+# After the two-tier governance refactor, addWhitelisted is gated by the
+# whitelistAdmin role rather than onlyOwner. In dev the dev EOA holds that
+# role (set in DeployDev.s.sol), so we can call directly with its key —
+# no timelock impersonation needed.
+DEV_KEY="${DEV_KEY:-0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80}"
 cast send "$PROXY" "addWhitelisted(address)" "$RELAY_EOA" \
-    --from "$TIMELOCK" --unlocked --rpc-url "$ANVIL_RPC" >/dev/null
-cast rpc anvil_stopImpersonatingAccount "$TIMELOCK" --rpc-url "$ANVIL_RPC" >/dev/null
+    --rpc-url "$ANVIL_RPC" --private-key "$DEV_KEY" >/dev/null
 
 # --- Verify ------------------------------------------------------------------
 WL="$(cast call "$PROXY" "isWhitelisted(address)(bool)" "$RELAY_EOA" --rpc-url "$ANVIL_RPC")"

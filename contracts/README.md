@@ -27,9 +27,14 @@ timelock.execute(proxy, 0, call, bytes32(0), salt);
 
 Integrators trust the multisig — and the 7-day delay — for upgrade authority. The honest-case guarantee is that **a malicious upgrade cannot land in less than 7 days**: even with multisig keys compromised, integrators have a full week to disengage, monitor, and migrate before a hostile implementation is in force. The multisig can also call `proxy.renounceOwnership()` via the timelock when the design stabilizes, which permanently freezes upgrades and reduces the contract back to the immutable model of v0.
 
+Whitelist mutations are deliberately NOT gated by the timelock. The multisig holds the `whitelistAdmin` role directly so it can revoke a misbehaving poster instantly. The same 7-day window protects against a compromised whitelistAdmin: the timelock owner can rotate the role via `setWhitelistAdmin`, and that rotation goes through the standard delay — so integrators have the same disengage window for "this whitelistAdmin is acting hostile" as they do for malicious upgrades.
+
 ## Architecture
 
-- **Owner** (the `TimelockController`, set on the proxy at `initialize`) — holds upgrade authority *and* whitelist write authority. The multisig drives both via the timelock: every owner-gated call (`addWhitelisted`, `removeWhitelisted`, `upgradeToAndCall`, etc.) is `schedule()` -> wait 7 days -> `execute()`. Owner is fully rotatable via the inherited OpenZeppelin `Ownable2StepUpgradeable` two-step (`transferOwnership` -> `acceptOwnership`), itself gated by the timelock.
+Two-tier governance:
+
+- **Owner** (the `TimelockController`, set on the proxy at `initialize`) — holds upgrade authority and the ability to rotate the whitelist admin via `setWhitelistAdmin`. Both are timelock-gated: `schedule()` -> wait 7 days -> `execute()`. Owner is fully rotatable via the inherited `Ownable2StepUpgradeable` two-step.
+- **Whitelist admin** (the multisig directly, set on the proxy at `initialize` and rotatable via owner-gated `setWhitelistAdmin`) — calls `addWhitelisted` / `removeWhitelisted` instantly, with no timelock. Posters need to be kickable the moment something goes wrong; waiting 7 days to remove a misbehaving operator isn't operationally viable.
 - **Whitelisted addresses** — can post alerts, vote up/down on others' alerts, retract / amend / extend their own posts. Cannot vote on own posts.
 - **Anyone** — can read posts, attacker scores, victim flags, voter sets, and the active-post linked list.
 

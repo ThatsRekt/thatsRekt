@@ -15,11 +15,20 @@ import {EnumerableSet} from "@openzeppelin/contracts/utils/structs/EnumerableSet
 ///         so any contract can plug in and inline-blacklist.
 /// @dev    UUPS upgradeable. The implementation lives behind an ERC1967Proxy;
 ///         the proxy is the canonical permanent address (cross-chain identical
-///         via CREATE2 with a constant salt). Upgrades are gated by the
-///         proxy's owner, which production deploys set to a TimelockController
-///         (multisig proposes -> 7-day delay -> multisig executes). See
-///         tasks/upgradeable-plan.md and the design notes in
-///         DAMMfi-knowledge-base for the full architecture.
+///         via CREATE2 with a constant salt).
+///
+///         Two-tier governance:
+///           - `owner` (TimelockController in prod): controls upgrades and
+///             rotation of the whitelist admin. Every `owner` call is
+///             timelock-gated (7-day delay).
+///           - `whitelistAdmin` (multisig in prod): adds/removes whitelisted
+///             posters directly, no delay. Posters need to be kickable
+///             immediately when an incident demands it.
+///
+///         The owner can revoke the whitelist admin role via
+///         `setWhitelistAdmin`, which is itself timelock-gated — so a
+///         compromised whitelist admin can be rotated out, but only after
+///         the standard 7-day disengage window for integrators.
 contract ThatsRekt is Initializable, Ownable2StepUpgradeable, UUPSUpgradeable {
     using EnumerableSet for EnumerableSet.AddressSet;
 
@@ -91,6 +100,19 @@ contract ThatsRekt is Initializable, Ownable2StepUpgradeable, UUPSUpgradeable {
 
     mapping(address => bool) public isWhitelisted;
 
+    /// @notice Address authorized to add/remove whitelisters directly,
+    ///         without going through the timelock. The multisig holds
+    ///         this role in production so posters can be added or
+    ///         removed instantly when an incident demands it.
+    /// @dev    Set on initialize; rotated via `setWhitelistAdmin`,
+    ///         which is `onlyOwner` and therefore still gated by the
+    ///         7-day timelock — integrators retain a week to disengage
+    ///         if governance moves whitelist authority somewhere
+    ///         hostile. The role itself is single-step (not 2-step)
+    ///         because it carries no upgrade authority; only the
+    ///         OwnableUpgradeable owner controls upgrades.
+    address public whitelistAdmin;
+
     uint256 public postCount;
     mapping(uint256 => Post) private _posts;
     mapping(uint256 => mapping(address => ConfirmDirection)) public confirmationOf;
@@ -120,6 +142,7 @@ contract ThatsRekt is Initializable, Ownable2StepUpgradeable, UUPSUpgradeable {
     //////////////////////////////////////////////////////////////*/
 
     event WhitelistUpdated(address indexed account, bool status);
+    event WhitelistAdminTransferred(address indexed previousAdmin, address indexed newAdmin);
     event PostCreated(
         uint256 indexed id,
         address indexed poster,
@@ -170,6 +193,7 @@ contract ThatsRekt is Initializable, Ownable2StepUpgradeable, UUPSUpgradeable {
     //////////////////////////////////////////////////////////////*/
 
     error NotWhitelisted();
+    error NotWhitelistAdmin();
     error PosterCannotConfirm();
     error PostIsRemoved();
     error PostNotFound();
@@ -200,24 +224,36 @@ contract ThatsRekt is Initializable, Ownable2StepUpgradeable, UUPSUpgradeable {
         _disableInitializers();
     }
 
-    /// @notice Proxy entry point. Sets the initial owner of the proxy and
-    ///         primes the inherited base contracts.
-    /// @param  initialOwner The address that will own upgrade authority on
-    ///                      the proxy. Production deploys set this to a
-    ///                      TimelockController (which itself is held by the
-    ///                      multisig). Reverts on `address(0)` via the
-    ///                      OwnableUpgradeable check.
+    /// @notice Proxy entry point. Sets the initial owner (upgrade
+    ///         authority, gated by the timelock in production) and the
+    ///         initial whitelist admin (multisig in production —
+    ///         instant whitelist mutations, no delay).
+    /// @param  initialOwner Holds upgrade authority on the proxy.
+    ///                      Production deploys set this to a
+    ///                      TimelockController. Reverts on
+    ///                      `address(0)` via OwnableUpgradeable.
+    /// @param  initialWhitelistAdmin Holds direct add/remove authority
+    ///                      over the whitelist. Production deploys set
+    ///                      this to the multisig. Cannot be zero.
     /// @dev    Idempotency is enforced by `Initializable` — re-calling
     ///         `initialize` on an already-initialized proxy reverts with
     ///         `InvalidInitialization()`. The owner role is fully
     ///         transferable via the inherited Ownable2Step two-step flow
-    ///         (`transferOwnership` -> `acceptOwnership`).
-    function initialize(address initialOwner) external initializer {
+    ///         (`transferOwnership` -> `acceptOwnership`); the
+    ///         whitelistAdmin role is rotated via the
+    ///         single-step `setWhitelistAdmin` (also onlyOwner).
+    function initialize(
+        address initialOwner,
+        address initialWhitelistAdmin
+    ) external initializer {
+        if (initialWhitelistAdmin == address(0)) revert ZeroAddress();
         __Ownable_init(initialOwner);
         __Ownable2Step_init();
         // UUPSUpgradeable has no `__UUPSUpgradeable_init` in OZ 5.x — it
         // holds no state, so there is nothing to wire up here. The
         // upgrade authority is enforced solely by `_authorizeUpgrade`.
+        whitelistAdmin = initialWhitelistAdmin;
+        emit WhitelistAdminTransferred(address(0), initialWhitelistAdmin);
     }
 
     /// @notice UUPS upgrade authorization hook. Only the owner (i.e. the
@@ -236,18 +272,48 @@ contract ThatsRekt is Initializable, Ownable2StepUpgradeable, UUPSUpgradeable {
         _;
     }
 
+    modifier onlyWhitelistAdmin() {
+        if (msg.sender != whitelistAdmin) revert NotWhitelistAdmin();
+        _;
+    }
+
     /*//////////////////////////////////////////////////////////////
-                          OWNER (whitelist mgmt)
+                       OWNER (governance role rotation)
     //////////////////////////////////////////////////////////////*/
 
-    function addWhitelisted(address account) external onlyOwner {
+    /// @notice Rotate the whitelist admin role. Only callable by the
+    ///         proxy owner — in production that's the
+    ///         TimelockController, so this rotation is gated by the
+    ///         7-day delay. Integrators retain the same disengage
+    ///         window they have on upgrades.
+    /// @param  newAdmin New holder of the whitelist admin role.
+    ///                  Cannot be zero (use a paused-multisig pattern
+    ///                  if you want to effectively suspend posting).
+    function setWhitelistAdmin(address newAdmin) external onlyOwner {
+        if (newAdmin == address(0)) revert ZeroAddress();
+        address prev = whitelistAdmin;
+        whitelistAdmin = newAdmin;
+        emit WhitelistAdminTransferred(prev, newAdmin);
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                     WHITELIST ADMIN (instant whitelist mgmt)
+    //////////////////////////////////////////////////////////////*/
+
+    /// @notice Add an address to the whitelist of authorized posters.
+    ///         Direct call from `whitelistAdmin` — no timelock delay.
+    function addWhitelisted(address account) external onlyWhitelistAdmin {
         if (!isWhitelisted[account]) {
             isWhitelisted[account] = true;
             emit WhitelistUpdated(account, true);
         }
     }
 
-    function removeWhitelisted(address account) external onlyOwner {
+    /// @notice Remove an address from the whitelist of authorized
+    ///         posters. Direct call from `whitelistAdmin` — no
+    ///         timelock delay, so a misbehaving poster can be kicked
+    ///         immediately.
+    function removeWhitelisted(address account) external onlyWhitelistAdmin {
         if (isWhitelisted[account]) {
             isWhitelisted[account] = false;
             emit WhitelistUpdated(account, false);

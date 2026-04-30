@@ -15,7 +15,13 @@ contract ThatsRektInvariants is Test {
     function setUp() public {
         governance = makeAddr("governance");
         ThatsRekt impl = new ThatsRekt();
-        bytes memory initCalldata = abi.encodeCall(ThatsRekt.initialize, (governance));
+        // Single principal holds both owner and whitelistAdmin in the
+        // invariant runner — the two-tier separation is exercised in
+        // unit tests, not invariant fuzzing.
+        bytes memory initCalldata = abi.encodeCall(
+            ThatsRekt.initialize,
+            (governance, governance)
+        );
         ERC1967Proxy proxy = new ERC1967Proxy(address(impl), initCalldata);
         reg = ThatsRekt(address(proxy));
 

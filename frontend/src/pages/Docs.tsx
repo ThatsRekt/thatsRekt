@@ -81,11 +81,17 @@ function HowItWorks() {
         identities are public on-chain.
       </SubSection>
       <SubSection heading="governance">
-        A multisig controls the whitelist and can upgrade the contract
-        — but every change goes through a{' '}
-        <strong className="font-black">7-day TimelockController</strong>.
-        Integrators always have a week to disengage if a malicious
-        change is queued.
+        Two-tier. The multisig manages the whitelist (adds + removes
+        posters) <strong className="font-black">instantly</strong> —
+        a misbehaving poster can be kicked the second it's noticed.
+        Contract upgrades are separate and gated by a{' '}
+        <strong className="font-black">7-day TimelockController</strong>,
+        so integrators always have a week to disengage if a hostile
+        upgrade is queued. The owner (timelock) can rotate who holds
+        whitelist authority via <Code>setWhitelistAdmin</Code>, and
+        that rotation is itself timelock-gated — so a compromised
+        whitelist admin can be revoked through the normal 7-day
+        window.
       </SubSection>
       <SubSection heading="integrators">
         Anyone reading the registry. Two main signals: an address's{' '}
@@ -463,9 +469,13 @@ function Reference() {
       <SubSection heading="governance">
         <p className="text-sm leading-relaxed text-neutral-800 mb-3">
           One Safe multisig governs every chain. It manages the
-          whitelist (adds + removes posters) and authorizes contract
-          upgrades. Both actions flow through a{' '}
-          <strong className="font-black">7-day timelock</strong>.
+          whitelist (adds + removes posters)
+          <strong className="font-black"> instantly</strong> —
+          posters need to be kickable the moment something goes wrong.
+          Contract upgrades are separate and gated by a{' '}
+          <strong className="font-black">7-day timelock</strong>,
+          giving integrators a week to disengage if a hostile upgrade
+          is queued.
         </p>
         <div className="border-2 border-black bg-neutral-50 px-3 sm:px-4 py-3">
           <p className="text-[10px] uppercase tracking-widest text-neutral-700 mb-1">

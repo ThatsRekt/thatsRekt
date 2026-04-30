@@ -22,12 +22,23 @@ contract ThatsRektTest is Test {
         dave  = makeAddr("dave");
     }
 
-    /// @dev Deploys a fresh impl + ERC1967Proxy initialized to `owner_`.
-    ///      Casting through the proxy address keeps every test call
-    ///      delegating to the impl while exercising the upgradeable layout.
+    /// @dev Deploys a fresh impl + ERC1967Proxy initialized so that
+    ///      `owner_` is BOTH the upgrade owner AND the whitelist admin.
+    ///      In production these are two separate principals (timelock
+    ///      and multisig) but for the per-feature unit tests it's
+    ///      simpler to have one address hold both. Tests that need to
+    ///      exercise the two-tier separation explicitly use
+    ///      `_deployProxiedTwoTier` below.
     function _deployProxied(address owner_) internal returns (ThatsRekt) {
+        return _deployProxiedTwoTier(owner_, owner_);
+    }
+
+    function _deployProxiedTwoTier(address owner_, address whitelistAdmin_) internal returns (ThatsRekt) {
         ThatsRekt impl = new ThatsRekt();
-        bytes memory initCalldata = abi.encodeCall(ThatsRekt.initialize, (owner_));
+        bytes memory initCalldata = abi.encodeCall(
+            ThatsRekt.initialize,
+            (owner_, whitelistAdmin_)
+        );
         ERC1967Proxy proxy = new ERC1967Proxy(address(impl), initCalldata);
         return ThatsRekt(address(proxy));
     }
@@ -1106,19 +1117,122 @@ contract ThatsRektTest is Test {
         assertEq(fresh.owner(), newOwner);
     }
 
+    function test_initialize_setsInitialWhitelistAdmin() public {
+        address newOwner = makeAddr("newOwner");
+        address newAdmin = makeAddr("newAdmin");
+        ThatsRekt fresh = _deployProxiedTwoTier(newOwner, newAdmin);
+        assertEq(fresh.whitelistAdmin(), newAdmin);
+    }
+
     function test_initialize_revertsOnZeroOwner() public {
         ThatsRekt impl = new ThatsRekt();
-        bytes memory initCalldata = abi.encodeCall(ThatsRekt.initialize, (address(0)));
-        // ERC1967Proxy delegates init in the constructor; a revert in
-        // the delegated call bubbles up as the proxy ctor revert.
+        bytes memory initCalldata = abi.encodeCall(
+            ThatsRekt.initialize,
+            (address(0), makeAddr("admin"))
+        );
         // OwnableInvalidOwner(address(0)) from OwnableUpgradeable.
         vm.expectRevert();
         new ERC1967Proxy(address(impl), initCalldata);
     }
 
-    /// Governance can be rotated via Ownable2Step's two-step transfer.
-    /// New owner inherits the full whitelist-management authority; old
-    /// owner is fully de-authorized once the transfer is accepted.
+    function test_initialize_revertsOnZeroWhitelistAdmin() public {
+        ThatsRekt impl = new ThatsRekt();
+        bytes memory initCalldata = abi.encodeCall(
+            ThatsRekt.initialize,
+            (makeAddr("owner"), address(0))
+        );
+        vm.expectRevert();
+        new ERC1967Proxy(address(impl), initCalldata);
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                  PHASE 11b - TWO-TIER WHITELIST ADMIN
+    //////////////////////////////////////////////////////////////*/
+
+    function test_twoTier_ownerAlone_cannotAddWhitelisted() public {
+        address timelock = makeAddr("timelock");
+        address multisig = makeAddr("multisig");
+        ThatsRekt fresh = _deployProxiedTwoTier(timelock, multisig);
+        vm.prank(timelock);
+        vm.expectRevert(ThatsRekt.NotWhitelistAdmin.selector);
+        fresh.addWhitelisted(alice);
+    }
+
+    function test_twoTier_whitelistAdmin_canAddRemove() public {
+        address timelock = makeAddr("timelock");
+        address multisig = makeAddr("multisig");
+        ThatsRekt fresh = _deployProxiedTwoTier(timelock, multisig);
+
+        vm.prank(multisig);
+        fresh.addWhitelisted(alice);
+        assertTrue(fresh.isWhitelisted(alice));
+
+        vm.prank(multisig);
+        fresh.removeWhitelisted(alice);
+        assertFalse(fresh.isWhitelisted(alice));
+    }
+
+    function test_setWhitelistAdmin_onlyOwner_canRotate() public {
+        address timelock = makeAddr("timelock");
+        address multisig = makeAddr("multisig");
+        address newMultisig = makeAddr("newMultisig");
+        ThatsRekt fresh = _deployProxiedTwoTier(timelock, multisig);
+
+        // Current admin can't self-rotate.
+        vm.prank(multisig);
+        vm.expectRevert();
+        fresh.setWhitelistAdmin(newMultisig);
+
+        // Random EOA can't either.
+        vm.prank(alice);
+        vm.expectRevert();
+        fresh.setWhitelistAdmin(newMultisig);
+
+        // Owner can.
+        vm.prank(timelock);
+        fresh.setWhitelistAdmin(newMultisig);
+        assertEq(fresh.whitelistAdmin(), newMultisig);
+
+        // Old admin no longer authorized; new admin is.
+        vm.prank(multisig);
+        vm.expectRevert(ThatsRekt.NotWhitelistAdmin.selector);
+        fresh.addWhitelisted(alice);
+
+        vm.prank(newMultisig);
+        fresh.addWhitelisted(alice);
+        assertTrue(fresh.isWhitelisted(alice));
+    }
+
+    function test_setWhitelistAdmin_revertsOnZero() public {
+        address timelock = makeAddr("timelock");
+        address multisig = makeAddr("multisig");
+        ThatsRekt fresh = _deployProxiedTwoTier(timelock, multisig);
+        vm.prank(timelock);
+        vm.expectRevert(ThatsRekt.ZeroAddress.selector);
+        fresh.setWhitelistAdmin(address(0));
+    }
+
+    function test_setWhitelistAdmin_emitsTransferred() public {
+        address timelock = makeAddr("timelock");
+        address multisig = makeAddr("multisig");
+        address newMultisig = makeAddr("newMultisig");
+        ThatsRekt fresh = _deployProxiedTwoTier(timelock, multisig);
+        vm.expectEmit(true, true, false, false);
+        emit ThatsRekt.WhitelistAdminTransferred(multisig, newMultisig);
+        vm.prank(timelock);
+        fresh.setWhitelistAdmin(newMultisig);
+    }
+
+    /// Governance (the upgrade-authority owner) can be rotated via
+    /// Ownable2Step's two-step transfer. The whitelistAdmin role is
+    /// orthogonal — it stays with whoever holds it until the owner
+    /// explicitly rotates via setWhitelistAdmin. This test exercises
+    /// the full intended flow:
+    ///   1. transfer + accept owner → upgrade authority moves
+    ///   2. old owner still has whitelist authority (the default
+    ///      test setup makes them the same address — see _deployProxied)
+    ///   3. new owner rotates whitelistAdmin via setWhitelistAdmin
+    ///   4. old owner is now fully de-authorized
     function test_governance_canBeRotated() public {
         address newGov = makeAddr("newGov");
 
@@ -1138,15 +1252,33 @@ contract ThatsRektTest is Test {
         assertEq(reg.owner(), newGov);
         assertEq(reg.pendingOwner(), address(0));
 
-        // 5. new owner can manage the whitelist
+        // 5. new owner does NOT inherit whitelist authority — that's a
+        //    separate role. The default test setup has owner ==
+        //    whitelistAdmin == governance, so after transferring the
+        //    owner role to newGov the OLD address (governance) still
+        //    holds whitelistAdmin.
         vm.prank(newGov);
+        vm.expectRevert(ThatsRekt.NotWhitelistAdmin.selector);
+        reg.addWhitelisted(alice);
+
+        vm.prank(governance);
         reg.addWhitelisted(alice);
         assertTrue(reg.isWhitelisted(alice));
 
-        // 6. old owner is fully de-authorized
-        vm.expectRevert();
+        // 6. new owner rotates whitelistAdmin to itself (or anywhere
+        //    else) using its owner authority
+        vm.prank(newGov);
+        reg.setWhitelistAdmin(newGov);
+
+        // 7. old governance is now fully de-authorized
         vm.prank(governance);
+        vm.expectRevert(ThatsRekt.NotWhitelistAdmin.selector);
         reg.addWhitelisted(bob);
+
+        // 8. new owner can now manage the whitelist
+        vm.prank(newGov);
+        reg.addWhitelisted(bob);
+        assertTrue(reg.isWhitelisted(bob));
     }
 
     /*//////////////////////////////////////////////////////////////

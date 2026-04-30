@@ -59,15 +59,28 @@ contract ThatsRektUpgradeTest is Test {
     function test_initialize_revertsOnSecondCall() public {
         ThatsRekt reg = _deployProxied(multisig);
         vm.expectRevert(Initializable.InvalidInitialization.selector);
-        reg.initialize(makeAddr("anotherOwner"));
+        reg.initialize(makeAddr("anotherOwner"), makeAddr("anotherAdmin"));
     }
 
     function test_initialize_revertsOnZeroOwner() public {
         ThatsRekt impl = new ThatsRekt();
-        bytes memory initCalldata = abi.encodeCall(ThatsRekt.initialize, (address(0)));
+        bytes memory initCalldata = abi.encodeCall(
+            ThatsRekt.initialize,
+            (address(0), makeAddr("admin"))
+        );
         // Proxy ctor delegate-calls initialize, which reverts in
         // OwnableUpgradeable; the revert bubbles up unchanged.
         vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableInvalidOwner.selector, address(0)));
+        new ERC1967Proxy(address(impl), initCalldata);
+    }
+
+    function test_initialize_revertsOnZeroWhitelistAdmin() public {
+        ThatsRekt impl = new ThatsRekt();
+        bytes memory initCalldata = abi.encodeCall(
+            ThatsRekt.initialize,
+            (makeAddr("owner"), address(0))
+        );
+        vm.expectRevert(ThatsRekt.ZeroAddress.selector);
         new ERC1967Proxy(address(impl), initCalldata);
     }
 
@@ -78,7 +91,7 @@ contract ThatsRektUpgradeTest is Test {
         // closes the well-known foothold of taking over the impl's
         // owner slot via a public initialize on the logic contract.
         vm.expectRevert(Initializable.InvalidInitialization.selector);
-        impl.initialize(multisig);
+        impl.initialize(multisig, multisig);
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -307,15 +320,24 @@ contract ThatsRektUpgradeTest is Test {
     }
 
     function _deployProxied(address owner_) internal returns (ThatsRekt) {
+        return _deployProxiedTwoTier(owner_, owner_);
+    }
+
+    function _deployProxiedTwoTier(address owner_, address whitelistAdmin_) internal returns (ThatsRekt) {
         ThatsRekt impl = new ThatsRekt();
-        bytes memory initCalldata = abi.encodeCall(ThatsRekt.initialize, (owner_));
+        bytes memory initCalldata = abi.encodeCall(
+            ThatsRekt.initialize,
+            (owner_, whitelistAdmin_)
+        );
         ERC1967Proxy proxy = new ERC1967Proxy(address(impl), initCalldata);
         return ThatsRekt(address(proxy));
     }
 
     function _deployTimelockedProxy() internal returns (ThatsRekt reg, TimelockController timelock) {
         // Multisig holds proposer + executor + canceller; admin = address(0).
-        // Mirrors the production Deploy.s.sol config exactly.
+        // Mirrors the production Deploy.s.sol config exactly:
+        //   - owner          = timelock (upgrade authority, 7-day gated)
+        //   - whitelistAdmin = multisig (instant whitelist mgmt)
         address[] memory proposers = new address[](1);
         proposers[0] = multisig;
         address[] memory executors = new address[](1);
@@ -323,12 +345,16 @@ contract ThatsRektUpgradeTest is Test {
         timelock = new TimelockController(TIMELOCK_DELAY, proposers, executors, address(0));
 
         ThatsRekt impl = new ThatsRekt();
-        bytes memory initCalldata = abi.encodeCall(ThatsRekt.initialize, (address(timelock)));
+        bytes memory initCalldata = abi.encodeCall(
+            ThatsRekt.initialize,
+            (address(timelock), multisig)
+        );
         ERC1967Proxy proxy = new ERC1967Proxy(address(impl), initCalldata);
         reg = ThatsRekt(address(proxy));
 
-        // Sanity: proxy is owned by the timelock, not by the multisig.
+        // Sanity: proxy is owned by the timelock; whitelist admin is multisig.
         assertEq(reg.owner(), address(timelock));
+        assertEq(reg.whitelistAdmin(), multisig);
     }
 
     /// @dev Schedule a single call from the timelock to `target`, warp past
@@ -348,24 +374,15 @@ contract ThatsRektUpgradeTest is Test {
         timelock.execute(target, 0, data, bytes32(0), OP_SALT);
     }
 
-    /// @dev Whitelisting is owner-gated, so it has to go through the
-    ///      timelock just like any other admin op in this setup. Each
-    ///      call uses a unique OP_SALT-derived salt so multiple
-    ///      sequential whitelists don't collide on the operation id.
+    /// @dev Whitelisting is now whitelistAdmin-gated, not owner-gated, so
+    ///      it's a direct call from the multisig — no timelock dance.
+    ///      Helper kept under its old name for call-site compatibility.
     function _whitelistViaTimelock(
         ThatsRekt reg,
-        TimelockController timelock,
+        TimelockController /* timelock — unused now */,
         address account
     ) internal {
-        bytes memory data = abi.encodeCall(reg.addWhitelisted, (account));
-        bytes32 salt = keccak256(abi.encode("whitelist", account));
-
         vm.prank(multisig);
-        timelock.schedule(address(reg), 0, data, bytes32(0), salt, TIMELOCK_DELAY);
-
-        vm.warp(block.timestamp + TIMELOCK_DELAY + 1);
-
-        vm.prank(multisig);
-        timelock.execute(address(reg), 0, data, bytes32(0), salt);
+        reg.addWhitelisted(account);
     }
 }

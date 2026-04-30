@@ -75,10 +75,15 @@ contract Deploy is Script {
         );
         address timelock = _create2(TIMELOCK_SALT, tlInitCode, "timelock");
 
-        // === 3. ERC1967Proxy. Owner = timelock, NOT the multisig directly.
+        // === 3. ERC1967Proxy.
+        //   - owner            = timelock (upgrade authority, 7-day gated)
+        //   - whitelistAdmin   = multisig directly (instant add/remove)
         // The proxy's init code embeds (impl, initCalldata); both parts are
         // identical across chains, so the CREATE2 address is identical.
-        bytes memory initCalldata = abi.encodeCall(ThatsRekt.initialize, (timelock));
+        bytes memory initCalldata = abi.encodeCall(
+            ThatsRekt.initialize,
+            (timelock, multisig)
+        );
         bytes memory proxyInitCode = abi.encodePacked(
             type(ERC1967Proxy).creationCode,
             abi.encode(impl, initCalldata)

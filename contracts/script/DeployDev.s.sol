@@ -86,10 +86,15 @@ contract DeployDev is Script {
         );
         address timelock = _create2(TIMELOCK_SALT, tlInitCode, "timelock");
 
-        // === 3. ERC1967Proxy. Owner = timelock (NOT the EOA directly) —
-        // upgrades still flow through the 7-day delay. The EOA proposes
-        // and executes; it cannot bypass the timelock.
-        bytes memory initCalldata = abi.encodeCall(ThatsRekt.initialize, (timelock));
+        // === 3. ERC1967Proxy.
+        //   - owner            = timelock (upgrade authority, 7-day gated)
+        //   - whitelistAdmin   = the EOA directly (instant whitelist mgmt
+        //                        — same operational model as prod where
+        //                        the multisig holds whitelist authority)
+        bytes memory initCalldata = abi.encodeCall(
+            ThatsRekt.initialize,
+            (timelock, owner)
+        );
         bytes memory proxyInitCode = abi.encodePacked(
             type(ERC1967Proxy).creationCode,
             abi.encode(impl, initCalldata)

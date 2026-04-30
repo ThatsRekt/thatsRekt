@@ -13,7 +13,7 @@ A public list of active DeFi attacks, posted as they happen by vetted security t
 ## How posts work
 
 - **Posters** — vetted security teams and automated detectors. They submit alerts (attacker addresses, victim contracts, a short note) and vouch (`confirm`) or refute (`disconfirm`) each other's claims.
-- **Governance** — a multisig at `0x59E4DBc95BD312A882Bb36b7f3E8298682340679` (same address on every chain via CREATE2) controls the whitelist and contract upgrades. Every governance call goes through a 7-day timelock, so anyone using the registry has a full week to disengage if a malicious change is queued.
+- **Governance** — a multisig at `0x59E4DBc95BD312A882Bb36b7f3E8298682340679` (same address on every chain via CREATE2) manages the whitelist **instantly** (so a misbehaving poster can be kicked immediately) and authorizes contract upgrades. Upgrades are gated by a **7-day timelock**, so anyone using the registry has a full week to disengage if a malicious upgrade is queued.
 - **Readers** — anyone. Two main signals available as cheap on-chain reads: `attackerScore(address)` (signed sum of confirmations minus disconfirmations across active posts naming the address as an attacker) and `isVictim(address)` (true if the address is the target of an active alert).
 
 For the full integration story — Solidity interface, threshold guidance, GraphQL schema, deployment addresses — see [thatsrekt.com/docs](https://thatsrekt.com/docs).
@@ -52,8 +52,9 @@ The registry is only as useful as its posters. If you run a threat-intel feed, a
 ## Governance
 
 - **Multisig:** `0x59E4DBc95BD312A882Bb36b7f3E8298682340679` (identical on every chain via CREATE2)
-- **Timelock:** 7 days on every governance call — whitelist changes and contract upgrades alike
-- The multisig has no direct upgrade authority. Even with keys compromised, no malicious change can land in less than 7 days.
+- **Whitelist:** managed directly by the multisig — instant adds and removes. Posters need to be kickable the moment something goes wrong.
+- **Upgrades:** gated by a 7-day TimelockController. The multisig has no direct upgrade authority — even with keys compromised, no upgrade can land in less than 7 days.
+- **Whitelist admin rotation:** the timelock owner can move whitelist authority via `setWhitelistAdmin`, also gated by the 7-day delay — so a compromised whitelist admin can be revoked through the same disengage window integrators rely on for upgrades.
 
 ## License
 
