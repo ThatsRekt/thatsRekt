@@ -54,10 +54,7 @@ export function BecomeAPosterCallout({
       </p>
       <p className="text-sm leading-relaxed text-neutral-800">
         Send a short pitch — track record, detection focus, and the
-        address you want whitelisted. We'll review and propose your
-        addition through the on-chain governance flow (subject to the
-        3-day add timelock so the rotation is publicly visible before
-        it lands).
+        address you want whitelisted. We'll review and add you.
       </p>
       <a
         href={mailto}

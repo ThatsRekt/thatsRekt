@@ -52,27 +52,32 @@ export function AddressLabel({ addr, chainSlug, full = false }: AddressLabelProp
       >
         {full ? addr : shortAddress(addr)}
       </button>
-      <button
-        type="button"
-        onClick={onCopy}
-        title={copied ? 'copied!' : 'copy address'}
-        aria-label="Copy address"
-        className="inline-flex items-center justify-center w-7 h-7 -my-1 text-neutral-500 hover:text-black active:text-red-600 active:bg-yellow-200 rounded transition-colors touch-manipulation"
-      >
-        {copied ? <CheckIcon /> : <CopyIcon />}
-      </button>
-      {explorerUrl && (
-        <a
-          href={explorerUrl}
-          target="_blank"
-          rel="noopener noreferrer"
-          title={`open on ${chain?.name ?? 'block explorer'}`}
-          aria-label="Open in block explorer"
-          className="inline-flex items-center justify-center w-7 h-7 -my-1 text-neutral-500 hover:text-red-600 active:text-red-700 rounded transition-colors touch-manipulation"
+      {/* Icons sit in a single nested flex row so they ALWAYS wrap as
+          a unit. Without this nesting, the outer flex-wrap could put
+          the copy icon on one line and the explorer icon on another. */}
+      <span className="inline-flex items-center gap-1.5 shrink-0 whitespace-nowrap">
+        <button
+          type="button"
+          onClick={onCopy}
+          title={copied ? 'copied!' : 'copy address'}
+          aria-label="Copy address"
+          className="inline-flex items-center justify-center w-7 h-7 -my-1 text-neutral-500 hover:text-black active:text-red-600 active:bg-yellow-200 rounded transition-colors touch-manipulation"
         >
-          <ExternalLinkIcon />
-        </a>
-      )}
+          {copied ? <CheckIcon /> : <CopyIcon />}
+        </button>
+        {explorerUrl && (
+          <a
+            href={explorerUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            title={`open on ${chain?.name ?? 'block explorer'}`}
+            aria-label="Open in block explorer"
+            className="inline-flex items-center justify-center w-7 h-7 -my-1 text-neutral-500 hover:text-red-600 active:text-red-700 rounded transition-colors touch-manipulation"
+          >
+            <ExternalLinkIcon />
+          </a>
+        )}
+      </span>
     </span>
   )
 }

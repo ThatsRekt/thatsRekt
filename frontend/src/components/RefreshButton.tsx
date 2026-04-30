@@ -1,20 +1,17 @@
 interface RefreshButtonProps {
   /** Triggered on click. Caller is responsible for triggering the actual refetch(es). */
   onRefresh: () => void
-  /** True while either the feed query or the indexer-status query is in flight. */
+  /** True while a refetch is in progress; renders a spinner instead of the refresh glyph. */
   isFetching: boolean
 }
 
 /**
- * Brutalist refresh control for the feed header.
+ * Compact icon-only refresh control for the feed header — sits at the
+ * far right of the FilterBar. Brutalist 1-px black border, square,
+ * inverts on hover to match the chain selector trigger.
  *
- * Visually matches the existing FilterBar buttons (border-2 border-black,
- * uppercase tracking-widest, no rounded corners). Disabled while a refetch
- * is in progress — clicking again would queue a duplicate request and the
- * spinner already conveys "working".
- *
- * No popup on success — the staleness indicator next to this button
- * updates and the data on screen reloads, which is feedback enough.
+ * Disabled while in flight; the spinner conveys progress. Label hidden
+ * visually but exposed via aria-label for screen readers.
  */
 export function RefreshButton({ onRefresh, isFetching }: RefreshButtonProps) {
   return (
@@ -25,15 +22,14 @@ export function RefreshButton({ onRefresh, isFetching }: RefreshButtonProps) {
       aria-label={isFetching ? 'refreshing feed' : 'refresh feed'}
       aria-busy={isFetching}
       className={
-        'inline-flex items-center gap-1.5 px-2 py-0.5 text-xs uppercase tracking-widest font-black ' +
-        'border-2 border-black hover:bg-black hover:text-[#f5f4ee] ' +
+        'inline-flex items-center justify-center w-7 h-7 ' +
+        'border border-black hover:bg-black hover:text-[#f5f4ee] ' +
         'focus:outline-none focus:ring-2 focus:ring-red-600 ' +
         'disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-current ' +
         'transition-colors'
       }
     >
       {isFetching ? <Spinner /> : <RefreshGlyph />}
-      <span>{isFetching ? 'refreshing…' : 'refresh'}</span>
     </button>
   )
 }

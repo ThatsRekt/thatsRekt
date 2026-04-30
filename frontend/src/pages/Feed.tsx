@@ -8,7 +8,6 @@ import { ArchiveDivider } from '../components/ArchiveDivider'
 import { EmptyState } from '../components/EmptyState'
 import { InfoPopover } from '../components/InfoPopover'
 import { RefreshButton } from '../components/RefreshButton'
-import { StalenessIndicator } from '../components/StalenessIndicator'
 import { useChainFilter } from '../hooks/useChainFilter'
 import { useArchiveToggle } from '../hooks/useArchiveToggle'
 import { useIndexerStatus } from '../hooks/useIndexerStatus'
@@ -45,6 +44,14 @@ export function Feed() {
     queryFn: ({ pageParam }) => fetchFeedPage(pageParam, PAGE_SIZE, chainSlugs),
     initialPageParam: 0,
     getNextPageParam: (lastPage) => lastPage.nextOffset ?? undefined,
+    // Manual refresh only — clicking Feed in the nav re-mounts this
+    // page; without this we'd refetch on every nav back to `/`. The
+    // refresh button (FilterBar) explicitly invalidates `['feed']`
+    // when the user wants fresh data.
+    staleTime: Infinity,
+    refetchOnMount: false,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
   })
 
   const indexerStatus = useIndexerStatus()
@@ -87,8 +94,6 @@ export function Feed() {
         onShowArchiveChange={setShowArchive}
         onRefresh={handleRefresh}
         isRefreshing={isRefreshing}
-        indexerStatus={indexerStatus.status}
-        indexerStatusError={indexerStatus.isError}
       />
       <div className="mt-6">
         <FeedBody
@@ -225,8 +230,6 @@ function FilterBar({
   onShowArchiveChange,
   onRefresh,
   isRefreshing,
-  indexerStatus,
-  indexerStatusError,
 }: {
   sort: SortOption
   onSortChange: (s: SortOption) => void
@@ -236,8 +239,6 @@ function FilterBar({
   onShowArchiveChange: (next: boolean) => void
   onRefresh: () => void
   isRefreshing: boolean
-  indexerStatus: import('../lib/queries').IndexerStatus | undefined
-  indexerStatusError: boolean
 }) {
   return (
     <div className="border-b border-black pb-3">
@@ -266,16 +267,16 @@ function FilterBar({
           </div>
         </div>
 
-        <ArchiveToggle value={showArchive} onChange={onShowArchiveChange} />
-
-        <ChainSelector value={chainFilter} onChange={onChainChange} />
+        {/* Right side of the primary row: chain selector then a small
+            icon-only refresh button at the far right. Archive toggle is
+            a content-mode switch and gets its own line below. */}
+        <div className="flex items-center gap-x-2">
+          <ChainSelector value={chainFilter} onChange={onChainChange} />
+          <RefreshButton onRefresh={onRefresh} isFetching={isRefreshing} />
+        </div>
       </div>
-      {/* Refresh row: explicit re-fetch control + indexer staleness signal.
-          Sits just under the filter bar so it shares the same horizontal
-          rule but doesn't compete with the filters for attention. */}
       <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1">
-        <RefreshButton onRefresh={onRefresh} isFetching={isRefreshing} />
-        <StalenessIndicator status={indexerStatus} isError={indexerStatusError} />
+        <ArchiveToggle value={showArchive} onChange={onShowArchiveChange} />
       </div>
     </div>
   )

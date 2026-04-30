@@ -8,7 +8,7 @@ import { Leaderboard } from './pages/Leaderboard'
 import { Docs } from './pages/Docs'
 import { IS_MOCK_MODE } from './lib/queries'
 import { useHasPosts } from './hooks/useHasPosts'
-import { PostAlertButton } from './components/PostAlertButton'
+import { PostAlertButton, AccountChip } from './components/PostAlertButton'
 
 const NAV_LINKS: { to: string; label: string }[] = [
   { to: '/', label: 'feed' },
@@ -114,7 +114,9 @@ function Header() {
           thats<span className="text-red-600">rekt</span>
         </Link>
 
-        {/* Desktop nav + post CTA — hidden on mobile, replaced by hamburger. */}
+        {/* Desktop nav + post CTA + connected account chip — hidden on
+            mobile, replaced by hamburger. AccountChip self-hides when
+            no wallet is connected. */}
         <div className="hidden sm:flex items-center gap-x-4">
           <nav className="flex flex-wrap gap-x-4 gap-y-1 text-xs uppercase tracking-widest">
             {visibleNavLinks.map((l) => (
@@ -124,6 +126,7 @@ function Header() {
             ))}
           </nav>
           <PostAlertButton variant="desktop" />
+          <AccountChip />
         </div>
 
         {/* Mobile hamburger — hidden on sm+. */}
