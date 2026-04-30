@@ -72,3 +72,16 @@ export function lookupContributor(
   const lc = address.toLowerCase()
   return PER_CHAIN[chainSlug]?.[lc] ?? GLOBAL[lc]
 }
+
+/**
+ * Chain-agnostic variant for views like the global leaderboard where
+ * we don't have per-chain context. Skips per-chain overrides and only
+ * checks the GLOBAL map. Use this when the address is treated as an
+ * identity across every chain (CREATE2 deterministic deploy → same
+ * EOA on every chain).
+ */
+export function lookupContributorGlobal(
+  address: string,
+): ContributorLabel | undefined {
+  return GLOBAL[address.toLowerCase()]
+}
