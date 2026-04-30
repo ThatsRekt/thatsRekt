@@ -3,6 +3,7 @@ import { Feed } from './pages/Feed'
 import { PostDetail } from './pages/PostDetail'
 import { Donate } from './pages/Donate'
 import { Contributors } from './pages/Contributors'
+import { Leaderboard } from './pages/Leaderboard'
 import { IS_MOCK_MODE } from './lib/queries'
 
 export function App() {
@@ -14,6 +15,7 @@ export function App() {
         <Routes>
           <Route path="/" element={<Feed />} />
           <Route path="/post/:id" element={<PostDetail />} />
+          <Route path="/leaderboard" element={<Leaderboard />} />
           <Route path="/contributors" element={<Contributors />} />
           <Route path="/donate" element={<Donate />} />
           <Route path="*" element={<NotFound />} />
@@ -33,6 +35,7 @@ function Header() {
         </Link>
         <nav className="flex gap-4 text-xs uppercase tracking-widest">
           <Link to="/" className="rekt-link">feed</Link>
+          <Link to="/leaderboard" className="rekt-link">leaderboard</Link>
           <Link to="/contributors" className="rekt-link">contributors</Link>
           <Link to="/donate" className="rekt-link text-red-600 font-black">
             donate

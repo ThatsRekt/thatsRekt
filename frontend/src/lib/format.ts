@@ -36,3 +36,12 @@ export function scoreColor(score: number): string {
   if (score < 0) return 'text-rose-400'
   return 'text-neutral-400'
 }
+
+/** Resolve an X / Twitter handle (or a full URL) to a profile URL. */
+export function twitterUrl(handleOrUrl: string): string {
+  if (handleOrUrl.startsWith('http://') || handleOrUrl.startsWith('https://')) {
+    return handleOrUrl
+  }
+  const cleaned = handleOrUrl.replace(/^@/, '')
+  return `https://x.com/${cleaned}`
+}
