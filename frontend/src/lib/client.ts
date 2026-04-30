@@ -18,7 +18,19 @@ const DEFAULT_PORT = '4350'
 
 function resolveEndpoint(): string {
   const explicit = import.meta.env.VITE_GRAPHQL_ENDPOINT
-  if (explicit) return explicit
+  if (explicit) {
+    // Relative path (e.g. `/graphql` baked into the prod build for
+    // same-origin reverse-proxy deployments) → absolute-ize against
+    // the current page origin. graphql-request's GraphQLClient calls
+    // `new URL(endpoint)` in its constructor, which throws on a bare
+    // path. Without this branch, the prod bundle dies at module init
+    // with "Failed to construct 'URL': Invalid URL".
+    if (explicit.startsWith('/')) {
+      if (typeof window === 'undefined') return `http://localhost${explicit}`
+      return `${window.location.origin}${explicit}`
+    }
+    return explicit
+  }
   if (typeof window === 'undefined') {
     // SSR / build time fallback (we don't actually SSR; this is just safe)
     return `http://localhost:${DEFAULT_PORT}/graphql`

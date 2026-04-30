@@ -119,21 +119,25 @@ function FeedBody({
     )
   }
 
-  if (error) {
-    return (
-      <EmptyState
-        title="couldn't load the feed."
-        hint={`is the indexer running? ${error.message}`}
-      />
-    )
-  }
-
   const liveEmpty = livePosts.length === 0
   const archiveEmpty = archivePosts.length === 0
 
-  // Both sections empty — single-block empty state with hint that
-  // depends on whether archive is hidden.
-  if (liveEmpty && archiveEmpty) {
+  // GraphQL error: surface it inline at the top, but DON'T hide the
+  // archive section. The archive is static frontend data and works
+  // even when the indexer is unreachable — letting users still browse
+  // historical incidents during an outage.
+  const errorBanner = error ? (
+    <div className="border-2 border-red-600 bg-red-50 px-4 py-3 mb-6 text-xs uppercase tracking-widest text-red-700">
+      <p className="font-black">couldn't load the live feed.</p>
+      <p className="mt-1 normal-case tracking-normal text-neutral-800">
+        Is the indexer running? <span className="font-mono">{error.message}</span>
+      </p>
+    </div>
+  ) : null
+
+  // Both sections empty AND no error — single-block empty state with
+  // hint that depends on whether archive is hidden.
+  if (!error && liveEmpty && archiveEmpty) {
     return (
       <EmptyState
         title="no posts yet."
@@ -160,10 +164,12 @@ function FeedBody({
 
   return (
     <div>
+      {errorBanner}
+
       {/* Launch-day affordance: live empty + archive on + archive
           non-empty → tell the user the archive is what they're seeing.
           Independent of section order — just a top-of-page hint. */}
-      {liveEmpty && showArchive && !archiveEmpty && (
+      {!error && liveEmpty && showArchive && !archiveEmpty && (
         <p className="mb-6 text-xs uppercase tracking-widest text-neutral-700">
           no on-chain posts yet · showing pre-platform archive
         </p>
