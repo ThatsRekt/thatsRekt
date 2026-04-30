@@ -44,6 +44,14 @@ export function Feed() {
     queryFn: ({ pageParam }) => fetchFeedPage(pageParam, PAGE_SIZE, chainSlugs),
     initialPageParam: 0,
     getNextPageParam: (lastPage) => lastPage.nextOffset ?? undefined,
+    // Manual refresh only — clicking Feed in the nav re-mounts this
+    // page; without this we'd refetch on every nav back to `/`. The
+    // refresh button (FilterBar) explicitly invalidates `['feed']`
+    // when the user wants fresh data.
+    staleTime: Infinity,
+    refetchOnMount: false,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
   })
 
   const indexerStatus = useIndexerStatus()
