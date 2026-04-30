@@ -1,8 +1,7 @@
 import { Routes, Route, Link } from 'react-router-dom'
 import { Feed } from './pages/Feed'
 import { PostDetail } from './pages/PostDetail'
-import { Donate } from './pages/Donate'
-import { Contributors } from './pages/Contributors'
+import { About } from './pages/About'
 import { Leaderboard } from './pages/Leaderboard'
 import { IS_MOCK_MODE } from './lib/queries'
 
@@ -16,8 +15,7 @@ export function App() {
           <Route path="/" element={<Feed />} />
           <Route path="/post/:id" element={<PostDetail />} />
           <Route path="/leaderboard" element={<Leaderboard />} />
-          <Route path="/contributors" element={<Contributors />} />
-          <Route path="/donate" element={<Donate />} />
+          <Route path="/about" element={<About />} />
           <Route path="*" element={<NotFound />} />
         </Routes>
       </main>
@@ -36,10 +34,7 @@ function Header() {
         <nav className="flex gap-4 text-xs uppercase tracking-widest">
           <Link to="/" className="rekt-link">feed</Link>
           <Link to="/leaderboard" className="rekt-link">leaderboard</Link>
-          <Link to="/contributors" className="rekt-link">contributors</Link>
-          <Link to="/donate" className="rekt-link text-red-600 font-black">
-            donate
-          </Link>
+          <Link to="/about" className="rekt-link">about</Link>
           <a
             href="https://github.com/JeronimoHoulin/thatsRekt"
             target="_blank"
