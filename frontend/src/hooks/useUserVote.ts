@@ -1,10 +1,10 @@
 import { useReadContract } from 'wagmi'
-import { base } from 'wagmi/chains'
 import {
   ConfirmDirection,
-  REGISTRY_PROXY_ADDRESS,
+  registryAddress,
   registryAbi,
   type ConfirmDirectionValue,
+  type SupportedChainId,
 } from '../lib/contracts'
 
 /**
@@ -14,9 +14,11 @@ import {
  *   - 1 (Up)
  *   - 2 (Down)
  *
- * Pinned to Base (the only chain the registry currently lives on). The
- * hook auto-disables when no address is given (so it doesn't fire before
- * the wallet is connected).
+ * Parameterised on `chainId` so the read hits the registry deployed on
+ * the same chain as the post being voted on (Base mainnet posts → Base
+ * proxy; Base Sepolia posts → Sepolia proxy). The hook auto-disables
+ * when no address is given so it doesn't fire before the wallet is
+ * connected.
  *
  * Caching:
  *   - 5s `staleTime` so consecutive renders / mounts of the same post-card
@@ -27,17 +29,18 @@ import {
  *     calling user themselves is one-block (mining time), not 30s.
  */
 export function useUserVote(
+  chainId: SupportedChainId,
   postId: bigint | undefined,
   address: `0x${string}` | undefined,
 ) {
   const enabled = postId !== undefined && !!address
 
   const query = useReadContract({
-    address: REGISTRY_PROXY_ADDRESS,
+    address: registryAddress(chainId),
     abi: registryAbi,
     functionName: 'confirmationOf',
     args: enabled ? [postId, address] : undefined,
-    chainId: base.id,
+    chainId,
     query: {
       enabled,
       staleTime: 5_000,

@@ -1,10 +1,10 @@
 import { useCallback } from 'react'
 import { useWriteContract, useWaitForTransactionReceipt } from 'wagmi'
-import { base } from 'wagmi/chains'
 import {
-  REGISTRY_PROXY_ADDRESS,
+  registryAddress,
   registryAbi,
   type ConfirmDirectionValue,
+  type SupportedChainId,
 } from '../lib/contracts'
 
 /**
@@ -29,14 +29,17 @@ export type ConfirmAction =
  *   2. After broadcast, `useWaitForTransactionReceipt` polls. While
  *      polling, `isMining` is true. On success, `isSuccess` flips true.
  *
- * Pinned to Base. The wallet may need to switch chains; wagmi handles
- * that prompt automatically when `chainId` is provided.
+ * The hook is parameterised on `chainId` (one of `SupportedChainId`) so the
+ * tx lands on the correct registry contract — voting on a Base Sepolia
+ * post must hit the Sepolia proxy, not the Base mainnet one. The wallet
+ * may need to switch chains; wagmi handles that prompt automatically when
+ * `chainId` is provided.
  *
  * The hook does NOT invalidate any TanStack queries on its own — the
  * caller passes its own success callback because cache shape (which
  * `['feed', ...]` keys exist) is owned by the page, not this hook.
  */
-export function useConfirmPost() {
+export function useConfirmPost(chainId: SupportedChainId) {
   const {
     writeContract,
     data: hash,
@@ -51,12 +54,21 @@ export function useConfirmPost() {
     error: receiptError,
   } = useWaitForTransactionReceipt({
     hash,
-    chainId: base.id,
+    chainId,
   })
 
   const submit = useCallback(
     (params: { postId: bigint; action: ConfirmAction }) => {
       const { postId, action } = params
+      const address = registryAddress(chainId)
+      // `chainId` is typed as `SupportedChainId` (a literal union over the
+      // keys of REGISTRY_PROXIES), so `registryAddress` is guaranteed to
+      // resolve. The undefined branch is a defensive belt-and-suspenders
+      // — if a caller bypasses the type with a cast, fail loud rather
+      // than fire a tx with `address: undefined`.
+      if (!address) {
+        throw new Error(`No registry deployed for chainId ${chainId}`)
+      }
       // The `ConfirmAction` type already excludes `direction: None` from
       // the `vote` variant (`Exclude<…, 0>`); the contract would revert
       // anyway on `InvalidConfirmDirection`. To clear a vote, callers
@@ -64,24 +76,24 @@ export function useConfirmPost() {
 
       if (action.kind === 'vote') {
         writeContract({
-          address: REGISTRY_PROXY_ADDRESS,
+          address,
           abi: registryAbi,
           functionName: 'confirm',
           args: [postId, action.direction],
-          chainId: base.id,
+          chainId,
         })
         return
       }
 
       writeContract({
-        address: REGISTRY_PROXY_ADDRESS,
+        address,
         abi: registryAbi,
         functionName: 'unconfirm',
         args: [postId],
-        chainId: base.id,
+        chainId,
       })
     },
-    [writeContract],
+    [writeContract, chainId],
   )
 
   return {

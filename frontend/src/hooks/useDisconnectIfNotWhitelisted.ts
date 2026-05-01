@@ -19,14 +19,29 @@ import { useIsWhitelisted } from './useIsWhitelisted'
  */
 export function useDisconnectIfNotWhitelisted() {
   const { address, isConnected } = useAccount()
-  const { isWhitelisted, isLoading, isError } = useIsWhitelisted(address)
+  const { isWhitelisted, isLoading, isFetching, isError } =
+    useIsWhitelisted(address)
   const { disconnect } = useDisconnect()
 
   useEffect(() => {
     if (!isConnected || !address) return
-    if (isLoading || isError) return // wait for a settled answer
+    // Wait for a fully settled answer. `isLoading` only covers the
+    // initial fetch — during a background refetch (RPC retry, polling
+    // tick, refocus) TanStack Query temporarily holds `data: undefined`
+    // with `{ isLoading: false, isFetching: true }`. Without the
+    // `isFetching` guard, the previous render's truthy-by-accident path
+    // could trigger a wrongful disconnect mid-refetch.
+    if (isLoading || isFetching || isError) return
     if (isWhitelisted) return // happy path
     // Connected + read settled false → disconnect.
     disconnect()
-  }, [address, isConnected, isLoading, isError, isWhitelisted, disconnect])
+  }, [
+    address,
+    isConnected,
+    isLoading,
+    isFetching,
+    isError,
+    isWhitelisted,
+    disconnect,
+  ])
 }

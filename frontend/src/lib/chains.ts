@@ -149,6 +149,20 @@ export const getChainBySlug = (slug: string): FrontendChain | undefined =>
   (CHAINS as Record<string, FrontendChain | undefined>)[slug]
 
 /**
+ * Resolve a chain slug to its numeric chain id.
+ *
+ * Returns `undefined` for unknown slugs — callers must handle that case
+ * (typically by skipping the chain-pinned action / read entirely).
+ *
+ * Used by components that only know the slug (e.g. PostDetail derives it
+ * from the composite id) but need to thread `chainId` through to wagmi
+ * hooks (`useReadContract`, `useWriteContract`) so reads/writes land on
+ * the correct registry contract.
+ */
+export const chainIdFromSlug = (slug: string): number | undefined =>
+  getChainBySlug(slug)?.chainId
+
+/**
  * Local Anvil forks are useful in dev (instant, free, exposes the full
  * cross-chain story) but should never appear in a production build —
  * end users have no use for chains that don't exist outside one

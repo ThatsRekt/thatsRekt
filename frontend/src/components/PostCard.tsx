@@ -6,6 +6,10 @@ import {
   type ArchivePost,
 } from '../lib/archive'
 import { relativeTime } from '../lib/format'
+import {
+  registryAddress,
+  type SupportedChainId,
+} from '../lib/contracts'
 import { AddressLabel } from './AddressLabel'
 import { ChainBadge } from './ChainBadge'
 import { ConfirmVoteButtons } from './ConfirmVoteButtons'
@@ -41,10 +45,6 @@ function LivePostCard({ post }: { post: FeedPost }) {
   const body = post.note?.trim()
   // The on-chain `confirm` / `unconfirm` calls take the bare uint256 id,
   // not our composite `{slug}-{onchainId}`. Extract the on-chain part.
-  // Currently the registry is only deployed on Base, so non-base posts
-  // have no working confirm path; we still split (it's pure) and let
-  // the buttons render — they'll succeed once those chains go live and
-  // this component is upgraded to chainId-aware routing.
   const { onchainId } = splitCompositeId(post.id)
   const numericPostId = (() => {
     try {
@@ -53,6 +53,15 @@ function LivePostCard({ post }: { post: FeedPost }) {
       return null
     }
   })()
+  // Vote buttons must hit the registry on the post's own chain. We only
+  // render them when the post lives on a chain with a deployed registry
+  // (today: Base mainnet + Base Sepolia). Posts on archive-only chains
+  // skip the buttons entirely — there's no contract to call.
+  const postChainId = post.chain?.chainId
+  const voteChainId: SupportedChainId | null =
+    postChainId !== undefined && registryAddress(postChainId) !== undefined
+      ? (postChainId as SupportedChainId)
+      : null
   // Prefer the clean `/post/:chain/:postId` URL for share-friendliness
   // (Mesh's SSR OG handler matches that shape). Fall back to the legacy
   // composite-id path if we somehow don't know the chain — the route
@@ -97,8 +106,9 @@ function LivePostCard({ post }: { post: FeedPost }) {
       </div>
 
       <div className="flex flex-wrap items-center gap-3">
-        {numericPostId !== null && (
+        {numericPostId !== null && voteChainId !== null && (
           <ConfirmVoteButtons
+            chainId={voteChainId}
             postId={numericPostId}
             upCount={post.confirmations}
             downCount={post.disconfirmations}

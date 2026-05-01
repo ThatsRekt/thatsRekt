@@ -10,6 +10,11 @@ import { ShareButton } from '../components/ShareButton'
 import { ConfirmVoteButtons } from '../components/ConfirmVoteButtons'
 import { Timeline } from '../components/Timeline'
 import { EmptyState } from '../components/EmptyState'
+import { chainIdFromSlug } from '../lib/chains'
+import {
+  registryAddress,
+  type SupportedChainId,
+} from '../lib/contracts'
 import { formatTimestamp, relativeTime } from '../lib/format'
 
 // Extract chain slug from a composite post id (`{slug}-{onchainId}`).
@@ -164,7 +169,9 @@ function LivePostDetail({ postId }: { postId: string }) {
       {/* Vote action bar — same component the feed uses, so the cache
           invalidation + tx flow is shared. The hooks for this component
           handle whitelist gating internally. Numeric postId is the
-          on-chain part of the composite id (`base-2` → `2n`). */}
+          on-chain part of the composite id (`base-2` → `2n`). The
+          chainId is derived from the post's slug — buttons only render
+          when the post lives on a chain with a deployed registry. */}
       {(() => {
         const onchainPart = chainSlug
           ? data.id.slice(chainSlug.length + 1)
@@ -176,9 +183,15 @@ function LivePostDetail({ postId }: { postId: string }) {
           numericPostId = null
         }
         if (numericPostId === null) return null
+        if (!chainSlug) return null
+        const resolvedChainId = chainIdFromSlug(chainSlug)
+        if (resolvedChainId === undefined) return null
+        if (registryAddress(resolvedChainId) === undefined) return null
+        const voteChainId = resolvedChainId as SupportedChainId
         return (
           <div className="flex flex-wrap items-center gap-3">
             <ConfirmVoteButtons
+              chainId={voteChainId}
               postId={numericPostId}
               upCount={data.confirmations}
               downCount={data.disconfirmations}

@@ -4,7 +4,11 @@ import { useQueryClient } from '@tanstack/react-query'
 import { useIsWhitelisted } from '../hooks/useIsWhitelisted'
 import { useUserVote } from '../hooks/useUserVote'
 import { useConfirmPost, type ConfirmAction } from '../hooks/useConfirmPost'
-import { ConfirmDirection, type ConfirmDirectionValue } from '../lib/contracts'
+import {
+  ConfirmDirection,
+  type ConfirmDirectionValue,
+  type SupportedChainId,
+} from '../lib/contracts'
 import { WhitelistGateModal } from './WhitelistGateModal'
 
 /**
@@ -39,11 +43,20 @@ import { WhitelistGateModal } from './WhitelistGateModal'
  * sharp corners). Active vote is filled (green for Up, red for Down).
  */
 export function ConfirmVoteButtons({
+  chainId,
   postId,
   upCount,
   downCount,
   posterAddress,
 }: {
+  /**
+   * Chain on which the post lives. All on-chain reads/writes (the
+   * confirm tx, the user-vote read, etc.) must target this chain's
+   * registry — voting on a Base Sepolia post must hit the Sepolia
+   * proxy, not the Base mainnet one. Caller derives this from the
+   * post's chain (`post.chain.chainId`).
+   */
+  chainId: SupportedChainId
   /**
    * The on-chain `uint256` post id. The PostCard composite id is
    * `{slug}-{onchainId}`; the caller must split it before passing this
@@ -68,9 +81,9 @@ export function ConfirmVoteButtons({
     isUp,
     isDown,
     refetch: refetchUserVote,
-  } = useUserVote(postId, address)
+  } = useUserVote(chainId, postId, address)
   const { submit, isBroadcasting, isMining, isSuccess, error, hash, reset } =
-    useConfirmPost()
+    useConfirmPost(chainId)
 
   // Self-vote detection: connected + connected addr is the post author.
   // Address comparison is case-insensitive (poster comes from the indexer
@@ -112,8 +125,23 @@ export function ConfirmVoteButtons({
   // a defensive cutoff in case the indexer is unreachable or the tx
   // hash never resolves through the upstream chain — at that point we
   // give up and show whatever props say.
+  //
+  // The interval id lives in a ref (not a closure-local variable) so
+  // re-fires of this effect — triggered when callbacks like
+  // `refetchUserVote` get a new identity each render — can clear the
+  // PRIOR interval before starting a new one. Without this, the per-hash
+  // guard short-circuits and the prior interval keeps ticking alongside
+  // a brand new one, multiplying RPC load.
   const lastSuccessHash = useRef<`0x${string}` | undefined>(undefined)
+  const pollIntervalRef = useRef<number | null>(null)
   useEffect(() => {
+    // Always clear any prior interval first — guarantees at most one
+    // poller is active regardless of how many times this effect re-fires.
+    if (pollIntervalRef.current !== null) {
+      window.clearInterval(pollIntervalRef.current)
+      pollIntervalRef.current = null
+    }
+
     if (!isSuccess || !hash || lastSuccessHash.current === hash) return
     lastSuccessHash.current = hash
     setPendingDirection(null)
@@ -129,9 +157,12 @@ export function ConfirmVoteButtons({
     }
     tick() // immediate first tick
 
-    const intervalId = window.setInterval(() => {
+    pollIntervalRef.current = window.setInterval(() => {
       if (Date.now() - startedAt > POLL_CUTOFF_MS) {
-        window.clearInterval(intervalId)
+        if (pollIntervalRef.current !== null) {
+          window.clearInterval(pollIntervalRef.current)
+          pollIntervalRef.current = null
+        }
         // Cutoff hit. Drop the overlay so the UI reflects whatever the
         // server actually returned — even if it disagrees with our
         // prediction. Better to show stale-but-real than a hopeful lie.
@@ -139,13 +170,16 @@ export function ConfirmVoteButtons({
         return
       }
       tick()
-    }, POLL_INTERVAL_MS)
+    }, POLL_INTERVAL_MS) as unknown as number
 
     // Don't `reset()` synchronously — wagmi will surface `isSuccess: true`
     // again next render if we did, fighting our guard. Defer.
     const tReset = window.setTimeout(() => reset(), 0)
     return () => {
-      window.clearInterval(intervalId)
+      if (pollIntervalRef.current !== null) {
+        window.clearInterval(pollIntervalRef.current)
+        pollIntervalRef.current = null
+      }
       window.clearTimeout(tReset)
     }
   }, [isSuccess, hash, queryClient, refetchUserVote, reset])

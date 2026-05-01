@@ -22,8 +22,10 @@ import { useEffect, useState } from 'react'
  * Implementation note: `navigator.clipboard.writeText` requires a
  * secure context (HTTPS or localhost) and a transient user-gesture.
  * Click handlers count as a gesture; serving over HTTPS in prod means
- * the API is available. On insecure pages (rare here) the catch path
- * surfaces a fallback.
+ * the API is always available. The historical `document.execCommand`
+ * fallback was deprecated by every major browser and never fired in
+ * production (HTTPS), so we drop it — on the rare insecure page we
+ * surface `[copy failed]` and let the user copy manually.
  */
 export function ShareButton({
   path,
@@ -59,28 +61,14 @@ export function ShareButton({
     const url = `${origin}${path}`
 
     try {
-      if (!navigator.clipboard) throw new Error('clipboard api unavailable')
       await navigator.clipboard.writeText(url)
       setCopied(true)
       setError(null)
-    } catch (err) {
-      // Insecure context / older browser fallback — drop the URL into
-      // a hidden textarea + execCommand. Last-ditch; modern Chrome /
-      // Safari / Firefox in HTTPS won't hit this.
-      try {
-        const ta = document.createElement('textarea')
-        ta.value = url
-        ta.style.position = 'fixed'
-        ta.style.opacity = '0'
-        document.body.appendChild(ta)
-        ta.select()
-        document.execCommand('copy')
-        document.body.removeChild(ta)
-        setCopied(true)
-        setError(null)
-      } catch {
-        setError('copy failed')
-      }
+    } catch {
+      // Insecure context (no `navigator.clipboard`) or the user denied
+      // permission. Surface a brief error chip; the user can still
+      // copy from the address bar / share menu.
+      setError('copy failed')
     }
   }
 
