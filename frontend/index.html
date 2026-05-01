@@ -35,6 +35,31 @@
       name="twitter:description"
       content="Public-good on-chain registry of hack alerts for EVM chains."
     />
+
+    <!--
+      JSON-LD structured data — gives Google / Bing / DuckDuckGo a
+      machine-readable summary for rich-result eligibility. WebSite
+      schema lives on every page (no harm) but is most useful on the
+      homepage for sitelinks search box. Per-post pages would benefit
+      from Article schema; that's a follow-up via Mesh's SSR.
+    -->
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "WebSite",
+        "name": "thatsRekt",
+        "alternateName": "ThatsRekt",
+        "description": "Public-good on-chain registry of hack alerts for EVM chains. Whitelisted security teams post structured alerts the moment they spot a live exploit.",
+        "url": "https://thatsrekt.com/",
+        "inLanguage": "en",
+        "license": "https://opensource.org/licenses/MIT",
+        "sameAs": [
+          "https://github.com/JeronimoHoulin/thatsRekt",
+          "https://x.com/ThatsRekt_",
+          "https://t.me/thatsrekt_alerts"
+        ]
+      }
+    </script>
   </head>
   <body>
     <div id="root"></div>

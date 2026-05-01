@@ -1,0 +1,74 @@
+# thatsRekt
+
+> A public-good on-chain registry of hack alerts for EVM blockchains. Whitelisted security teams post structured alerts the moment they spot a live exploit — attacker addresses, victim contracts, free-form context. Other whitelisters race to vouch (`confirm`) or refute (`disconfirm`) on-chain. Wallets, DEXes, bridges, and lending markets read the registry directly to protect their users in real time.
+
+The registry is the canonical source. The web app and Telegram channel are convenience surfaces over the same on-chain data — anyone running an indexer can build their own.
+
+## Architecture
+
+- **Smart contracts.** Single proxy per chain, deployed via CREATE2 at the same address across chains when initialized with the same `(governance, whitelist)` triple. Posters call `post(title, attackers[], victims[], note, attackedAt)` and emit `PostCreated`. Confirmations are first-class: `confirm(postId, direction)` and `unconfirm(postId)` push integers up/down per post. Three-role governance (Owner / WhitelistAdmin / WhitelistRemover) with asymmetric timelocks — adds are 3-day, instant kill-switch on removes.
+- **Indexer.** Subsquid processor per chain, mirrored Postgres schema across chains. A Mesh (graphql-tools) gateway stitches per-chain squids into a unified `posts(limit, offset, chains)` query.
+- **Web app.** Vite + React SPA pulling from the unified GraphQL endpoint. Posts are rendered on a feed with chain badges, attacker/victim counts, and an on-chain confirmation score. Per-post detail pages have rich Markdown rendering of the `note` body.
+- **Telegram bot.** A 256MB Fargate Go service polls the GraphQL endpoint every 10 seconds and broadcasts new posts to `@thatsrekt_alerts`. Inline ✓/✗ vote buttons are cosmetic — on-chain confirmations come from whitelisted addresses calling `confirm(...)` directly.
+
+## Key URLs
+
+- Live feed: https://thatsrekt.com/
+- Per-post detail: https://thatsrekt.com/post/{chainSlug}/{onchainId} (e.g. `/post/base/1`)
+- About + how it works: https://thatsrekt.com/about
+- Active posters list: https://thatsrekt.com/posters
+- Docs (architecture, integration guide, deployments table): https://thatsrekt.com/docs
+- Public GraphQL endpoint: https://thatsrekt.com/graphql
+- Telegram alerts channel: https://t.me/thatsrekt_alerts
+- Project X / Twitter: https://x.com/ThatsRekt_
+- Source code: https://github.com/JeronimoHoulin/thatsRekt
+
+## On-chain registry contracts
+
+| Chain | Proxy address | Status |
+| --- | --- | --- |
+| Base mainnet (chainId 8453) | `0x390f7b37545CaD278dD3DADC92a20b9f45865936` | live (canonical) |
+| Optimism mainnet (chainId 10) | `0x75bDe0394Dd0D92a2cEd1E0E4Fd5abB21319fD0e` | interim test |
+
+Other chains (Ethereum, Arbitrum, Polygon, BSC, Blast, Avalanche) are planned but not yet deployed.
+
+## Data model summary
+
+Each post has:
+- `id` — composite `{chainSlug}-{onchainId}` (e.g. `base-1`)
+- `poster` — address of the on-chain author (must be on the chain's whitelist when calling `post(...)`)
+- `title` — required, ≤ 200 bytes UTF-8, the headline
+- `attackers` — array of addresses suspected of perpetrating the attack
+- `victims` — array of victim contract addresses
+- `note` — free-form Markdown body, optional
+- `attackedAt` — unix timestamp the attack occurred (≤ block.timestamp)
+- `confirmations` / `disconfirmations` — counts of whitelisted on-chain ✓ / ✗ votes
+- `netScore` — `confirmations - disconfirmations`
+
+## Reading the registry on-chain
+
+Two stable views integrators rely on, both pure and gas-free:
+- `attackerScore(address)` — accumulated reputation score for an address (sum of net-positive confirmations across posts where it appears as an attacker)
+- `isVictim(address)` — boolean, true if the address is currently listed as a victim on at least one active post
+
+These are the integration surface for wallets / DEXes / lending markets who want to gate or warn on suspicious counterparties without having to index the registry themselves.
+
+## How alerts flow
+
+1. A whitelisted security team spots a live exploit.
+2. They sign a `post(...)` tx from a whitelisted address.
+3. The indexer picks it up (~5s).
+4. The web feed updates and the Telegram bot broadcasts (~10s after that).
+5. Other whitelisters call `confirm(...)` or `disconfirm(...)` to vouch.
+6. Wallets / protocols reading `attackerScore(...)` and `isVictim(...)` see the new state.
+
+End-to-end latency from chain inclusion to Telegram message is typically 5–15 seconds.
+
+## License
+
+MIT.
+
+## Maintainers
+
+- jerrythekid.eth — github.com/JeronimoHoulin, x.com/jerrythekid
+- bauti.eth — x.com/BautiDeFi

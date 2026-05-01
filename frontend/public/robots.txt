@@ -1,0 +1,7 @@
+# thatsRekt — public-good on-chain hack alert registry.
+# All routes are public and indexable.
+
+User-agent: *
+Allow: /
+
+Sitemap: https://thatsrekt.com/sitemap.xml
