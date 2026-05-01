@@ -31,6 +31,7 @@ export type ChainSlug =
   | 'anvil-base'
   | 'sepolia'
   | 'base'
+  | 'base-sepolia'
   | 'optimism'
 
 export interface ChainConfig {
@@ -103,6 +104,17 @@ export const CHAINS: Readonly<Record<ChainSlug, ChainConfig>> = Object.freeze({
     contractEnvVar: 'CONTRACT_BASE',
     startBlockEnvVar: 'START_BLOCK_BASE',
     finalityConfirmation: 75,
+    rpcRateLimit: 10,
+  },
+  'base-sepolia': {
+    chainId: 84532,
+    slug: 'base-sepolia',
+    name: 'Base Sepolia',
+    gateway: 'https://v2.archive.subsquid.io/network/base-sepolia',
+    rpcEnvVar: 'RPC_BASE_SEPOLIA_HTTP',
+    contractEnvVar: 'CONTRACT_BASE_SEPOLIA',
+    startBlockEnvVar: 'START_BLOCK_BASE_SEPOLIA',
+    finalityConfirmation: 32,
     rpcRateLimit: 10,
   },
   optimism: {

@@ -1,5 +1,5 @@
 import { http, createConfig, fallback } from 'wagmi'
-import { base, mainnet } from 'wagmi/chains'
+import { base, baseSepolia, mainnet } from 'wagmi/chains'
 import { injected, coinbaseWallet, safe } from 'wagmi/connectors'
 
 /**
@@ -14,6 +14,15 @@ import { injected, coinbaseWallet, safe } from 'wagmi/connectors'
 const baseTransport = fallback([
   http('https://lb.routeme.sh/rpc/8453/3bd2e340-f97c-46b3-80ed-17975de5af89'),
   http('https://mainnet.base.org'),
+])
+
+/**
+ * Base Sepolia transport — used for the purge-capable contract under test.
+ * Public Base Sepolia RPC (no auth required for reads / wallet-funded
+ * writes). Wrapped in `fallback` for the same reason as `baseTransport`.
+ */
+const baseSepoliaTransport = fallback([
+  http('https://sepolia.base.org'),
 ])
 
 /**
@@ -49,7 +58,7 @@ const mainnetTransport = fallback([
  * `walletConnect({ projectId })` into the connectors array and it just works.
  */
 export const wagmiConfig = createConfig({
-  chains: [base, mainnet],
+  chains: [base, baseSepolia, mainnet],
   connectors: [
     injected({ shimDisconnect: true }),
     coinbaseWallet({ appName: 'thatsRekt', appLogoUrl: 'https://thatsrekt.com/favicon.svg' }),
@@ -57,6 +66,7 @@ export const wagmiConfig = createConfig({
   ],
   transports: {
     [base.id]: baseTransport,
+    [baseSepolia.id]: baseSepoliaTransport,
     [mainnet.id]: mainnetTransport,
   },
   // SSR: false — this is a Vite SPA, no server-rendered hydration step.

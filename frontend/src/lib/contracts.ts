@@ -2,9 +2,10 @@
  * On-chain registry contract handles.
  *
  * Per-chain proxy registry. CREATE2-deterministic per (governance, whitelist,
- * purgeAdmin) triple. Base only for now — Optimism is being temporarily
- * deprecated while the new purge-capable contract stabilises; older OP archive
- * entries are still resolvable via the chain registry in `chains.ts`.
+ * purgeAdmin) triple. Base mainnet runs the *legacy* (pre-purge) contract;
+ * Base Sepolia runs the new purge-capable contract for end-to-end testing
+ * before mainnet redeploy. Optimism is temporarily deprecated while the
+ * canonical whitelist + purge contract stabilise.
  *
  * Typed as a literal-keyed record (not `Record<number, ...>`) so wagmi's
  * `chainId` field — which narrows to the configured chain literal union —
@@ -17,6 +18,10 @@ export const REGISTRY_PROXIES = {
   // address and swap this entry. Until then, prod runs against the
   // legacy contract so the feed/voting/posting all still work.
   8453: '0x390f7b37545CaD278dD3DADC92a20b9f45865936',
+  // Base Sepolia — purge-capable contract (DeployDev, single-principal
+  // testnet posture: all roles flattened to deployer EOA 0xb5A6...).
+  // Used for end-to-end purge-flow testing ahead of the mainnet redeploy.
+  84532: '0x309c2C20Cf07Dc4ae4c51a7813677d3D0c5Afb80',
 } as const satisfies Record<number, `0x${string}`>
 
 /** Chain IDs that have a deployed registry. Literal-narrowed for wagmi. */
@@ -27,9 +32,9 @@ export const registryAddress = (
 ): `0x${string}` | undefined =>
   (REGISTRY_PROXIES as Record<number, `0x${string}`>)[chainId]
 
-/** Chain IDs with a deployed registry, in display order (Base only for now). */
+/** Chain IDs with a deployed registry, in display order. */
 export const chainsWithRegistry = (): readonly SupportedChainId[] =>
-  [8453] as const
+  [8453, 84532] as const
 
 /**
  * @deprecated Use `registryAddress(chainId)` instead. This still resolves to

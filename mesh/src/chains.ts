@@ -16,6 +16,7 @@ export type ChainSlug =
   | 'anvil-base'
   | 'sepolia'
   | 'base'
+  | 'base-sepolia'
   // Note: `optimism` was a registered chain — temporarily dropped from the
   // gateway while the registry redeploys with the new purge-admin role.
   // The OP processor + graphql containers may still be running; this just
@@ -73,13 +74,22 @@ export const CHAINS: readonly ChainEntry[] = Object.freeze([
     prefix: 'Base_',
     endpoint: process.env.GRAPHQL_BASE_URL ?? 'http://graphql-base:4353/graphql',
   },
+  {
+    chainId: 84532,
+    slug: 'base-sepolia',
+    name: 'Base Sepolia',
+    prefix: 'BaseSepolia_',
+    endpoint:
+      process.env.GRAPHQL_BASE_SEPOLIA_URL ??
+      'http://graphql-base-sepolia:4361/graphql',
+  },
   // Optimism: temporarily removed while the registry redeploys with the
   // new purge-admin governance role. Re-add when the canonical whitelist
   // ships.
 ])
 
 export const ENABLED_CHAINS = new Set(
-  (process.env.MESH_CHAINS ?? 'anvil-eth,anvil-base,sepolia,base')
+  (process.env.MESH_CHAINS ?? 'anvil-eth,anvil-base,sepolia,base,base-sepolia')
     .split(',')
     .map((s) => s.trim())
     .filter((s) => s.length > 0),

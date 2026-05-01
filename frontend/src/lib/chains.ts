@@ -15,6 +15,7 @@ export type ChainSlug =
   | 'anvil-base'
   | 'sepolia'
   | 'base'
+  | 'base-sepolia'
   | 'optimism'
   | 'ethereum'
   | 'arbitrum'
@@ -75,6 +76,15 @@ export const CHAINS: Readonly<Record<ChainSlug, FrontendChain>> = Object.freeze(
     name: 'Base',
     badge: 'base',
     explorer: 'https://basescan.org',
+    isLocalFork: false,
+    liveIndexed: true,
+  },
+  'base-sepolia': {
+    chainId: 84532,
+    slug: 'base-sepolia',
+    name: 'Base Sepolia',
+    badge: 'base-sepolia',
+    explorer: 'https://sepolia.basescan.org',
     isLocalFork: false,
     liveIndexed: true,
   },
