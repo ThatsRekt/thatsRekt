@@ -129,13 +129,13 @@ function UseCases() {
 
       <UseCase
         actor="security firm / detector"
-        scenario="Post alerts the second your detector fires"
+        scenario="Report attacks the second your detector fires"
         body={
           <>
             From a whitelisted EOA, call{' '}
             <Code>post(title, attackers, victims, note, attackedAt)</Code>{' '}
             the moment your fork-monitor / mempool-scanner / forensic
-            heuristic fires. Other whitelisters see your post and race
+            heuristic fires. Other guardians see your report and race
             to confirm or refute. Confirmer karma builds reputation
             over time.
           </>
@@ -187,9 +187,9 @@ function WhatIs() {
       <p className="text-base leading-relaxed text-neutral-800">
         thatsRekt is an{' '}
         <strong className="font-black">on-chain hack alert registry</strong>.
-        Whitelisted operators post structured alerts about active
+        Whitelisted guardians report structured alerts about active
         on-chain exploits on any EVM chain — attacker addresses,
-        victim contracts, and a free-form note. Other whitelisters race
+        victim contracts, and a free-form note. Other guardians race
         to <em>vouch</em> (confirm) or <em>refute</em> (disconfirm).
       </p>
       <p className="text-base leading-relaxed text-neutral-800">
@@ -200,7 +200,7 @@ function WhatIs() {
         market can pause when its own contracts are reported under
         attack. The registry is permissioned to write but{' '}
         <strong className="font-black">open to read</strong> — every
-        score, post, and confirmer set is queryable from any contract
+        score, attack, and confirmer set is queryable from any contract
         or app.
       </p>
     </Section>
@@ -215,19 +215,19 @@ function HowItWorks() {
   return (
     <Section heading="how posts work">
       <SubSection heading="whitelisters">
-        Authorized addresses (the "posters" listed under{' '}
-        <Inline>/posters</Inline>). They can call{' '}
+        Authorized addresses (the guardians listed under{' '}
+        <Inline>/guardians</Inline>). They can call{' '}
         <Code>post(...)</Code>, <Code>confirm(...)</Code>, and{' '}
-        <Code>disconfirm(...)</Code>. Posts include a title, attacker
-        addresses, victim contracts, and a free-form note. Confirmer
-        identities are public on-chain.
+        <Code>disconfirm(...)</Code>. Each report includes a title,
+        attacker addresses, victim contracts, and a free-form note.
+        Confirmer identities are public on-chain.
       </SubSection>
       <SubSection heading="governance">
-        Three roles, asymmetric delays — adding posters is slow and
+        Three roles, asymmetric delays — adding guardians is slow and
         public, kicking them out is instant.{' '}
-        <strong className="font-black">Removing a misbehaving poster</strong>{' '}
+        <strong className="font-black">Removing a misbehaving guardian</strong>{' '}
         is direct multisig action, no delay.{' '}
-        <strong className="font-black">Adding a new poster</strong>{' '}
+        <strong className="font-black">Adding a new guardian</strong>{' '}
         goes through a separate{' '}
         <strong className="font-black">3-day TimelockController</strong>{' '}
         — long enough for integrators to react if the multisig
@@ -244,8 +244,8 @@ function HowItWorks() {
       <SubSection heading="integrators">
         Anyone reading the registry. Two main signals: an address's{' '}
         <Code>attackerScore</Code> (signed integer — sum of
-        confirmations minus disconfirmations across every post that
-        names the address as an attacker) and an address's{' '}
+        confirmations minus disconfirmations across every active
+        attack that names the address as an attacker) and an address's{' '}
         <Code>isVictim</Code> flag (true if the address is currently
         the target of an active alert). Both are readable on-chain in
         a single view call.
@@ -270,7 +270,7 @@ function Architecture() {
 
       <SubSection heading="the stack at a glance">
         <p className="text-sm leading-relaxed text-neutral-800 mb-2">
-          A poster submits an alert; the contract emits an event; the
+          A guardian submits an alert; the contract emits an event; the
           indexer writes it to Postgres; the GraphQL gateway exposes
           it; this site renders it. Reader contracts and dApps tap in
           at whichever tier matches their needs — direct on-chain
@@ -340,7 +340,7 @@ function Architecture() {
       <SubSection heading="whitelisted write functions">
         <p className="text-sm leading-relaxed text-neutral-800 mb-2">
           Only addresses on the whitelist can call these. They're
-          what posters use to submit and curate alerts.
+          what guardians use to submit and curate alerts.
         </p>
         <ul className="space-y-1 text-sm leading-relaxed text-neutral-800 list-disc list-inside marker:text-neutral-400">
           <li>
@@ -376,10 +376,10 @@ function Architecture() {
       </SubSection>
 
       <SubSection heading="cross-chain identity">
-        Posters are EOAs whitelisted independently per chain — the
-        same address can post on every chain because CREATE2 makes
+        Guardians are EOAs whitelisted independently per chain — the
+        same address can report on every chain because CREATE2 makes
         the proxy address identical everywhere. The leaderboard
-        aggregates a poster's lifetime activity across chains by
+        aggregates a guardian's lifetime activity across chains by
         address.
       </SubSection>
 
@@ -659,7 +659,7 @@ function Reference() {
         <p className="text-sm leading-relaxed text-neutral-800 mb-3">
           One Safe multisig governs every chain — same address on
           all of them via CREATE2. Three roles, asymmetric delays:
-          posters are <strong className="font-black">removed
+          guardians are <strong className="font-black">removed
           instantly</strong>{' '}
           (incident-response is fast), but{' '}
           <strong className="font-black">added on a 3-day timelock</strong>{' '}

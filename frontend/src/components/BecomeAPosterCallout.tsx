@@ -1,5 +1,5 @@
 /**
- * Email address for prospective vetted posters to apply. Defined in one
+ * Email address for prospective guardians to apply. Defined in one
  * place so swapping it out is a single edit.
  */
 export const BECOME_POSTER_EMAIL = 'thatsrekt@protonmail.com'
@@ -16,7 +16,7 @@ interface BecomeAPosterCalloutProps {
 export function BecomeAPosterCallout({
   variant = 'card',
 }: BecomeAPosterCalloutProps) {
-  const subject = encodeURIComponent('thatsRekt — vetted poster application')
+  const subject = encodeURIComponent('thatsRekt — guardian application')
   const body = encodeURIComponent(
     [
       'Team / detector name:',
@@ -35,7 +35,7 @@ export function BecomeAPosterCallout({
       <p className="text-sm leading-relaxed text-neutral-800">
         Run a security team or automated detector?{' '}
         <a href={mailto} className="rekt-link font-black uppercase tracking-widest text-red-600">
-          apply to post →
+          apply to guard →
         </a>
       </p>
     )
@@ -44,10 +44,10 @@ export function BecomeAPosterCallout({
   return (
     <section className="border-2 border-black bg-yellow-50 p-5 space-y-3">
       <h3 className="font-black uppercase tracking-widest text-xs">
-        become a poster
+        become a guardian
       </h3>
       <p className="text-sm leading-relaxed text-neutral-800">
-        Posting is permissioned — addresses are added to the whitelist
+        Reporting is permissioned — addresses are added to the whitelist
         by governance after a vetting review. If you run a security
         team, an exploit detector, or any pipeline that produces
         timely on-chain incident signals, get in touch.

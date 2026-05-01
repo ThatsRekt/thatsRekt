@@ -22,10 +22,11 @@ export function StackDiagram() {
         >
           <title id="stack-diagram-title">thatsRekt stack architecture</title>
           <desc id="stack-diagram-desc">
-            Vertical flow: poster submits to ThatsRekt proxy on Base; events
-            flow to the Subsquid indexer, then to the Mesh GraphQL gateway,
-            then to the frontend. Side arrows show reader contracts and
-            dApps reading directly from the proxy or the gateway.
+            Vertical flow: a guardian submits to ThatsRekt proxy on Base;
+            events flow to the Subsquid indexer, then to the Mesh GraphQL
+            gateway, then to the frontend. Side arrows show reader
+            contracts and dApps reading directly from the proxy or the
+            gateway.
           </desc>
 
           <defs>
@@ -44,11 +45,11 @@ export function StackDiagram() {
 
           {/* === Center column: write/index/read pipeline === */}
 
-          {/* Poster (writer) */}
+          {/* Guardian (writer) */}
           <g>
             <rect x="200" y="10" width="140" height="50" fill="white" stroke="black" strokeWidth="2" />
             <text x="270" y="32" textAnchor="middle" fontFamily="ui-monospace, monospace" fontSize="11" fontWeight="bold">
-              POSTER
+              GUARDIAN
             </text>
             <text x="270" y="48" textAnchor="middle" fontFamily="ui-monospace, monospace" fontSize="9" fill="#525252">
               whitelisted EOA

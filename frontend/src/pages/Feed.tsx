@@ -174,11 +174,11 @@ function FeedBody({
   if (!error && liveEmpty && archiveEmpty) {
     return (
       <EmptyState
-        title="no posts yet."
+        title="no attacks reported yet."
         hint={
           showArchive
-            ? 'no on-chain posts have been indexed, and no archive entries match the current chain filter.'
-            : 'no on-chain posts have been indexed. Toggle "show archive" above to see pre-platform attacks.'
+            ? 'no on-chain attacks have been indexed, and no archive entries match the current chain filter.'
+            : 'no on-chain attacks have been indexed. Toggle "show archive" above to see pre-platform attacks.'
         }
       />
     )
@@ -205,7 +205,7 @@ function FeedBody({
           Independent of section order — just a top-of-page hint. */}
       {!error && liveEmpty && showArchive && !archiveEmpty && (
         <p className="mb-6 text-xs uppercase tracking-widest text-neutral-700">
-          no on-chain posts yet · showing pre-platform archive
+          no on-chain attacks yet · showing pre-platform archive
         </p>
       )}
 
@@ -309,11 +309,11 @@ function ArchiveToggle({
       >
         {value ? '✓ ' : ''}show archive
       </button>
-      <InfoPopover title="archive posts" ariaLabel="what is the archive?">
-        Pre-platform attacks compiled by the community. Archive posts
-        are off-chain context — they're not posted to the registry and
-        can't be confirmed or disconfirmed. They appear below the live
-        feed in their own section.
+      <InfoPopover title="archive attacks" ariaLabel="what is the archive?">
+        Pre-platform attacks compiled by the community. Archive entries
+        are off-chain context — they're not on the registry and can't
+        be confirmed or disconfirmed. They appear below the live feed
+        in their own section.
       </InfoPopover>
     </div>
   )
@@ -356,7 +356,7 @@ function LiveSection({
         </div>
       ) : (
         <p className="mt-8 text-center text-xs uppercase tracking-widest text-neutral-700">
-          end of live feed · {posts.length} post{posts.length === 1 ? '' : 's'}
+          end of live feed · {posts.length} attack{posts.length === 1 ? '' : 's'}
         </p>
       )}
     </div>
@@ -385,7 +385,7 @@ function ArchiveSection({ posts }: { posts: readonly ArchivePost[] }) {
   const hasMore = visibleCount < posts.length
 
   return (
-    <section className="bg-neutral-200/50 -mx-4 sm:-mx-6 px-4 sm:px-6 py-8 border-y-2 border-neutral-400/60">
+    <section className="bg-neutral-300/40 -mx-4 sm:-mx-6 px-4 sm:px-6 py-8 border-y-2 border-neutral-500/60">
       {visiblePosts.map((post, i) => (
         <div key={post.id}>
           {i > 0 && <hr className="my-8 border-t-2 border-neutral-400/60" />}

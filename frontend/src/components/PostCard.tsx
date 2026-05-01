@@ -80,7 +80,7 @@ function LivePostCard({ post }: { post: FeedPost }) {
 
       <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1 text-xs uppercase tracking-widest text-neutral-700">
         <span className="inline-flex items-center gap-1">
-          [poster: <AddressLabel addr={post.poster.id} chainSlug={chainSlug} />]
+          [guardian: <AddressLabel addr={post.poster.id} chainSlug={chainSlug} />]
         </span>
         <span>
           <span className="text-neutral-400">·</span>{' '}
@@ -144,7 +144,10 @@ function ScoreBadge({ net, up, down }: { net: number; up: number; down: number }
 // =============================================================================
 // Archive post — read-only, off-chain. Same skeleton; differs in:
 //   - top-row badges: ARCHIVE chip instead of #id
-//   - metadata row: amount + source link instead of poster + score
+//   - $ lost is pulled OUT of the metadata row into a dedicated red
+//     horror-ticker strip directly under the title — the eye should
+//     land on this number first
+//   - metadata row: attackers + victims + source link (no amount chip)
 //   - links: /post/archive-{slug}
 // =============================================================================
 
@@ -168,16 +171,14 @@ function ArchivePostCard({ post }: { post: ArchivePost }) {
         </h2>
       </Link>
 
+      <LostAmountBanner amountUsd={post.amountUsd} />
+
       {body && (
         <NotePreview body={body} />
       )}
 
       <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1 text-xs uppercase tracking-widest text-neutral-700">
-        <span className="font-mono text-red-700">
-          [{formatAmountUsd(post.amountUsd)}]
-        </span>
         <span>
-          <span className="text-neutral-400">·</span>{' '}
           [{post.attackers.length} attacker{post.attackers.length === 1 ? '' : 's'}]
         </span>
         <span>
@@ -210,6 +211,30 @@ function ArchivePostCard({ post }: { post: ArchivePost }) {
         </Link>
       </div>
     </article>
+  )
+}
+
+/**
+ * Horror-ticker $ lost banner for archive cards. Used to be a small
+ * inline mono chip in the metadata row alongside attackers/victims/src;
+ * operator wanted the eye to land on this number FIRST.
+ *
+ * Visual: dedicated bracketed strip with hard red top + bottom borders,
+ * `text-red-700` heavy numerals at `text-2xl sm:text-3xl`. Bracketed
+ * `[$ lost]` label on the left to keep the brutalist vocabulary; amount
+ * floats to the right as the dominant element. Stretches edge-to-edge of
+ * the card so it reads as a discrete strip, not a chip.
+ */
+function LostAmountBanner({ amountUsd }: { amountUsd: number }) {
+  return (
+    <div className="flex items-baseline justify-between gap-3 border-y-2 border-red-700 bg-red-50/40 px-3 py-2">
+      <span className="text-[10px] uppercase tracking-widest font-black text-red-700">
+        [$ lost]
+      </span>
+      <span className="font-mono font-black text-red-700 text-2xl sm:text-3xl tracking-tight tabular-nums">
+        {formatAmountUsd(amountUsd)}
+      </span>
+    </div>
   )
 }
 

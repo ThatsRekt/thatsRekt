@@ -105,7 +105,7 @@ function InceptionRow({
 }) {
   return (
     <p className="mt-1 text-sm">
-      <span className="font-black uppercase tracking-tight text-red-600">★ posted</span>{' '}
+      <span className="font-black uppercase tracking-tight text-red-600">★ reported</span>{' '}
       <span className="text-neutral-700">by</span>{' '}
       <AddressLabel addr={data.poster.id} chainSlug={chainSlug} />{' '}
       <span className="text-neutral-700">·</span>{' '}

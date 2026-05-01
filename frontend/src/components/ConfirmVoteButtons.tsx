@@ -14,7 +14,7 @@ import { WhitelistGateModal } from './WhitelistGateModal'
  *   - **Disconnected.** Click → opens the connector picker. No auto-submit
  *     after connect (hostile UX to fire a tx popup the user didn't ask for).
  *   - **Connected, NOT whitelisted.** Click → opens the gate modal showing
- *     the "become a poster" panel.
+ *     the "become a guardian" panel.
  *   - **Connected, whitelisted, no current vote.** Click → submits
  *     `confirm(postId, dir)`. Optimistic UI shows the new count immediately.
  *   - **Connected, whitelisted, voted same direction.** Click → submits
@@ -245,9 +245,9 @@ export function ConfirmVoteButtons({
         </span>
         <span
           className="ml-1 text-[10px] uppercase tracking-widest text-neutral-500"
-          title="You authored this post — the contract reverts self-votes."
+          title="You reported this attack — the contract reverts self-votes."
         >
-          [your post]
+          [your attack]
         </span>
       </span>
     )
@@ -294,7 +294,7 @@ export function ConfirmVoteButtons({
         address={address}
         isCheckingWhitelist={isCheckingWhitelist}
         isWhitelisted={isWhitelisted}
-        title="[vote on post]"
+        title="[vote on attack]"
       />
     </>
   )

@@ -66,13 +66,13 @@ function WaysToUse() {
           even if your team hasn't woken up yet.
         </Bullet>
         <Bullet label="if you run a security team or detector">
-          Apply for poster status. The moment your fork-monitor or
-          mempool scanner fires, post the attacker addresses on-chain.
-          Other whitelisters race to confirm or refute. Confirmer
+          Apply for guardian status. The moment your fork-monitor or
+          mempool scanner fires, report the attacker addresses on-chain.
+          Other guardians race to confirm or refute. Confirmer
           karma builds reputation over time.
         </Bullet>
         <Bullet label="if you're just curious">
-          Browse the feed. Every post links to the actual on-chain
+          Browse the feed. Every attack links to the actual on-chain
           attack tx, the attacker addresses, and the victim contracts
           — before-the-fact incident reporting, not after-the-fact news.
         </Bullet>
@@ -88,11 +88,11 @@ function Hero() {
         about
       </h1>
       <p className="text-xs uppercase tracking-widest text-red-600 font-black">
-        [public good · open to read · permissioned to post]
+        [public good · open to read · permissioned to report]
       </p>
       <p className="text-lg sm:text-xl leading-tight text-neutral-900 font-black tracking-tight max-w-2xl">
         thatsRekt is the on-chain hack alert registry — a public list
-        of active on-chain exploits across every EVM chain, posted
+        of active on-chain exploits across every EVM chain, reported
         as they happen by vetted security teams.
       </p>
       <p className="text-base leading-relaxed text-neutral-800">
@@ -101,7 +101,7 @@ function Hero() {
         someone draining a protocol; a lending market can pause when
         its own contracts are reported under attack. The list is{' '}
         <strong className="font-black">free for anyone to read</strong>.
-        Only vetted teams can post.
+        Only vetted guardians can report.
       </p>
       <BecomeAPosterCallout variant="inline" />
       <p className="text-base leading-relaxed text-neutral-800">
@@ -123,16 +123,17 @@ function HowItWorks() {
         </h2>
       </header>
       <div className="space-y-4 sm:space-y-3">
-        <Bullet label="who posts">
-          Vetted security teams and automated detectors. They submit
-          alerts (attacker addresses, victim contracts, a short note)
-          and confirm or refute each other's claims.
+        <Bullet label="who reports">
+          Vetted security teams and automated detectors — the
+          guardians. They submit alerts (attacker addresses, victim
+          contracts, a short note) and confirm or refute each other's
+          claims.
         </Bullet>
         <Bullet label="who runs it">
-          A multisig manages the poster list. Bad actors can be
+          A multisig manages the guardian list. Bad actors can be
           removed{' '}
           <strong className="font-black">instantly</strong>, so
-          incident response stays fast. Adding a new poster goes
+          incident response stays fast. Adding a new guardian goes
           through a{' '}
           <strong className="font-black">3-day timelock</strong>, so
           operator rotation is visible before it lands. Contract
@@ -177,7 +178,7 @@ function Bullet({
 
 /**
  * "Get alerts" section — a low-friction CTA for visitors who don't run
- * detectors but want to follow live posts. Lives between the
+ * detectors but want to follow live attacks. Lives between the
  * maintainers block and the donate block: by the time a reader's
  * scrolled this far they've earned an obvious next-step.
  */
@@ -189,7 +190,7 @@ function GetAlertsSection() {
           get alerts
         </h2>
         <p className="text-xs uppercase tracking-widest text-neutral-700">
-          [follow live posts on telegram]
+          [follow live attacks on telegram]
         </p>
       </header>
       <TgChannelCTA variant="panel" />

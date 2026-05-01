@@ -85,7 +85,7 @@ export function PostFormModal({
             id="post-form-modal-title"
             className="text-[11px] uppercase tracking-widest font-black"
           >
-            [post]
+            [report attack]
           </h2>
           <button
             type="button"
@@ -499,7 +499,7 @@ function SwitchChainPrompt({
         Wallet is on{' '}
         <span className="font-mono">{walletLabel}</span>. Switch to{' '}
         <span className="font-mono font-black">{targetLabel}</span> before
-        posting.
+        reporting.
       </p>
       <button
         type="button"
@@ -687,7 +687,7 @@ function SuccessPanel({
   return (
     <div className="space-y-4">
       <p className="text-[11px] uppercase tracking-widest font-black text-emerald-700">
-        [ posted ]
+        [ reported ]
       </p>
       <p className="text-sm leading-relaxed text-neutral-800">
         Tx confirmed on{' '}
@@ -716,7 +716,7 @@ function SuccessPanel({
           onClick={onPostAnother}
           className="border-2 border-red-600 bg-red-600 text-white px-3 py-2 text-xs uppercase tracking-widest font-black hover:bg-red-700 hover:border-red-700 transition-colors"
         >
-          post another
+          report another
         </button>
       </div>
     </div>

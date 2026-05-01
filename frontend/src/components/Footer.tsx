@@ -38,7 +38,7 @@ const TG_COMMUNITY_URL = 'https://t.me/thatsRekt_community'
  * the same triage bucket regardless of which surface the user clicked.
  */
 function buildApplyMailto(): string {
-  const subject = encodeURIComponent('thatsRekt — vetted poster application')
+  const subject = encodeURIComponent('thatsRekt — guardian application')
   const bodyLines = [
     'Team / detector name:',
     'Public profile (X / GitHub / website):',
@@ -91,8 +91,8 @@ function BrandColumn() {
           </Link>
         </li>
         <li>
-          <Link to="/posters" className="text-[11px] uppercase tracking-widest font-mono rekt-link">
-            posters
+          <Link to="/guardians" className="text-[11px] uppercase tracking-widest font-mono rekt-link">
+            guardians
           </Link>
         </li>
         <li>
@@ -166,7 +166,7 @@ function ContactColumn() {
             href={mailto}
             className="text-[11px] uppercase tracking-widest font-mono rekt-link"
           >
-            apply to post <span aria-hidden="true">→</span>
+            apply to guard <span aria-hidden="true">→</span>
           </a>
         </li>
         <li>

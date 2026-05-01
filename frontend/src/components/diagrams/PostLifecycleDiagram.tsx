@@ -1,7 +1,7 @@
 /**
- * Post lifecycle diagram for /docs.
+ * Attack lifecycle diagram for /docs.
  *
- * Shows the full lifecycle of a single alert post: poster submits via the
+ * Shows the full lifecycle of a single alert: a guardian submits via the
  * contract, peers confirm or refute, and the aggregate `attackerScore`
  * updates in real time. Aggregates flow back to readers (contracts and
  * dApps) without indexer dependency for the cheap on-chain reads.
@@ -19,11 +19,12 @@ export function PostLifecycleDiagram() {
           aria-labelledby="lifecycle-diagram-title lifecycle-diagram-desc"
           className="block w-full max-w-[540px] mx-auto"
         >
-          <title id="lifecycle-diagram-title">post lifecycle</title>
+          <title id="lifecycle-diagram-title">attack lifecycle</title>
           <desc id="lifecycle-diagram-desc">
-            A poster submits an alert via post(); peers call confirm() with
-            Up or Down; the contract updates attackerScore in real time;
-            integrators read the score directly with a single view call.
+            A guardian reports an attack via post(); peers call confirm()
+            with Up or Down; the contract updates attackerScore in real
+            time; integrators read the score directly with a single view
+            call.
           </desc>
 
           <defs>
@@ -47,7 +48,7 @@ export function PostLifecycleDiagram() {
               [step 1]
             </text>
             <text x="80" y="54" textAnchor="middle" fontFamily="ui-monospace, monospace" fontSize="11" fontWeight="bold">
-              POSTER
+              GUARDIAN
             </text>
             <text x="80" y="68" textAnchor="middle" fontFamily="ui-monospace, monospace" fontSize="9" fill="#525252">
               spots an attack
@@ -68,7 +69,7 @@ export function PostLifecycleDiagram() {
               CONTRACT
             </text>
             <text x="280" y="68" textAnchor="middle" fontFamily="ui-monospace, monospace" fontSize="9" fill="#525252">
-              stores post · emits event
+              stores attack · emits event
             </text>
           </g>
 
@@ -84,7 +85,7 @@ export function PostLifecycleDiagram() {
               [step 3]
             </text>
             <text x="280" y="154" textAnchor="middle" fontFamily="ui-monospace, monospace" fontSize="11" fontWeight="bold">
-              PEER WHITELISTERS
+              PEER GUARDIANS
             </text>
             <text x="280" y="170" textAnchor="middle" fontFamily="ui-monospace, monospace" fontSize="9" fill="#525252">
               vouch (Up +1) · refute (Down -1)
@@ -106,7 +107,7 @@ export function PostLifecycleDiagram() {
               AGGREGATE STATE
             </text>
             <text x="280" y="274" textAnchor="middle" fontFamily="ui-monospace, monospace" fontSize="9" fill="#525252">
-              attackerScore · isVictim · per-post counts
+              attackerScore · isVictim · per-attack counts
             </text>
           </g>
 
@@ -142,7 +143,7 @@ export function PostLifecycleDiagram() {
         </svg>
       </div>
       <figcaption className="text-[10px] uppercase tracking-widest text-neutral-700 mt-2 text-center">
-        [post lifecycle · single tx to post, single view call to read]
+        [attack lifecycle · single tx to report, single view call to read]
       </figcaption>
     </figure>
   )

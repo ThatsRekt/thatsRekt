@@ -60,7 +60,7 @@ function LivePostDetail({ postId }: { postId: string }) {
   if (isLoading) {
     return (
       <p className="text-xs uppercase tracking-widest text-neutral-700">
-        loading post #{postId}…
+        loading attack #{postId}…
       </p>
     )
   }
@@ -68,7 +68,7 @@ function LivePostDetail({ postId }: { postId: string }) {
   if (error) {
     return (
       <EmptyState
-        title="couldn't load this post."
+        title="couldn't load this attack."
         hint={(error as Error).message}
       />
     )
@@ -77,8 +77,8 @@ function LivePostDetail({ postId }: { postId: string }) {
   if (!data) {
     return (
       <EmptyState
-        title={`post #${postId} not found.`}
-        hint="the id may be wrong, or the post hasn't been indexed yet."
+        title={`attack #${postId} not found.`}
+        hint="the id may be wrong, or the attack hasn't been indexed yet."
       />
     )
   }
@@ -136,10 +136,10 @@ function LivePostDetail({ postId }: { postId: string }) {
         </div>
 
         <dl className="grid grid-cols-1 gap-1 text-xs uppercase tracking-widest text-neutral-700 sm:grid-cols-2">
-          <Field label="poster">
+          <Field label="guardian">
             <AddressLabel addr={data.poster.id} chainSlug={chainSlug} />
           </Field>
-          <Field label="posted on-chain" tooltip={formatTimestamp(data.createdAtTimestamp)}>
+          <Field label="reported on-chain" tooltip={formatTimestamp(data.createdAtTimestamp)}>
             {relativeTime(data.createdAtTimestamp)}
           </Field>
           <Field label="last updated" tooltip={formatTimestamp(data.lastUpdatedAt)}>
@@ -211,7 +211,7 @@ function LivePostDetail({ postId }: { postId: string }) {
                   </span>
                   {link.address.attackerAppearances != null && (
                     <span className="text-neutral-700">
-                      [{link.address.attackerAppearances} post(s)]
+                      [{link.address.attackerAppearances} attack(s)]
                     </span>
                   )}
                 </div>

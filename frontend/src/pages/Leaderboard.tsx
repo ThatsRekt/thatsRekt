@@ -83,13 +83,13 @@ export function Leaderboard() {
           leaderboard
         </h1>
         <p className="text-xs uppercase tracking-widest text-neutral-700">
-          [proposer activity · global · across all chains]
+          [guardian activity · global · across all chains]
         </p>
         <p className="text-base leading-relaxed text-neutral-800 max-w-2xl">
-          Lifetime confirmation activity per whitelisted poster, summed
-          across every chain they've posted on. Counters are{' '}
+          Lifetime confirmation activity per whitelisted guardian, summed
+          across every chain they've reported on. Counters are{' '}
           <strong className="font-black">lifetime</strong> — retracted
-          posts keep their score, removed whitelisters keep their history.
+          attacks keep their score, removed guardians keep their history.
         </p>
       </header>
 
@@ -106,16 +106,16 @@ export function Leaderboard() {
         />
       ) : !leaderboardData || leaderboardData.items.length === 0 ? (
         <EmptyState
-          title="no proposers yet."
+          title="no guardians yet."
           hint="no address has been whitelisted on any indexed chain."
         />
       ) : filteredRows.length === 0 ? (
         <EmptyState
-          title={`no ${statusFilter} posters.`}
+          title={`no ${statusFilter} guardians.`}
           hint={
             statusFilter === 'active'
-              ? "every poster on the leaderboard has been removed from the whitelist."
-              : "every poster on the leaderboard is currently active."
+              ? "every guardian on the leaderboard has been removed from the whitelist."
+              : "every guardian on the leaderboard is currently active."
           }
         />
       ) : (
@@ -218,7 +218,7 @@ function ProposerTable({
         <thead className="border-b-2 border-black bg-black/5 text-xs uppercase tracking-widest">
           <tr>
             <th className="px-2 sm:px-3 py-2 w-10 text-right text-neutral-700">#</th>
-            <th className="px-2 sm:px-3 py-2">poster</th>
+            <th className="px-2 sm:px-3 py-2">guardian</th>
             <SortableHeader
               label="confirms"
               column="totalConfirmations"
@@ -232,7 +232,7 @@ function ProposerTable({
               onSelect={onSelectOrderBy}
             />
             <SortableHeader
-              label="posts"
+              label="attacks"
               column="postCount"
               orderBy={orderBy}
               onSelect={onSelectOrderBy}

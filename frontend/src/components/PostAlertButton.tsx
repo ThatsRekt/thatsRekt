@@ -22,7 +22,7 @@ import { chainsWithRegistry } from '../lib/contracts'
  *      opens — operator requirement: no second click.
  *   2. **Connected, whitelisted.** → opens composer directly.
  *   3. **Connected, not whitelisted.** → opens gate; the gate's own
- *      panel logic shows the "become a poster" mailto.
+ *      panel logic shows the "become a guardian" mailto.
  *
  * Visual: red-fill button, matches the `REKT` brand accent.
  */
@@ -95,9 +95,9 @@ export function PostAlertButton({
             ? 'inline-flex items-center gap-1 whitespace-nowrap border-2 border-red-600 bg-red-600 text-white px-3 py-1 text-[11px] uppercase tracking-widest font-black hover:bg-red-700 hover:border-red-700 transition-colors focus:outline-none focus:ring-2 focus:ring-red-600 focus:ring-offset-1'
             : 'block w-full text-left px-4 py-3 text-sm uppercase tracking-widest font-black bg-red-600 text-white hover:bg-red-700 active:bg-red-800 transition-colors'
         }
-        aria-label="post alert"
+        aria-label="report attack"
       >
-        post
+        report
       </button>
       <WhitelistGateModal
         open={gateOpen}
@@ -106,7 +106,7 @@ export function PostAlertButton({
         address={address}
         isCheckingWhitelist={isCheckingWhitelist}
         isWhitelisted={isWhitelisted}
-        title="[post]"
+        title="[report attack]"
         // No `whenWhitelisted` slot: the auto-promote effect above does
         // the work — gate closes, composer opens — so the user never
         // needs an interstitial "ready to post" panel.

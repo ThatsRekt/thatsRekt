@@ -164,8 +164,8 @@ function ArchiveBanner() {
       <span className="font-black">archive entry</span>
       <span className="text-neutral-400 mx-2">·</span>
       <span className="normal-case tracking-normal">
-        Pre-platform incident, compiled by the community. Not posted to
-        the on-chain registry — no confirmations, no edits, no timeline.
+        Pre-platform incident, compiled by the community. Not on the
+        on-chain registry — no confirmations, no edits, no timeline.
         See `data/historic-incidents.json` for the canonical source.
       </span>
     </aside>

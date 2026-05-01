@@ -3,7 +3,7 @@ import { Routes, Route, Link, Navigate, useLocation } from 'react-router-dom'
 import { Feed } from './pages/Feed'
 import { PostDetail } from './pages/PostDetail'
 import { About } from './pages/About'
-import { Posters } from './pages/Posters'
+import { Guardians } from './pages/Guardians'
 import { Leaderboard } from './pages/Leaderboard'
 import { Docs } from './pages/Docs'
 import { IS_MOCK_MODE } from './lib/queries'
@@ -15,7 +15,7 @@ import { Footer } from './components/Footer'
 const NAV_LINKS: { to: string; label: string }[] = [
   { to: '/', label: 'feed' },
   { to: '/about', label: 'about' },
-  { to: '/posters', label: 'posters' },
+  { to: '/guardians', label: 'guardians' },
   { to: '/leaderboard', label: 'leaderboard' },
   { to: '/docs', label: 'docs' },
 ]
@@ -56,7 +56,11 @@ export function App() {
           <Route path="/post/:chainSlug/:postId" element={<PostDetail />} />
           <Route path="/post/:id" element={<PostDetail />} />
           <Route path="/about" element={<About />} />
-          <Route path="/posters" element={<Posters />} />
+          <Route path="/guardians" element={<Guardians />} />
+          {/* Legacy `/posters` URL kept alive as a permanent redirect to
+              `/guardians` — the page rebranded but inbound shared links
+              from before the rename should still land somewhere useful. */}
+          <Route path="/posters" element={<Navigate to="/guardians" replace />} />
           <Route path="/leaderboard" element={<LeaderboardGate />} />
           <Route path="/docs" element={<Docs />} />
           <Route path="*" element={<NotFound />} />

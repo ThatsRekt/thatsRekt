@@ -14,7 +14,7 @@ const APPLY_EMAIL = 'thatsrekt@protonmail.com'
  *   2. **Connected, whitelist read in flight.** Renders a "checking…"
  *      panel so the user gets feedback during the brief window where
  *      we don't yet know if they can act.
- *   3. **Connected, not whitelisted.** Renders the "become a poster"
+ *   3. **Connected, not whitelisted.** Renders the "become a guardian"
  *      gate with a pre-filled mailto.
  *
  * The "connected + whitelisted" state is intentionally NOT rendered by
@@ -220,7 +220,7 @@ function NotWhitelistedPanel({
   address: `0x${string}` | undefined
   onClose: () => void
 }) {
-  const subject = encodeURIComponent('thatsRekt — vetted poster application')
+  const subject = encodeURIComponent('thatsRekt — guardian application')
   // Pre-fill the body so the recipient gets the exact info we need to
   // vet, including the connected address (saves the user a copy/paste).
   const bodyLines = [
@@ -242,7 +242,7 @@ function NotWhitelistedPanel({
       {address && <AddressLabel addr={address} chainSlug="base" full />}
       <section className="border-2 border-black bg-white p-4 space-y-3">
         <p className="text-[10px] uppercase tracking-widest text-neutral-700">
-          [become a poster]
+          [become a guardian]
         </p>
         <p className="text-sm leading-relaxed text-neutral-800">
           Email us with who you are, what you'd be reporting, and the
