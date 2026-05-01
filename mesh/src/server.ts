@@ -22,6 +22,12 @@ import { z } from 'zod'
 
 import { enabledChains, type ChainEntry } from './chains.js'
 import {
+  buildCommentsResolvers,
+  commentsTypeDefs,
+  startRateLimitGc,
+} from './comments.js'
+import { ensureCommentsTable } from './db.js'
+import {
   handleOgImageRoute,
   handleOgRoute,
   isOgImageRoute,
@@ -629,11 +635,38 @@ const main = async () => {
     await waitForUpstream(c)
   }
 
+  // Off-chain comments: ensure the shared `thatsrekt_meta` schema exists
+  // before the gateway accepts mutations. Fail loud and stay down on
+  // bootstrap failure — half-up Mesh would silently 500 every comment.
+  await ensureCommentsTable()
+  startRateLimitGc()
+  console.log('[mesh] comments table ensured')
+
+  // Per-chain executor lookup for the comments module. Reuses the same
+  // makeExecutor() pattern used by the cross-chain `posts(...)` resolver
+  // — but keyed by slug so comments mutations can pick the right chain
+  // for whitelist + post-existence checks.
+  const chainExecutors = new Map<string, Executor>(
+    chains.map((c) => [c.slug, makeExecutor(c.endpoint)]),
+  )
+  const getExecutor = (slug: string): Executor | null =>
+    chainExecutors.get(slug) ?? null
+
   const subschemas = await Promise.all(chains.map(buildSubschema))
+  const additionalResolvers = buildAdditionalResolvers(chains)
+  const commentsResolvers = buildCommentsResolvers({ chains, getExecutor })
   const schema = stitchSchemas({
     subschemas,
-    typeDefs: additionalTypeDefs,
-    resolvers: buildAdditionalResolvers(chains),
+    typeDefs: [additionalTypeDefs, commentsTypeDefs],
+    resolvers: {
+      Query: {
+        ...additionalResolvers.Query,
+        ...commentsResolvers.Query,
+      },
+      Mutation: commentsResolvers.Mutation,
+      SubmitCommentResult: commentsResolvers.SubmitCommentResult,
+      DeleteCommentResult: commentsResolvers.DeleteCommentResult,
+    },
   })
 
   const yoga = createYoga({
