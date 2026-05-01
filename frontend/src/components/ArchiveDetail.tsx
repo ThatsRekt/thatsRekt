@@ -59,14 +59,24 @@ function ArchiveDetailView({ post }: { post: ArchivePost }) {
           <span title={formatTimestamp(post.attackedAt)}>
             attacked {relativeTime(post.attackedAt)}
           </span>
-          <span className="ml-auto font-mono text-red-700">
-            {formatAmountUsd(post.amountUsd)}
-          </span>
         </div>
 
-        <h1 className="font-black tracking-tight text-3xl sm:text-4xl leading-tight text-neutral-900 whitespace-pre-wrap break-words">
-          {post.title?.trim() || '(untitled)'}
-        </h1>
+        {/*
+          Title row — page title h1 flex-grows, $ lost sits top-right at
+          the same visual weight class. Mirrors the feed card treatment
+          so the dread tone is consistent across surfaces. Amount drops
+          below the title at narrow widths via flex-wrap.
+        */}
+        <div className="flex flex-wrap items-start justify-between gap-x-6 gap-y-2">
+          <h1 className="font-black tracking-tight text-3xl sm:text-4xl leading-tight text-neutral-900 whitespace-pre-wrap break-words flex-1 min-w-0">
+            {post.title?.trim() || '(untitled)'}
+          </h1>
+          {post.amountUsd > 0 && (
+            <span className="font-black tracking-tight text-3xl sm:text-4xl leading-tight text-red-700 font-mono whitespace-nowrap tabular-nums">
+              {formatAmountUsd(post.amountUsd)}
+            </span>
+          )}
+        </div>
 
         <dl className="grid grid-cols-1 gap-1 text-xs uppercase tracking-widest text-neutral-700 sm:grid-cols-2">
           <Field label="protocol">
@@ -82,11 +92,6 @@ function ArchiveDetailView({ post }: { post: ArchivePost }) {
               </span>
             </Field>
           )}
-          <Field label="amount">
-            <span className="text-black normal-case tracking-normal font-mono">
-              {formatAmountUsd(post.amountUsd)}
-            </span>
-          </Field>
           <Field label="source">
             <a
               href={post.sourceUrl}

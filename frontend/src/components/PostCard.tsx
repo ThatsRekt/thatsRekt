@@ -144,9 +144,10 @@ function ScoreBadge({ net, up, down }: { net: number; up: number; down: number }
 // =============================================================================
 // Archive post — read-only, off-chain. Same skeleton; differs in:
 //   - top-row badges: ARCHIVE chip instead of #id
-//   - $ lost is pulled OUT of the metadata row into a dedicated red
-//     horror-ticker strip directly under the title — the eye should
-//     land on this number first
+//   - $ lost lives at the TOP-RIGHT of the title row, paired with the
+//     headline at the same visual weight class. The number is the second
+//     thing the eye lands on after the headline — that's the goal for an
+//     attack registry.
 //   - metadata row: attackers + victims + source link (no amount chip)
 //   - links: /post/archive-{slug}
 // =============================================================================
@@ -165,13 +166,25 @@ function ArchivePostCard({ post }: { post: ArchivePost }) {
         <span className="text-neutral-600 font-mono">attacked {relativeTime(post.attackedAt)}</span>
       </div>
 
-      <Link to={detailHref} className="block group">
-        <h2 className="font-black tracking-tight text-2xl sm:text-3xl leading-tight text-neutral-900 group-hover:text-red-600 transition-colors line-clamp-3">
-          {headline}
-        </h2>
-      </Link>
-
-      <LostAmountBanner amountUsd={post.amountUsd} />
+      {/*
+        Title row — title flex-grows, $ lost sits top-right at the same
+        visual weight class. `flex-wrap` lets the amount drop below the
+        title at narrow widths instead of squeezing the headline. The
+        amount is plain text (not inside the Link) so only the title is
+        clickable.
+      */}
+      <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
+        <Link to={detailHref} className="block group flex-1 min-w-0">
+          <h2 className="font-black tracking-tight text-2xl sm:text-3xl leading-tight text-neutral-900 group-hover:text-red-600 transition-colors line-clamp-3">
+            {headline}
+          </h2>
+        </Link>
+        {post.amountUsd > 0 && (
+          <span className="font-black tracking-tight text-2xl sm:text-3xl leading-tight text-red-700 font-mono whitespace-nowrap tabular-nums">
+            {formatAmountUsd(post.amountUsd)}
+          </span>
+        )}
+      </div>
 
       {body && (
         <NotePreview body={body} />
@@ -211,30 +224,6 @@ function ArchivePostCard({ post }: { post: ArchivePost }) {
         </Link>
       </div>
     </article>
-  )
-}
-
-/**
- * Horror-ticker $ lost banner for archive cards. Used to be a small
- * inline mono chip in the metadata row alongside attackers/victims/src;
- * operator wanted the eye to land on this number FIRST.
- *
- * Visual: dedicated bracketed strip with hard red top + bottom borders,
- * `text-red-700` heavy numerals at `text-2xl sm:text-3xl`. Bracketed
- * `[$ lost]` label on the left to keep the brutalist vocabulary; amount
- * floats to the right as the dominant element. Stretches edge-to-edge of
- * the card so it reads as a discrete strip, not a chip.
- */
-function LostAmountBanner({ amountUsd }: { amountUsd: number }) {
-  return (
-    <div className="flex items-baseline justify-between gap-3 border-y-2 border-red-700 bg-red-50/40 px-3 py-2">
-      <span className="text-[10px] uppercase tracking-widest font-black text-red-700">
-        [$ lost]
-      </span>
-      <span className="font-mono font-black text-red-700 text-2xl sm:text-3xl tracking-tight tabular-nums">
-        {formatAmountUsd(amountUsd)}
-      </span>
-    </div>
   )
 }
 
