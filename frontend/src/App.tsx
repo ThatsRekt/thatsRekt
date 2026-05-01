@@ -141,11 +141,24 @@ function Header() {
   return (
     <header ref={wrapperRef} className="relative border-b-2 border-black pb-3">
       <div className="flex items-baseline justify-between gap-x-4">
+        {/* Logo + wordmark. Pixel-art skull/crossbones/ETH-diamond
+            sits left of the brutalist text wordmark. Image height
+            matches the wordmark cap-height visually (size set on
+            sm+ to align with text-5xl). */}
         <Link
           to="/"
-          className="font-black uppercase tracking-tighter text-4xl sm:text-5xl leading-none"
+          className="inline-flex items-center gap-2 sm:gap-3 leading-none"
+          aria-label="thatsRekt home"
         >
-          thats<span className="text-red-600">rekt</span>
+          <img
+            src="/logo.jpg"
+            alt=""
+            aria-hidden="true"
+            className="h-9 w-9 sm:h-11 sm:w-11 shrink-0"
+          />
+          <span className="font-black uppercase tracking-tighter text-4xl sm:text-5xl">
+            thats<span className="text-red-600">rekt</span>
+          </span>
         </Link>
 
         {/* Desktop CTAs + connected account chip — hidden on mobile,

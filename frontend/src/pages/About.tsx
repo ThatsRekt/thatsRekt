@@ -93,7 +93,14 @@ function Hero() {
       <p className="text-lg sm:text-xl leading-tight text-neutral-900 font-black tracking-tight max-w-2xl">
         thatsRekt is the on-chain hack alert registry — a public list
         of active on-chain exploits across every EVM chain, reported
-        as they happen by vetted security teams.
+        as they happen by vetted security firms and industry peers.
+      </p>
+      <p className="text-base leading-relaxed text-neutral-800">
+        Two kinds of guardians keep the registry honest. Security
+        firms are fast — they spot exploits in flight and post the
+        alert first. High-signal industry peers are the second line:
+        they confirm or refute the report on-chain so consumers
+        downstream can trust what they read.
       </p>
       <p className="text-base leading-relaxed text-neutral-800">
         Other apps read the list. A wallet can warn before sending
