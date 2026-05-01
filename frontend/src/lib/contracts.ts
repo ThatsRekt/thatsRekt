@@ -11,10 +11,12 @@
  * accepts the keys we pass back via `chainsWithRegistry()` without a cast.
  */
 export const REGISTRY_PROXIES = {
-  // TODO(deploy): replace placeholder after fresh Base deploy with
-  // purgeAdmin governance role. Operator updates this address post-deploy
-  // before re-running the indexer / shipping the frontend.
-  8453: '0x0000000000000000000000000000000000000000', // Base — placeholder pending purge-admin redeploy
+  // Base mainnet — this is the *legacy* proxy without purgeAdmin. The
+  // new purge-capable contract is being tested on Base Sepolia first;
+  // when that lands, we'll fresh-deploy on Base mainnet at a new
+  // address and swap this entry. Until then, prod runs against the
+  // legacy contract so the feed/voting/posting all still work.
+  8453: '0x390f7b37545CaD278dD3DADC92a20b9f45865936',
 } as const satisfies Record<number, `0x${string}`>
 
 /** Chain IDs that have a deployed registry. Literal-narrowed for wagmi. */
