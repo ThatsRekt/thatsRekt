@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
+import { TgChannelCTA } from './TgChannelCTA'
 
 const STORAGE_KEY = 'thatsrekt_tldr_dismissed_v1'
 
@@ -78,6 +79,9 @@ export function FeedTLDR() {
           integrate →
         </Link>
       </p>
+      <div className="mt-4">
+        <TgChannelCTA variant="panel" />
+      </div>
     </section>
   )
 }

@@ -9,6 +9,8 @@ import { Docs } from './pages/Docs'
 import { IS_MOCK_MODE } from './lib/queries'
 import { useHasPosts } from './hooks/useHasPosts'
 import { PostAlertButton, AccountChip } from './components/PostAlertButton'
+import { TgChannelCTA } from './components/TgChannelCTA'
+import { Footer } from './components/Footer'
 
 const NAV_LINKS: { to: string; label: string }[] = [
   { to: '/', label: 'feed' },
@@ -131,12 +133,13 @@ function Header() {
             mobile, replaced by hamburger. AccountChip self-hides when
             no wallet is connected. */}
         <div className="hidden sm:flex items-center gap-x-4">
-          <nav className="flex flex-wrap gap-x-4 gap-y-1 text-xs uppercase tracking-widest">
+          <nav className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs uppercase tracking-widest">
             {visibleNavLinks.map((l) => (
               <Link key={l.to} to={l.to} className="rekt-link">
                 {l.label}
               </Link>
             ))}
+            <TgChannelCTA variant="pill" />
           </nav>
           <PostAlertButton variant="desktop" />
           <AccountChip />
@@ -189,6 +192,17 @@ function Header() {
                 </Link>
               </li>
             ))}
+            <li>
+              <a
+                href="https://t.me/thatsrekt_alerts"
+                target="_blank"
+                rel="noreferrer noopener"
+                onClick={() => setMenuOpen(false)}
+                className="block px-4 py-3 text-sm uppercase tracking-widest font-black hover:bg-yellow-100 active:bg-yellow-200"
+              >
+                telegram <span aria-hidden="true">↗</span>
+              </a>
+            </li>
           </ul>
         </nav>
       )}
@@ -229,24 +243,6 @@ function CloseIcon() {
         clipRule="evenodd"
       />
     </svg>
-  )
-}
-
-function Footer() {
-  return (
-    <footer className="mt-16 border-t border-black pt-4 text-xs text-neutral-700">
-      <p className="uppercase tracking-widest">
-        public good · source on{' '}
-        <a
-          href="https://github.com/JeronimoHoulin/thatsRekt"
-          target="_blank"
-          rel="noreferrer"
-          className="rekt-link"
-        >
-          github
-        </a>
-      </p>
-    </footer>
   )
 }
 

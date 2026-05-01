@@ -1,6 +1,7 @@
 import { Maintainers } from '../components/Maintainers'
 import { DonateAddress } from '../components/DonateAddress'
 import { BecomeAPosterCallout } from '../components/BecomeAPosterCallout'
+import { TgChannelCTA } from '../components/TgChannelCTA'
 
 /**
  * "About thatsRekt." Four-section narrative:
@@ -21,6 +22,7 @@ export function About() {
       <HowItWorks />
       <WaysToUse />
       <Maintainers />
+      <GetAlertsSection />
       <DonateSection />
     </article>
   )
@@ -171,6 +173,28 @@ function Bullet({
         {children}
       </p>
     </div>
+  )
+}
+
+/**
+ * "Get alerts" section — a low-friction CTA for visitors who don't run
+ * detectors but want to follow live posts. Lives between the
+ * maintainers block and the donate block: by the time a reader's
+ * scrolled this far they've earned an obvious next-step.
+ */
+function GetAlertsSection() {
+  return (
+    <section className="space-y-4">
+      <header className="space-y-1">
+        <h2 className="font-black uppercase tracking-tighter text-2xl sm:text-3xl leading-none">
+          get alerts
+        </h2>
+        <p className="text-xs uppercase tracking-widest text-neutral-700">
+          [follow live posts on telegram]
+        </p>
+      </header>
+      <TgChannelCTA variant="panel" />
+    </section>
   )
 }
 
