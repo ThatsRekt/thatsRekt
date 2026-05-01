@@ -4,9 +4,37 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="description" content="thatsRekt — public-good on-chain hack alert registry" />
     <meta name="color-scheme" content="dark" />
-    <title>thatsRekt</title>
+
+    <!--
+      Browser-tab + search-engine metadata for the SPA shell. These
+      apply to every route EXCEPT `/post/:chain/:postId`, where Mesh's
+      server-side OG renderer takes over with per-post values.
+    -->
+    <title>thatsRekt — real-time on-chain hack alerts</title>
+    <meta
+      name="description"
+      content="Public-good on-chain registry of hack alerts for EVM chains. Whitelisted security teams post structured alerts the moment they spot a live exploit — attacker addresses, victim contracts, free-form context. Read on-chain or via the Telegram channel."
+    />
+
+    <!-- Open Graph (Telegram, Discord, LinkedIn, etc. when the homepage URL is shared) -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="thatsRekt" />
+    <meta property="og:title" content="thatsRekt — real-time on-chain hack alerts" />
+    <meta
+      property="og:description"
+      content="Public-good on-chain registry of hack alerts for EVM chains. Whitelisted security teams post the moment they spot a live exploit."
+    />
+    <meta property="og:url" content="https://thatsrekt.com/" />
+
+    <!-- Twitter / X -->
+    <meta name="twitter:card" content="summary" />
+    <meta name="twitter:site" content="@ThatsRekt_" />
+    <meta name="twitter:title" content="thatsRekt — real-time on-chain hack alerts" />
+    <meta
+      name="twitter:description"
+      content="Public-good on-chain registry of hack alerts for EVM chains."
+    />
   </head>
   <body>
     <div id="root"></div>

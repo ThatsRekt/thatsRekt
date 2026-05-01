@@ -1,18 +1,18 @@
 import { Maintainers } from '../components/Maintainers'
 import { DonateAddress } from '../components/DonateAddress'
 import { BecomeAPosterCallout } from '../components/BecomeAPosterCallout'
+import { TgChannelCTA } from '../components/TgChannelCTA'
 
 /**
- * "About thatsRekt." Four-section narrative:
+ * "About thatsRekt." Five-section narrative:
  *
  *   1. Hero          — the elevator pitch
  *   2. How it works  — posts / governance / reads (terse)
- *   3. Maintainers   — who runs it
- *   4. Donate        — how to support
- *
- * The "for protocol teams" yellow callout was deliberately removed —
- * a curious integrator can find /docs from the top nav without being
- * funneled there. Better to under-sell than over-funnel.
+ *   3. Ways to use   — concrete scenarios for visitors
+ *   4. Get alerts    — Telegram channel CTA (high-intent placement
+ *                       directly after "ways to use" is read)
+ *   5. Maintainers   — who runs it
+ *   6. Donate        — how to support
  */
 export function About() {
   return (
@@ -20,6 +20,7 @@ export function About() {
       <Hero />
       <HowItWorks />
       <WaysToUse />
+      <GetAlertsSection />
       <Maintainers />
       <DonateSection />
     </article>
@@ -171,6 +172,28 @@ function Bullet({
         {children}
       </p>
     </div>
+  )
+}
+
+/**
+ * "Get alerts" section — a low-friction CTA for visitors who don't run
+ * detectors but want to follow live posts. Lives between the
+ * maintainers block and the donate block: by the time a reader's
+ * scrolled this far they've earned an obvious next-step.
+ */
+function GetAlertsSection() {
+  return (
+    <section className="space-y-4">
+      <header className="space-y-1">
+        <h2 className="font-black uppercase tracking-tighter text-2xl sm:text-3xl leading-none">
+          get alerts
+        </h2>
+        <p className="text-xs uppercase tracking-widest text-neutral-700">
+          [follow live posts on telegram]
+        </p>
+      </header>
+      <TgChannelCTA variant="panel" />
+    </section>
   )
 }
 

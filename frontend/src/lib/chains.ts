@@ -173,3 +173,23 @@ export const explorerAddressUrl = (chain: FrontendChain, addr: string): string =
 
 export const explorerTxUrl = (chain: FrontendChain, txHash: string): string =>
   `${chain.explorer}/tx/${txHash}`
+
+/**
+ * How many confirmations a tx needs before we tell the user it's
+ * "truly confirmed". L2 rollups have effectively 1-block finality for
+ * casual reads (sequencer-soft), so we don't burn the user's time.
+ * Mainnet matters more — uncle-rate is non-zero and a single-block
+ * confirm can still re-org. Numbers chosen are conservative defaults
+ * for a non-financial UX (a hack alert isn't a $1M trade).
+ */
+export const requiredConfirmations = (chainId: number): number => {
+  switch (chainId) {
+    case 1:        return 3   // Ethereum mainnet
+    case 8453:     return 1   // Base
+    case 10:       return 1   // Optimism
+    case 42161:    return 1   // Arbitrum
+    case 137:      return 5   // Polygon (probabilistic finality)
+    case 56:       return 3   // BSC
+    default:       return 1
+  }
+}

@@ -144,6 +144,34 @@ const truncate = (input: string, max = MAX_DESC_LEN): string => {
 }
 
 // ---------------------------------------------------------------------------
+// Markdown → plain text
+// ---------------------------------------------------------------------------
+//
+// Twitter, Telegram, Slack, Discord, etc. render the og:description as
+// raw text — Markdown syntax leaks through as backticks, asterisks, and
+// `[text](url)` blobs that look broken. The post body is rendered as
+// Markdown in the SPA, but here we want a clean plaintext slice.
+//
+// Deliberately a tiny inline pass instead of a full markdown parser:
+// the description is at most ~280 chars and we only need to strip the
+// most common syntax. Worst-case false negatives (uncommon constructs
+// passing through) are cosmetic, not security-relevant.
+const markdownToPlain = (s: string, maxLen = MAX_DESC_LEN): string => {
+  const stripped = s
+    .replace(/```[\s\S]*?```/g, ' ') // fenced code blocks → space
+    .replace(/`([^`]*)`/g, '$1') // inline code → contents
+    .replace(/^\s{0,3}#+\s+/gm, '') // ATX headings → drop the leading hashes
+    .replace(/(\*\*|__)(.*?)\1/g, '$2') // bold → contents
+    .replace(/(\*|_)(.*?)\1/g, '$2') // italic → contents
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1') // links → just the label
+    .replace(/!\[([^\]]*)\]\([^)]+\)/g, '$1') // images → alt text (or nothing)
+    .replace(/^\s{0,3}>\s?/gm, '') // blockquote markers
+    .replace(/\s+/g, ' ')
+    .trim()
+  return stripped.length > maxLen ? `${stripped.slice(0, maxLen - 1)}…` : stripped
+}
+
+// ---------------------------------------------------------------------------
 // Description builder
 // ---------------------------------------------------------------------------
 //
@@ -174,9 +202,15 @@ const buildDescription = (post: RawPost): string => {
   }
   if (post.note?.trim()) {
     // Prepend the note body when there's room — gives the card real
-    // signal beyond the boilerplate counters. Note already free-form,
-    // already escaped at render time.
-    return truncate(`${post.note.trim()} — ${parts.join(' · ')}`)
+    // signal beyond the boilerplate counters. The note is Markdown in
+    // the SPA, but social-card scrapers render the description as raw
+    // text, so we strip syntax (fences, inline code, headings,
+    // bold/italic, link wrappers) here. Bound by markdownToPlain's own
+    // maxLen so an enormous post can't blow past the description cap.
+    const noteText = markdownToPlain(post.note)
+    if (noteText) {
+      return truncate(`${noteText} — ${parts.join(' · ')}`)
+    }
   }
   return truncate(parts.join(' · '))
 }
@@ -428,6 +462,7 @@ export const __internal = Object.freeze({
   buildDescription,
   escapeHtml,
   truncate,
+  markdownToPlain,
   CRAWLER_UA_FRAGMENTS,
 })
 

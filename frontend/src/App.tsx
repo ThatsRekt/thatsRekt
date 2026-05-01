@@ -9,6 +9,8 @@ import { Docs } from './pages/Docs'
 import { IS_MOCK_MODE } from './lib/queries'
 import { useHasPosts } from './hooks/useHasPosts'
 import { PostAlertButton, AccountChip } from './components/PostAlertButton'
+import { TgChannelCTA, GetAlertsButton } from './components/TgChannelCTA'
+import { Footer } from './components/Footer'
 
 const NAV_LINKS: { to: string; label: string }[] = [
   { to: '/', label: 'feed' },
@@ -20,6 +22,16 @@ const NAV_LINKS: { to: string; label: string }[] = [
 
 /** Routes that should disappear from nav + redirect to `/` when no posts exist. */
 const POST_GATED_ROUTES = new Set(['/leaderboard'])
+
+/**
+ * Hard kill switch for the leaderboard surface. The page is rendered
+ * but intentionally not exposed yet — flip to true when we're ready
+ * to activate it. Independent of `hasPosts`: even with posts on chain,
+ * we don't want the link in the nav until we've validated the
+ * leaderboard's data + math against real data.
+ */
+const LEADERBOARD_ENABLED = false
+const HARD_DISABLED_ROUTES = new Set(LEADERBOARD_ENABLED ? [] : ['/leaderboard'])
 
 export function App() {
   return (
@@ -65,6 +77,8 @@ export function App() {
  */
 function LeaderboardGate() {
   const { hasPosts, isLoading } = useHasPosts()
+  // Hard disable: bounce direct URL access too, matching the nav-hide.
+  if (!LEADERBOARD_ENABLED) return <Navigate to="/" replace />
   if (isLoading) {
     return (
       <div className="py-16 text-center">
@@ -89,6 +103,9 @@ function Header() {
   // avoids a flicker where the link appears for a tick and then
   // vanishes once the gate query resolves.
   const visibleNavLinks = NAV_LINKS.filter((l) => {
+    // Hard kill switch always wins — even with posts on chain we still
+    // hide leaderboard until LEADERBOARD_ENABLED is flipped.
+    if (HARD_DISABLED_ROUTES.has(l.to)) return false
     if (!POST_GATED_ROUTES.has(l.to)) return true
     return !hasPostsLoading && hasPosts
   })
@@ -127,17 +144,14 @@ function Header() {
           thats<span className="text-red-600">rekt</span>
         </Link>
 
-        {/* Desktop nav + post CTA + connected account chip — hidden on
-            mobile, replaced by hamburger. AccountChip self-hides when
-            no wallet is connected. */}
-        <div className="hidden sm:flex items-center gap-x-4">
-          <nav className="flex flex-wrap gap-x-4 gap-y-1 text-xs uppercase tracking-widest">
-            {visibleNavLinks.map((l) => (
-              <Link key={l.to} to={l.to} className="rekt-link">
-                {l.label}
-              </Link>
-            ))}
-          </nav>
+        {/* Desktop CTAs + connected account chip — hidden on mobile,
+            replaced by hamburger. AccountChip self-hides when no
+            wallet is connected. The nav itself is moved to its own
+            row below the tagline so it doesn't compete with the
+            buttons for horizontal space (logo + nav + buttons + chip
+            in one row was wrapping awkwardly at desktop widths). */}
+        <div className="hidden sm:flex items-center gap-x-3">
+          <GetAlertsButton variant="desktop" />
           <PostAlertButton variant="desktop" />
           <AccountChip />
         </div>
@@ -160,9 +174,21 @@ function Header() {
         </button>
       </div>
 
-      <p className="mt-2 text-xs uppercase tracking-widest text-neutral-700">
-        on-chain hack alert registry for public good
-      </p>
+      {/* Sub-strip: tagline (left) + desktop nav (right) on the same
+          horizontal level. Putting the nav here gives it room to
+          breathe — no more competing with the right-side CTAs. */}
+      <div className="mt-2 flex flex-wrap items-baseline justify-between gap-x-6 gap-y-1">
+        <p className="text-xs uppercase tracking-widest text-neutral-700">
+          on-chain hack alert registry for public good
+        </p>
+        <nav className="hidden sm:flex flex-wrap items-baseline gap-x-4 gap-y-1 text-xs uppercase tracking-widest">
+          {visibleNavLinks.map((l) => (
+            <Link key={l.to} to={l.to} className="rekt-link">
+              {l.label}
+            </Link>
+          ))}
+        </nav>
+      </div>
 
       {/* Mobile dropdown panel — only mounts when open + only visible
           below sm breakpoint. Sharp brutalist card with hard offset
@@ -172,8 +198,13 @@ function Header() {
           id="mobile-nav-menu"
           className="sm:hidden absolute right-0 top-full z-30 mt-1 w-56 border-2 border-black bg-[#f5f4ee] shadow-[4px_4px_0_0_#000]"
         >
-          {/* Primary CTA at the top so it's the first thing thumb-reaches. */}
-          <PostAlertButton
+          {/* Mobile: only Get Alerts. Post is desktop-only — composing
+              a structured alert from a phone is friction-heavy (wallet
+              connect + signing on small screen + careful address
+              entry), and the audience for posting (whitelisted security
+              teams) is desktop-bound by their workflow. Mobile users
+              are readers; route them to the live channel instead. */}
+          <GetAlertsButton
             variant="mobile"
             onAfterClick={() => setMenuOpen(false)}
           />
@@ -229,24 +260,6 @@ function CloseIcon() {
         clipRule="evenodd"
       />
     </svg>
-  )
-}
-
-function Footer() {
-  return (
-    <footer className="mt-16 border-t border-black pt-4 text-xs text-neutral-700">
-      <p className="uppercase tracking-widest">
-        public good · source on{' '}
-        <a
-          href="https://github.com/JeronimoHoulin/thatsRekt"
-          target="_blank"
-          rel="noreferrer"
-          className="rekt-link"
-        >
-          github
-        </a>
-      </p>
-    </footer>
   )
 }
 
