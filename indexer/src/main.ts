@@ -326,6 +326,13 @@ async function handleConfirmed(ctx: Ctx, caches: Caches, log: Log): Promise<void
     ctx.log.warn(`Confirmed event references unknown postId=${postId}; skipping`)
     return
   }
+  // Defensive: contract reverts on purged posts (PostIsPurged) so we should
+  // never see this. Guard anyway for legacy events from any earlier
+  // pre-fix contract version that may still be on-chain.
+  if (post.purged) {
+    ctx.log.warn(`Confirmed on purged post ${postId}; skipping`)
+    return
+  }
 
   // Maintain post.confirmations / post.disconfirmations counters per direction transition.
   if (oldDir === ConfirmDirection.Up) post.confirmations -= 1
@@ -389,6 +396,14 @@ async function handlePostRemoved(ctx: Ctx, caches: Caches, log: Log): Promise<vo
   const post = await getOrCreatePost(ctx, caches, postId)
   if (!post) {
     ctx.log.warn(`PostRemoved event references unknown postId=${postId}; skipping`)
+    return
+  }
+  // Defensive: contract reverts retract on purged posts (PostIsPurged) so a
+  // PostRemoved event after a PostPurged should not occur from a fixed
+  // contract. Skip to avoid double-reversing aggregates if a legacy event
+  // sneaks through.
+  if (post.purged) {
+    ctx.log.warn(`PostRemoved on purged post ${postId}; skipping`)
     return
   }
   if (post.removed) return  // idempotent
@@ -478,6 +493,12 @@ async function handlePostNoteAmended(
     ctx.log.warn(`PostNoteAmended references unknown postId=${postId}; skipping`)
     return
   }
+  // Defensive: contract reverts amendNote on purged posts (PostIsPurged).
+  // Guard for legacy events from any pre-fix contract version on-chain.
+  if (post.purged) {
+    ctx.log.warn(`PostNoteAmended on purged post ${postId}; skipping`)
+    return
+  }
   post.note = e.newNote
   post.lastUpdatedAt = ts
 
@@ -509,6 +530,12 @@ async function handlePostTitleAmended(
     ctx.log.warn(`PostTitleAmended references unknown postId=${postId}; skipping`)
     return
   }
+  // Defensive: contract reverts amendTitle on purged posts (PostIsPurged).
+  // Guard for legacy events from any pre-fix contract version on-chain.
+  if (post.purged) {
+    ctx.log.warn(`PostTitleAmended on purged post ${postId}; skipping`)
+    return
+  }
   post.title = e.newTitle
   post.lastUpdatedAt = ts
 
@@ -538,6 +565,12 @@ async function handleAttackersAdded(
   const post = await getOrCreatePost(ctx, caches, postId)
   if (!post) {
     ctx.log.warn(`AttackersAdded references unknown postId=${postId}; skipping`)
+    return
+  }
+  // Defensive: contract reverts addAttackers on purged posts (PostIsPurged).
+  // Skip to avoid pumping appearances/score from any pre-fix legacy event.
+  if (post.purged) {
+    ctx.log.warn(`AttackersAdded on purged post ${postId}; skipping`)
     return
   }
   post.lastUpdatedAt = ts
@@ -576,6 +609,12 @@ async function handleVictimsAdded(
   const post = await getOrCreatePost(ctx, caches, postId)
   if (!post) {
     ctx.log.warn(`VictimsAdded references unknown postId=${postId}; skipping`)
+    return
+  }
+  // Defensive: contract reverts addVictims on purged posts (PostIsPurged).
+  // Skip to avoid flipping isVictim from any pre-fix legacy event.
+  if (post.purged) {
+    ctx.log.warn(`VictimsAdded on purged post ${postId}; skipping`)
     return
   }
   post.lastUpdatedAt = ts

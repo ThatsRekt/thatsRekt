@@ -310,6 +310,7 @@ contract ThatsRekt is Initializable, Ownable2StepUpgradeable, UUPSUpgradeable {
     error Unauthorized();
     error PosterCannotConfirm();
     error PostIsRemoved();
+    error PostIsPurged();
     error PostNotFound();
     error NoConfirmationChange();
     error EmptyPost();
@@ -755,6 +756,7 @@ contract ThatsRekt is Initializable, Ownable2StepUpgradeable, UUPSUpgradeable {
         Post storage p = _posts[postId];
         if (p.poster == address(0))   revert PostNotFound();
         if (p.removed)                revert PostIsRemoved();
+        if (p.purged)                 revert PostIsPurged();
         if (p.poster == msg.sender)   revert PosterCannotConfirm();
 
         ConfirmDirection oldDir = confirmationOf[postId][msg.sender];
@@ -788,6 +790,7 @@ contract ThatsRekt is Initializable, Ownable2StepUpgradeable, UUPSUpgradeable {
         Post storage p = _posts[postId];
         if (p.poster == address(0)) revert PostNotFound();
         if (p.removed)              revert PostIsRemoved();
+        if (p.purged)               revert PostIsPurged();
 
         ConfirmDirection oldDir = confirmationOf[postId][msg.sender];
         if (oldDir == ConfirmDirection.None) revert NothingToUnconfirm();
@@ -872,6 +875,7 @@ contract ThatsRekt is Initializable, Ownable2StepUpgradeable, UUPSUpgradeable {
         if (p.poster == address(0))     revert PostNotFound();
         if (p.poster != msg.sender)     revert NotPoster();
         if (p.removed)                  revert PostIsRemoved();
+        if (p.purged)                   revert PostIsPurged();
         _removePost(postId, RemovalReason.Retracted);
     }
 
@@ -961,6 +965,7 @@ contract ThatsRekt is Initializable, Ownable2StepUpgradeable, UUPSUpgradeable {
         if (p.poster == address(0))   revert PostNotFound();
         if (p.poster != msg.sender)   revert NotPoster();
         if (p.removed)                revert PostIsRemoved();
+        if (p.purged)                 revert PostIsPurged();
 
         p.lastUpdatedAt = uint64(block.timestamp);
 
@@ -978,6 +983,7 @@ contract ThatsRekt is Initializable, Ownable2StepUpgradeable, UUPSUpgradeable {
         if (p.poster == address(0))   revert PostNotFound();
         if (p.poster != msg.sender)   revert NotPoster();
         if (p.removed)                revert PostIsRemoved();
+        if (p.purged)                 revert PostIsPurged();
 
         uint256 titleLen = bytes(newTitle).length;
         if (titleLen == 0)            revert TitleEmpty();
@@ -1018,6 +1024,7 @@ contract ThatsRekt is Initializable, Ownable2StepUpgradeable, UUPSUpgradeable {
         if (p.poster == address(0))   revert PostNotFound();
         if (p.poster != msg.sender)   revert NotPoster();
         if (p.removed)                revert PostIsRemoved();
+        if (p.purged)                 revert PostIsPurged();
         if (newAttackers.length == 0) revert EmptyAdditions();
         // Cap is total addresses (attackers + victims), matching `post()`.
         // Checking only one array would let the post grow past the cap by
@@ -1061,6 +1068,7 @@ contract ThatsRekt is Initializable, Ownable2StepUpgradeable, UUPSUpgradeable {
         if (p.poster == address(0))   revert PostNotFound();
         if (p.poster != msg.sender)   revert NotPoster();
         if (p.removed)                revert PostIsRemoved();
+        if (p.purged)                 revert PostIsPurged();
         if (newVictims.length == 0)   revert EmptyAdditions();
         // Cap is total addresses across both arrays — see `addAttackers`.
         if (p.attackers.length + p.victims.length + newVictims.length > MAX_ADDRESSES_PER_POST) {
