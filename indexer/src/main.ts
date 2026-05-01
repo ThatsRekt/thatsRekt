@@ -194,6 +194,58 @@ async function getOrCreatePostVictim(
   return link
 }
 
+// Merge DB rows with same-batch cache entries for PostAttacker / PostVictim
+// lookups by post id. `ctx.store.find` only sees persisted rows; entries
+// created earlier in THIS batch (e.g. PostCreated followed by Confirmed in
+// the same Subsquid hot batch) live only in the cache Map and would be
+// missed otherwise — silently dropping score deltas / aggregate reversals.
+//
+// DB rows win on id collisions: cache may hold an entry that was loaded
+// via `ctx.store.get(PostAttacker, id)` in `getOrCreatePostAttacker`'s
+// "already exists" path, which does NOT populate the `address` relation.
+// The DB `find` here uses `relations: { address: true }`, so the DB copy
+// always has a usable `address` ref. Same-batch cache-only entries (built
+// via `new PostAttacker({ ..., address })`) get added afterwards because
+// they are NOT in the DB yet — and they carry their address from the
+// constructor, so the score-delta loop can read `link.address.id` safely.
+async function getPostAttackerLinks(
+  ctx: Ctx,
+  caches: Caches,
+  postId: string,
+): Promise<PostAttacker[]> {
+  const dbLinks = await ctx.store.find(PostAttacker, {
+    where: { post: { id: postId } },
+    relations: { address: true },
+  })
+  const byId = new Map<string, PostAttacker>()
+  for (const l of dbLinks) byId.set(l.id, l)
+  for (const l of caches.postAttackers.values()) {
+    if (l.post.id !== postId) continue
+    if (byId.has(l.id)) continue
+    byId.set(l.id, l)
+  }
+  return [...byId.values()]
+}
+
+async function getPostVictimLinks(
+  ctx: Ctx,
+  caches: Caches,
+  postId: string,
+): Promise<PostVictim[]> {
+  const dbLinks = await ctx.store.find(PostVictim, {
+    where: { post: { id: postId } },
+    relations: { address: true },
+  })
+  const byId = new Map<string, PostVictim>()
+  for (const l of dbLinks) byId.set(l.id, l)
+  for (const l of caches.postVictims.values()) {
+    if (l.post.id !== postId) continue
+    if (byId.has(l.id)) continue
+    byId.set(l.id, l)
+  }
+  return [...byId.values()]
+}
+
 const directionFromUint8 = (n: number): ConfirmDirection => {
   switch (n) {
     case 0: return ConfirmDirection.None
@@ -300,11 +352,10 @@ async function handleConfirmed(ctx: Ctx, caches: Caches, log: Log): Promise<void
   posterProposer.lastUpdatedAtBlock = block.height
 
   // Apply attacker score delta — load every attacker linked to this post.
+  // Use the merge helper so same-batch PostAttacker entries (cache-only,
+  // not yet persisted) are still picked up.
   if (delta !== 0) {
-    const links = await ctx.store.find(PostAttacker, {
-      where: { post: { id: postId } },
-      relations: { address: true },
-    })
+    const links = await getPostAttackerLinks(ctx, caches, postId)
     for (const link of links) {
       const addrId = link.address.id
       const cached = caches.addresses.get(addrId) ?? link.address
@@ -346,11 +397,11 @@ async function handlePostRemoved(ctx: Ctx, caches: Caches, log: Log): Promise<vo
   post.removedAtTimestamp = ts
 
   // Reverse aggregates: subtract current netScore from each listed attacker;
-  // decrement victimActivePostCount for each listed victim.
-  const attackerLinks = await ctx.store.find(PostAttacker, {
-    where: { post: { id: postId } },
-    relations: { address: true },
-  })
+  // decrement victimActivePostCount for each listed victim. Use the merge
+  // helpers so same-batch links (cache-only, not yet persisted) are
+  // included — otherwise a post created and removed in the same batch
+  // would skip the reversal entirely.
+  const attackerLinks = await getPostAttackerLinks(ctx, caches, postId)
   const netAtRemoval = BigInt(post.netScore)
   for (const link of attackerLinks) {
     const addrId = link.address.id
@@ -359,10 +410,7 @@ async function handlePostRemoved(ctx: Ctx, caches: Caches, log: Log): Promise<vo
     caches.addresses.set(addrId, cached)
   }
 
-  const victimLinks = await ctx.store.find(PostVictim, {
-    where: { post: { id: postId } },
-    relations: { address: true },
-  })
+  const victimLinks = await getPostVictimLinks(ctx, caches, postId)
   for (const link of victimLinks) {
     const addrId = link.address.id
     const cached = caches.addresses.get(addrId) ?? link.address
