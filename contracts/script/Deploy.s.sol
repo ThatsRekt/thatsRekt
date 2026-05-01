@@ -6,16 +6,17 @@ import {ThatsRekt} from "../src/ThatsRekt.sol";
 import {TimelockController} from "@openzeppelin/contracts/governance/TimelockController.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 
-/// @notice Four-stage deterministic deploy of the v1 upgradeable system:
+/// @notice Five-stage deterministic deploy of the v1 upgradeable system:
 ///         (1) implementation, (2) upgrade TimelockController (7-day),
-///         (3) add TimelockController (3-day), (4) ERC1967Proxy. All
-///         four use CREATE2 via the singleton factory (`CREATE2_FACTORY`
-///         from forge-std/Base.sol) so addresses are identical on every
+///         (3) add TimelockController (3-day), (4) purge
+///         TimelockController (1-day), (5) ERC1967Proxy. All five use
+///         CREATE2 via the singleton factory (`CREATE2_FACTORY` from
+///         forge-std/Base.sol) so addresses are identical on every
 ///         chain that runs this script with the same
-///         `GOVERNANCE_OWNER`, `WHITELIST_OPERATOR`, and
-///         `INITIAL_WHITELISTERS`.
+///         `GOVERNANCE_OWNER`, `WHITELIST_OPERATOR`,
+///         `PURGE_REMOVER_EOA`, and `INITIAL_WHITELISTERS`.
 ///
-///         Three-role governance (asymmetric delays + asymmetric
+///         Five-role governance (asymmetric delays + asymmetric
 ///         operational ownership):
 ///           * `owner`            = upgrade TLC (7-day). Proposer/executor
 ///                                  is the GOVERNANCE_OWNER multisig
@@ -39,6 +40,24 @@ import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.s
 ///                                  the multisig (7-day) so the
 ///                                  kill-switch survives operator
 ///                                  compromise.
+///           * `purgeAdmin`       = purge TLC (1-day). Proposer/executor
+///                                  is the PURGE_REMOVER_EOA. 1-day
+///                                  delay so spam / illegal / abusive
+///                                  posts can be cleaned up promptly
+///                                  while still giving integrators an
+///                                  auditable public window before
+///                                  each purge lands.
+///           * `purgeRemover`     = PURGE_REMOVER_EOA directly —
+///                                  instant kill-switch on the
+///                                  `purgeAdmin` slot. Deliberately the
+///                                  same address that proposes purges
+///                                  on the 1-day TLC, so one principal
+///                                  can both schedule purges, cancel
+///                                  them mid-delay, AND neutralize
+///                                  the TLC role itself if compromised.
+///                                  Rotation is owner-only (7-day) so
+///                                  the purge kill-switch survives
+///                                  compromise of the EOA.
 ///
 ///         Both timelocks use `admin = address(0)` (the contracts
 ///         themselves), so role changes can only happen via timelocked
@@ -58,6 +77,20 @@ import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.s
 ///                                              Becomes proposer/executor on
 ///                                              the 3-day add TLC AND holds
 ///                                              the whitelistRemover slot.
+///           * PURGE_REMOVER_EOA    (optional) — Cold wallet (EOA or contract).
+///                                              Becomes (a) proposer/executor
+///                                              on the 1-day purge TLC and
+///                                              (b) the `purgeRemover` slot
+///                                              on the proxy — same principal
+///                                              proposes purges, cancels
+///                                              pending purges, AND holds
+///                                              the kill-switch on the
+///                                              `purgeAdmin` slot. Defaults
+///                                              to the canonical operator EOA
+///                                              (`0x5822B262EDdA82d2C6A436b598Ff96fA9AB894c4`).
+///                                              The purge TLC's address is
+///                                              installed as `purgeAdmin` on
+///                                              the proxy.
 ///           * INITIAL_WHITELISTERS (optional) — comma-separated address list,
 ///                                              e.g. "0xabc...,0xdef...".
 ///                                              Empty/unset → no pre-pop.
@@ -84,6 +117,11 @@ contract Deploy is Script {
     ///      bytecode/config changes.
     bytes32 public constant ADD_TIMELOCK_SALT = keccak256("thatsRekt.addTimelock.v1");
 
+    /// @dev 1-day TimelockController. Holds the `purgeAdmin` slot —
+    ///      governance-driven content moderation (`purgePost`). Bump
+    ///      only if its bytecode/config changes.
+    bytes32 public constant PURGE_TIMELOCK_SALT = keccak256("thatsRekt.purgeTimelock.v1");
+
     /// @dev NOT versioned — the proxy is the canonical permanent address
     ///      that integrators bake in. Never change this salt.
     bytes32 public constant PROXY_SALT = keccak256("thatsRekt.proxy");
@@ -102,6 +140,22 @@ contract Deploy is Script {
     ///      can react to a hostile rotation before it lands.
     uint256 public constant ADD_DELAY = 3 days;
 
+    /// @dev Purge window. 1 day balances "clean up illegal/spam content
+    ///      promptly" against "auditable public window". The purge
+    ///      action is moderator-flavored, not financial, so it doesn't
+    ///      warrant the longer integrator-disengage windows used for
+    ///      adds (3d) or upgrades (7d).
+    uint256 public constant PURGE_DELAY = 1 days;
+
+    /// @dev Default purge-remover EOA — the operator's cold
+    ///      wallet, picked by the operator. Same address fills two
+    ///      roles in production: proposer/canceller on the 1-day
+    ///      purge TLC, and the `purgeRemover` slot on the proxy.
+    ///      Override at runtime via `PURGE_REMOVER_EOA` env var. The
+    ///      default exists so a one-shot deploy without env vars
+    ///      still produces a sane CREATE2 address.
+    address public constant DEFAULT_PURGE_REMOVER_EOA = 0x5822B262EDdA82d2C6A436b598Ff96fA9AB894c4;
+
     function run() external {
         address multisig = vm.envAddress("GOVERNANCE_OWNER");
         require(multisig != address(0), "GOVERNANCE_OWNER env var is zero");
@@ -109,6 +163,9 @@ contract Deploy is Script {
 
         address operator = vm.envAddress("WHITELIST_OPERATOR");
         require(operator != address(0), "WHITELIST_OPERATOR env var is zero");
+
+        address purgeRemoverEOA = _readPurgeRemoverOrDefault();
+        require(purgeRemoverEOA != address(0), "PURGE_REMOVER_EOA resolved to zero");
 
         address[] memory initialWhitelisters = _readInitialWhitelisters();
 
@@ -143,17 +200,40 @@ contract Deploy is Script {
         );
         address addTimelock = _create2(ADD_TIMELOCK_SALT, addTLInitCode, "addTimelock");
 
-        // === 4. ERC1967Proxy.
+        // === 4. Purge TimelockController — purge-remover EOA as proposer/executor.
+        // Governance-driven content moderation. 1-day delay so spam /
+        // illegal / abusive posts can be cleaned up promptly while still
+        // giving integrators a public audit window before each purge
+        // lands. The same EOA is also installed as the proxy's
+        // `purgeRemover` slot below, so it can both (a) cancel a
+        // pending purge on this TLC before the 1-day delay elapses and
+        // (b) instantly revoke `purgeAdmin` on the proxy if this TLC
+        // is captured. `address(0)` admin: role rotations on this TLC
+        // must go through this TLC itself.
+        address[] memory purgeProposers = new address[](1);
+        purgeProposers[0] = purgeRemoverEOA;
+        address[] memory purgeExecutors = new address[](1);
+        purgeExecutors[0] = purgeRemoverEOA;
+        bytes memory purgeTLInitCode = abi.encodePacked(
+            type(TimelockController).creationCode,
+            abi.encode(PURGE_DELAY, purgeProposers, purgeExecutors, address(0))
+        );
+        address purgeTimelock = _create2(PURGE_TIMELOCK_SALT, purgeTLInitCode, "purgeTimelock");
+
+        // === 5. ERC1967Proxy.
         //   - owner            = upgradeTimelock (7-day)
         //   - whitelistAdmin   = addTimelock     (3-day, operator-proposed)
-        //   - whitelistRemover = operator        (instant kill-switch)
+        //   - whitelistRemover = operator        (instant whitelist kill-switch)
+        //   - purgeAdmin       = purgeTimelock   (1-day, purge-remover-proposed)
+        //   - purgeRemover     = purgeRemoverEOA (instant purge kill-switch +
+        //                                          purge TLC canceller)
         //   - initialWhitelisters = pre-populated at init
         // The proxy's init code embeds (impl, initCalldata); identical
-        // across chains for the same (multisig, operator, initial list)
-        // triple, so the CREATE2 address is identical.
+        // across chains for the same (multisig, operator, purgeRemover,
+        // initial list) tuple, so the CREATE2 address is identical.
         bytes memory initCalldata = abi.encodeCall(
             ThatsRekt.initialize,
-            (upgradeTimelock, addTimelock, operator, initialWhitelisters)
+            (upgradeTimelock, addTimelock, operator, purgeTimelock, purgeRemoverEOA, initialWhitelisters)
         );
         bytes memory proxyInitCode = abi.encodePacked(
             type(ERC1967Proxy).creationCode,
@@ -164,12 +244,29 @@ contract Deploy is Script {
         console2.log("Implementation:        ", impl);
         console2.log("Upgrade TLC (7-day):   ", upgradeTimelock);
         console2.log("Add TLC (3-day):       ", addTimelock);
+        console2.log("Purge TLC (1-day):     ", purgeTimelock);
         console2.log("Multisig (gov):        ", multisig);
         console2.log("Operator (whitelister):", operator);
+        console2.log("Purge remover EOA:     ", purgeRemoverEOA);
+        console2.log("  (also: purgeAdmin    = Purge TLC, purgeRemover = same EOA)");
         console2.log("Proxy:                 ", proxy);
         console2.log("Initial whitelisters:  ", initialWhitelisters.length);
         for (uint256 i; i < initialWhitelisters.length; ++i) {
             console2.log("  -", initialWhitelisters[i]);
+        }
+    }
+
+    /// @dev Reads `PURGE_REMOVER_EOA` env. Empty/unset → fallback to the
+    ///      hardcoded operator cold wallet
+    ///      (`DEFAULT_PURGE_REMOVER_EOA`), which is what the operator
+    ///      asked us to use for v1.3 deploys. Documented and overridable
+    ///      so testnet rehearsals can swap in a different EOA without
+    ///      touching this script.
+    function _readPurgeRemoverOrDefault() internal view returns (address) {
+        try vm.envAddress("PURGE_REMOVER_EOA") returns (address eoa) {
+            return eoa == address(0) ? DEFAULT_PURGE_REMOVER_EOA : eoa;
+        } catch {
+            return DEFAULT_PURGE_REMOVER_EOA;
         }
     }
 

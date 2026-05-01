@@ -63,6 +63,8 @@ contract ThatsRektUpgradeTest is Test {
             makeAddr("anotherOwner"),
             makeAddr("anotherAdmin"),
             makeAddr("anotherRemover"),
+            makeAddr("anotherPurger"),
+            makeAddr("anotherPurgeRem"),
             new address[](0)
         );
     }
@@ -71,7 +73,7 @@ contract ThatsRektUpgradeTest is Test {
         ThatsRekt impl = new ThatsRekt();
         bytes memory initCalldata = abi.encodeCall(
             ThatsRekt.initialize,
-            (address(0), makeAddr("admin"), makeAddr("remover"), new address[](0))
+            (address(0), makeAddr("admin"), makeAddr("remover"), makeAddr("purger"), makeAddr("purgeRem"), new address[](0))
         );
         // Proxy ctor delegate-calls initialize, which reverts in
         // OwnableUpgradeable; the revert bubbles up unchanged.
@@ -83,7 +85,7 @@ contract ThatsRektUpgradeTest is Test {
         ThatsRekt impl = new ThatsRekt();
         bytes memory initCalldata = abi.encodeCall(
             ThatsRekt.initialize,
-            (makeAddr("owner"), address(0), makeAddr("remover"), new address[](0))
+            (makeAddr("owner"), address(0), makeAddr("remover"), makeAddr("purger"), makeAddr("purgeRem"), new address[](0))
         );
         vm.expectRevert(ThatsRekt.ZeroAddress.selector);
         new ERC1967Proxy(address(impl), initCalldata);
@@ -93,7 +95,7 @@ contract ThatsRektUpgradeTest is Test {
         ThatsRekt impl = new ThatsRekt();
         bytes memory initCalldata = abi.encodeCall(
             ThatsRekt.initialize,
-            (makeAddr("owner"), makeAddr("admin"), address(0), new address[](0))
+            (makeAddr("owner"), makeAddr("admin"), address(0), makeAddr("purger"), makeAddr("purgeRem"), new address[](0))
         );
         vm.expectRevert(ThatsRekt.ZeroAddress.selector);
         new ERC1967Proxy(address(impl), initCalldata);
@@ -106,7 +108,7 @@ contract ThatsRektUpgradeTest is Test {
         // closes the well-known foothold of taking over the impl's
         // owner slot via a public initialize on the logic contract.
         vm.expectRevert(Initializable.InvalidInitialization.selector);
-        impl.initialize(multisig, multisig, multisig, new address[](0));
+        impl.initialize(multisig, multisig, multisig, multisig, multisig, new address[](0));
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -227,27 +229,30 @@ contract ThatsRektUpgradeTest is Test {
         //   slot  0  isWhitelisted        (mapping → reads as 0)
         //   slot  1  whitelistAdmin
         //   slot  2  whitelistRemover     (added in v1.2)
-        //   slot  3  postCount
-        //   slot  4  _posts               (mapping)
-        //   slot  5  confirmationOf       (mapping)
-        //   slot  6  _confirmers          (mapping)
-        //   slot  7  _disconfirmers       (mapping)
-        //   slot  8  attackerScore        (mapping)
-        //   slot  9  attackerAppearances  (mapping)
-        //   slot 10  isVictim             (mapping)
-        //   slot 11  _victimActivePosts   (mapping)
-        //   slot 12  headPostId
-        //   slot 13  tailPostId
-        //   slot 14  nextPostId           (mapping)
-        //   slot 15  prevPostId           (mapping)
-        //   slot 16  postTitle            (mapping; v1.1)
-        //   slot 17–64  __gap[48]         (v1.2 shrank from [49] for whitelistRemover)
+        //   slot  3  purgeAdmin           (added in v1.3)
+        //   slot  4  purgeRemover         (added in v1.3)
+        //   slot  5  postCount
+        //   slot  6  _posts               (mapping)
+        //   slot  7  confirmationOf       (mapping)
+        //   slot  8  _confirmers          (mapping)
+        //   slot  9  _disconfirmers       (mapping)
+        //   slot 10  attackerScore        (mapping)
+        //   slot 11  attackerAppearances  (mapping)
+        //   slot 12  isVictim             (mapping)
+        //   slot 13  _victimActivePosts   (mapping)
+        //   slot 14  headPostId
+        //   slot 15  tailPostId
+        //   slot 16  nextPostId           (mapping)
+        //   slot 17  prevPostId           (mapping)
+        //   slot 18  postTitle            (mapping; v1.1)
+        //   slot 19–64  __gap[46]         (v1.3 shrank from [48] for
+        //                                  purgeAdmin + purgeRemover)
         //
         // If a future change adds state, this test will start reading
         // non-zero values from the lower gap slots — that's the signal
         // to reduce the gap size in src/ThatsRekt.sol accordingly.
-        uint256 GAP_START = 17;
-        uint256 GAP_LEN = 48;
+        uint256 GAP_START = 19;
+        uint256 GAP_LEN = 46;
         for (uint256 i; i < GAP_LEN; ++i) {
             bytes32 v = vm.load(address(reg), bytes32(GAP_START + i));
             assertEq(uint256(v), 0, "gap slot is non-zero on fresh proxy");
@@ -354,18 +359,18 @@ contract ThatsRektUpgradeTest is Test {
     }
 
     function _deployProxied(address owner_) internal returns (ThatsRekt) {
-        // Single principal wears all three hats for these upgrade-flow tests.
+        // Single principal wears all five hats for these upgrade-flow tests.
         ThatsRekt impl = new ThatsRekt();
         bytes memory initCalldata = abi.encodeCall(
             ThatsRekt.initialize,
-            (owner_, owner_, owner_, new address[](0))
+            (owner_, owner_, owner_, owner_, owner_, new address[](0))
         );
         ERC1967Proxy proxy = new ERC1967Proxy(address(impl), initCalldata);
         return ThatsRekt(address(proxy));
     }
 
     function _deployTimelockedProxy() internal returns (ThatsRekt reg, TimelockController timelock) {
-        // Mirror Deploy.s.sol but collapse the two TLCs into one for these
+        // Mirror Deploy.s.sol but collapse the three TLCs into one for these
         // upgrade-focused tests — we only exercise the upgrade path here,
         // and a single 7-day TLC is enough to model that. Multisig is
         // the proposer/executor; admin = address(0) for parity with prod.
@@ -381,7 +386,9 @@ contract ThatsRektUpgradeTest is Test {
             //   - owner            = timelock       (7-day upgrade)
             //   - whitelistAdmin   = multisig       (instant in test, gated by 3-day TLC in prod)
             //   - whitelistRemover = multisig       (instant)
-            (address(timelock), multisig, multisig, new address[](0))
+            //   - purgeAdmin       = multisig       (instant in test, gated by 1-day TLC in prod)
+            //   - purgeRemover     = multisig       (instant)
+            (address(timelock), multisig, multisig, multisig, multisig, new address[](0))
         );
         ERC1967Proxy proxy = new ERC1967Proxy(address(impl), initCalldata);
         reg = ThatsRekt(address(proxy));

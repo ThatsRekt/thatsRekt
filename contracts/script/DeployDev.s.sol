@@ -48,6 +48,9 @@ contract DeployDev is Script {
     /// @dev 3-day TimelockController (whitelistAdmin slot). Bump on bytecode/config change.
     bytes32 public constant ADD_TIMELOCK_SALT = keccak256("thatsRekt.addTimelock.dev.v1");
 
+    /// @dev 1-day TimelockController (purgeAdmin slot). Bump on bytecode/config change.
+    bytes32 public constant PURGE_TIMELOCK_SALT = keccak256("thatsRekt.purgeTimelock.dev.v1");
+
     /// @dev Unversioned — the canonical dev proxy address. Same across
     ///      every testnet that runs DeployDev with the same
     ///      GOVERNANCE_OWNER + INITIAL_WHITELISTERS.
@@ -59,6 +62,7 @@ contract DeployDev is Script {
     ///      `vm.warp` / `evm_increaseTime` instead of shortening these.
     uint256 public constant UPGRADE_DELAY = 7 days;
     uint256 public constant ADD_DELAY     = 3 days;
+    uint256 public constant PURGE_DELAY   = 1 days;
 
     /// @notice CLI entrypoint — reads `GOVERNANCE_OWNER` (required) and
     ///         `WHITELIST_OPERATOR` (optional, defaults to owner) from
@@ -115,13 +119,35 @@ contract DeployDev is Script {
         );
         address addTimelock = _create2(ADD_TIMELOCK_SALT, addTLInitCode, "addTimelock");
 
-        // === 4. ERC1967Proxy.
+        // === 4. Purge TimelockController — operator as proposer/executor.
+        //   Single-principal dev model: same EOA holds proposer/executor
+        //   on all three TLCs. In two-principal mode, the operator EOA
+        //   is the purge proposer too (separate purge-admin role isn't
+        //   exposed on dev — keep parity with prod via env var if needed).
+        address[] memory purgeProposers = new address[](1);
+        purgeProposers[0] = operator;
+        address[] memory purgeExecutors = new address[](1);
+        purgeExecutors[0] = operator;
+        bytes memory purgeTLInitCode = abi.encodePacked(
+            type(TimelockController).creationCode,
+            abi.encode(PURGE_DELAY, purgeProposers, purgeExecutors, address(0))
+        );
+        address purgeTimelock = _create2(PURGE_TIMELOCK_SALT, purgeTLInitCode, "purgeTimelock");
+
+        // === 5. ERC1967Proxy.
         //   - owner            = upgradeTimelock (7-day)
         //   - whitelistAdmin   = addTimelock     (3-day, operator-proposed)
-        //   - whitelistRemover = operator        (instant)
+        //   - whitelistRemover = operator        (instant whitelist kill-switch)
+        //   - purgeAdmin       = purgeTimelock   (1-day, operator-proposed)
+        //   - purgeRemover     = operator        (instant purge kill-switch +
+        //                                          purge TLC canceller)
+        // Single-principal dev model: the same operator EOA fills every
+        // role. Two-principal mode (mainnet rehearsal) keeps the same
+        // mapping — operator is *both* the purge proposer and the
+        // purgeRemover, matching the prod design.
         bytes memory initCalldata = abi.encodeCall(
             ThatsRekt.initialize,
-            (upgradeTimelock, addTimelock, operator, initialWhitelisters)
+            (upgradeTimelock, addTimelock, operator, purgeTimelock, operator, initialWhitelisters)
         );
         bytes memory proxyInitCode = abi.encodePacked(
             type(ERC1967Proxy).creationCode,
@@ -133,6 +159,7 @@ contract DeployDev is Script {
         console2.log("Implementation:        ", impl);
         console2.log("Upgrade TLC (7-day):   ", upgradeTimelock);
         console2.log("Add TLC (3-day):       ", addTimelock);
+        console2.log("Purge TLC (1-day):     ", purgeTimelock);
         console2.log("Owner (gov):           ", owner);
         console2.log("Operator (whitelister):", operator);
         console2.log("Proxy:                 ", proxy);

@@ -40,10 +40,28 @@ contract ThatsRektTest is Test {
         address whitelistRemover_,
         address[] memory initialWhitelisters_
     ) internal returns (ThatsRekt) {
+        // Default: purgeAdmin = purgeRemover = owner_, mirroring the
+        // single-principal pattern this helper already uses for the
+        // other roles. Tests that exercise purge-specific access
+        // control can deploy via `_deployProxiedRolesWithPurge` and
+        // pass distinct addresses.
+        return _deployProxiedRolesWithPurge(
+            owner_, whitelistAdmin_, whitelistRemover_, owner_, owner_, initialWhitelisters_
+        );
+    }
+
+    function _deployProxiedRolesWithPurge(
+        address owner_,
+        address whitelistAdmin_,
+        address whitelistRemover_,
+        address purgeAdmin_,
+        address purgeRemover_,
+        address[] memory initialWhitelisters_
+    ) internal returns (ThatsRekt) {
         ThatsRekt impl = new ThatsRekt();
         bytes memory initCalldata = abi.encodeCall(
             ThatsRekt.initialize,
-            (owner_, whitelistAdmin_, whitelistRemover_, initialWhitelisters_)
+            (owner_, whitelistAdmin_, whitelistRemover_, purgeAdmin_, purgeRemover_, initialWhitelisters_)
         );
         ERC1967Proxy proxy = new ERC1967Proxy(address(impl), initCalldata);
         return ThatsRekt(address(proxy));
@@ -1148,7 +1166,7 @@ contract ThatsRektTest is Test {
         ThatsRekt impl = new ThatsRekt();
         bytes memory initCalldata = abi.encodeCall(
             ThatsRekt.initialize,
-            (address(0), makeAddr("admin"), makeAddr("remover"), _emptyList())
+            (address(0), makeAddr("admin"), makeAddr("remover"), makeAddr("purger"), makeAddr("purgeRem"), _emptyList())
         );
         // OwnableInvalidOwner(address(0)) from OwnableUpgradeable.
         vm.expectRevert();
@@ -1159,7 +1177,7 @@ contract ThatsRektTest is Test {
         ThatsRekt impl = new ThatsRekt();
         bytes memory initCalldata = abi.encodeCall(
             ThatsRekt.initialize,
-            (makeAddr("owner"), address(0), makeAddr("remover"), _emptyList())
+            (makeAddr("owner"), address(0), makeAddr("remover"), makeAddr("purger"), makeAddr("purgeRem"), _emptyList())
         );
         vm.expectRevert(ThatsRekt.ZeroAddress.selector);
         new ERC1967Proxy(address(impl), initCalldata);
@@ -1169,10 +1187,39 @@ contract ThatsRektTest is Test {
         ThatsRekt impl = new ThatsRekt();
         bytes memory initCalldata = abi.encodeCall(
             ThatsRekt.initialize,
-            (makeAddr("owner"), makeAddr("admin"), address(0), _emptyList())
+            (makeAddr("owner"), makeAddr("admin"), address(0), makeAddr("purger"), makeAddr("purgeRem"), _emptyList())
         );
         vm.expectRevert(ThatsRekt.ZeroAddress.selector);
         new ERC1967Proxy(address(impl), initCalldata);
+    }
+
+    function test_initialize_revertsOnZeroPurgeRemover() public {
+        // initialPurgeRemover IS required even when purgeAdmin is zero —
+        // losing the kill-switch slot at init means the day someone
+        // re-installs a purgeAdmin via the 7-day path, there's no
+        // instant kill-switch in place. Reject zero unconditionally.
+        ThatsRekt impl = new ThatsRekt();
+        bytes memory initCalldata = abi.encodeCall(
+            ThatsRekt.initialize,
+            (makeAddr("owner"), makeAddr("admin"), makeAddr("remover"), makeAddr("purger"), address(0), _emptyList())
+        );
+        vm.expectRevert(ThatsRekt.ZeroAddress.selector);
+        new ERC1967Proxy(address(impl), initCalldata);
+    }
+
+    function test_initialize_zeroPurgeAdmin_isAllowed() public {
+        // initialPurgeAdmin == address(0) is supported — it deploys with
+        // purge disabled. Owner can install one later via setPurgeAdmin.
+        // initialPurgeRemover MUST still be non-zero so the kill-switch
+        // is in place for the day a purgeAdmin gets installed.
+        ThatsRekt impl = new ThatsRekt();
+        bytes memory initCalldata = abi.encodeCall(
+            ThatsRekt.initialize,
+            (makeAddr("owner"), makeAddr("admin"), makeAddr("remover"), address(0), makeAddr("purgeRem"), _emptyList())
+        );
+        ERC1967Proxy proxy = new ERC1967Proxy(address(impl), initCalldata);
+        assertEq(ThatsRekt(address(proxy)).purgeAdmin(), address(0));
+        assertEq(ThatsRekt(address(proxy)).purgeRemover(), makeAddr("purgeRem"));
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -1190,7 +1237,7 @@ contract ThatsRektTest is Test {
         ThatsRekt impl = new ThatsRekt();
         bytes memory initCalldata = abi.encodeCall(
             ThatsRekt.initialize,
-            (governance, governance, governance, initialList)
+            (governance, governance, governance, governance, governance, initialList)
         );
 
         vm.expectEmit(true, false, false, true);
@@ -1253,7 +1300,7 @@ contract ThatsRektTest is Test {
         ThatsRekt impl = new ThatsRekt();
         bytes memory initCalldata = abi.encodeCall(
             ThatsRekt.initialize,
-            (governance, governance, governance, initialList)
+            (governance, governance, governance, governance, governance, initialList)
         );
         vm.expectRevert(ThatsRekt.ZeroAddress.selector);
         new ERC1967Proxy(address(impl), initCalldata);
@@ -2471,5 +2518,437 @@ contract ThatsRektTest is Test {
 
         (, , , , , , , uint64 lu) = reg.getPost(id);
         assertEq(lu, uint64(1_000_500));
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                        v1.3: GOVERNANCE PURGE
+    //////////////////////////////////////////////////////////////*/
+
+    /*------------------ purgePost: happy paths ------------------*/
+
+    /// purgeAdmin can flag a post as purged. Aggregates reverse,
+    /// post is unlinked from the active list, but `removed` stays
+    /// false (purge != retract).
+    function test_purgePost_purgeAdminCanPurge() public {
+        // 5 distinct addresses: gov (owner+admin+remover), alice (poster),
+        // bob (attacker), one voter, plus an explicit purgeAdmin.
+        address purgeAdmin_ = makeAddr("purgeAdmin");
+        ThatsRekt fresh = _deployProxiedRolesWithPurge(
+            governance, governance, governance, purgeAdmin_, governance, _emptyList()
+        );
+
+        // Whitelist alice via the admin path.
+        vm.prank(governance); fresh.addWhitelisted(alice);
+        // Alice posts about bob.
+        address[] memory atks = new address[](1); atks[0] = bob;
+        address[] memory vics = new address[](0);
+        vm.prank(alice);
+        uint256 id = fresh.post("hack", atks, vics, "", uint64(block.timestamp));
+        // Carol upConfirms so attackerScore[bob] = +1.
+        vm.prank(governance); fresh.addWhitelisted(carol);
+        vm.prank(carol); fresh.confirm(id, ThatsRekt.ConfirmDirection.Up);
+        assertEq(fresh.attackerScore(bob), 1);
+        assertEq(fresh.attackerAppearances(bob), 1);
+        assertEq(fresh.headPostId(), id);
+        assertEq(fresh.tailPostId(), id);
+
+        // Purge.
+        vm.expectEmit(true, true, false, false);
+        emit ThatsRekt.PostPurged(id, purgeAdmin_);
+        vm.prank(purgeAdmin_);
+        fresh.purgePost(id);
+
+        // purged flag set; aggregates reversed; unlinked.
+        assertTrue(fresh.isPurged(id));
+        assertEq(fresh.attackerScore(bob), 0, "score should reverse");
+        assertEq(fresh.attackerAppearances(bob), 0, "appearances should reverse");
+        assertEq(fresh.headPostId(), 0, "post should be unlinked");
+        assertEq(fresh.tailPostId(), 0, "post should be unlinked");
+
+        // `removed` stays false — purge does not equal retract.
+        (, , , , bool removed, , , ) = fresh.getPost(id);
+        assertFalse(removed, "purge must not flip removed");
+    }
+
+    /// Purging a post that the poster already retracted: aggregates
+    /// were already reversed at retract; purge flips the flag but
+    /// must NOT double-reverse.
+    function test_purgePost_afterRetract_doesNotDoubleReverse() public {
+        address purgeAdmin_ = makeAddr("purgeAdmin");
+        ThatsRekt fresh = _deployProxiedRolesWithPurge(
+            governance, governance, governance, purgeAdmin_, governance, _emptyList()
+        );
+
+        vm.prank(governance); fresh.addWhitelisted(alice);
+        address[] memory atks = new address[](1); atks[0] = bob;
+        address[] memory vics = new address[](0);
+        vm.prank(alice);
+        uint256 id = fresh.post("hack", atks, vics, "", uint64(block.timestamp));
+
+        // Alice retracts — aggregates reverse here.
+        vm.prank(alice);
+        fresh.retract(id);
+        assertEq(fresh.attackerAppearances(bob), 0);
+
+        // Purge after retract — must be idempotent on aggregates.
+        vm.prank(purgeAdmin_);
+        fresh.purgePost(id);
+
+        // Aggregates stay at 0 (no underflow, no double-reverse).
+        assertEq(fresh.attackerAppearances(bob), 0, "must not double-reverse");
+        assertTrue(fresh.isPurged(id));
+        (, , , , bool removed, , , ) = fresh.getPost(id);
+        assertTrue(removed, "removed flag from retract must persist");
+    }
+
+    /*------------------ purgePost: revert paths ------------------*/
+
+    function test_purgePost_revertsForNonPurgeAdmin() public {
+        address purgeAdmin_ = makeAddr("purgeAdmin");
+        ThatsRekt fresh = _deployProxiedRolesWithPurge(
+            governance, governance, governance, purgeAdmin_, governance, _emptyList()
+        );
+        vm.prank(governance); fresh.addWhitelisted(alice);
+        uint256 id = _postAs(fresh, alice, bob);
+
+        // Owner cannot purge.
+        vm.prank(governance);
+        vm.expectRevert(ThatsRekt.NotPurgeAdmin.selector);
+        fresh.purgePost(id);
+
+        // Random EOA cannot purge.
+        vm.prank(makeAddr("random"));
+        vm.expectRevert(ThatsRekt.NotPurgeAdmin.selector);
+        fresh.purgePost(id);
+
+        // The poster cannot purge either.
+        vm.prank(alice);
+        vm.expectRevert(ThatsRekt.NotPurgeAdmin.selector);
+        fresh.purgePost(id);
+    }
+
+    function test_purgePost_revertsOnDoublePurge() public {
+        address purgeAdmin_ = makeAddr("purgeAdmin");
+        ThatsRekt fresh = _deployProxiedRolesWithPurge(
+            governance, governance, governance, purgeAdmin_, governance, _emptyList()
+        );
+        vm.prank(governance); fresh.addWhitelisted(alice);
+        uint256 id = _postAs(fresh, alice, bob);
+
+        vm.prank(purgeAdmin_);
+        fresh.purgePost(id);
+
+        vm.prank(purgeAdmin_);
+        vm.expectRevert(ThatsRekt.AlreadyPurged.selector);
+        fresh.purgePost(id);
+    }
+
+    function test_purgePost_revertsOnNonExistent() public {
+        address purgeAdmin_ = makeAddr("purgeAdmin");
+        ThatsRekt fresh = _deployProxiedRolesWithPurge(
+            governance, governance, governance, purgeAdmin_, governance, _emptyList()
+        );
+
+        vm.prank(purgeAdmin_);
+        vm.expectRevert(ThatsRekt.PostNotFound.selector);
+        fresh.purgePost(99);
+    }
+
+    /*------------------ setPurgeAdmin: owner-only ------------------*/
+
+    function test_setPurgeAdmin_onlyOwner() public {
+        address purgeAdmin_ = makeAddr("purgeAdmin");
+        address newPurger = makeAddr("newPurger");
+        ThatsRekt fresh = _deployProxiedRolesWithPurge(
+            governance, governance, governance, purgeAdmin_, governance, _emptyList()
+        );
+
+        // Old purgeAdmin cannot self-rotate (owner-only path).
+        vm.prank(purgeAdmin_);
+        vm.expectRevert();
+        fresh.setPurgeAdmin(newPurger);
+
+        // Random cannot rotate.
+        vm.prank(alice);
+        vm.expectRevert();
+        fresh.setPurgeAdmin(newPurger);
+
+        // Owner can rotate (and to address(0) — `setPurgeAdmin`
+        // accepts zero, equivalent to slow-disable).
+        vm.expectEmit(true, true, false, false);
+        emit ThatsRekt.PurgeAdminTransferred(purgeAdmin_, newPurger);
+        vm.prank(governance);
+        fresh.setPurgeAdmin(newPurger);
+        assertEq(fresh.purgeAdmin(), newPurger);
+
+        // Old purger no longer has authority.
+        vm.prank(governance); fresh.addWhitelisted(alice);
+        uint256 id = _postAs(fresh, alice, bob);
+        vm.prank(purgeAdmin_);
+        vm.expectRevert(ThatsRekt.NotPurgeAdmin.selector);
+        fresh.purgePost(id);
+
+        // New purger has authority.
+        vm.prank(newPurger);
+        fresh.purgePost(id);
+        assertTrue(fresh.isPurged(id));
+    }
+
+    function test_setPurgeAdmin_acceptsZero() public {
+        // Owner can disable purge entirely via setPurgeAdmin(0). Distinct
+        // from `revokePurgeAdmin` (which is the instant kill-switch on
+        // the purgeRemover's lane); this is the "slow disable" path.
+        address purgeAdmin_ = makeAddr("purgeAdmin");
+        ThatsRekt fresh = _deployProxiedRolesWithPurge(
+            governance, governance, governance, purgeAdmin_, governance, _emptyList()
+        );
+        vm.prank(governance);
+        fresh.setPurgeAdmin(address(0));
+        assertEq(fresh.purgeAdmin(), address(0));
+    }
+
+    /*------------------ revokePurgeAdmin: purgeRemover only ------------------*/
+
+    /// Only the purgeRemover can revoke. Sets slot to address(0).
+    /// Distinct from whitelistRemover — they live in separate slots
+    /// so the operator can hold one without the other.
+    function test_revokePurgeAdmin_onlyPurgeRemover() public {
+        address ownerAddr   = makeAddr("ownerPK");
+        address whitelistRemoverAddr = makeAddr("whitelistRem");
+        address purgeAdmin_ = makeAddr("purgeAdmin");
+        address purgeRemoverAddr = makeAddr("purgeRem");
+        ThatsRekt fresh = _deployProxiedRolesWithPurge(
+            ownerAddr, ownerAddr, whitelistRemoverAddr, purgeAdmin_, purgeRemoverAddr, _emptyList()
+        );
+
+        // Owner cannot.
+        vm.prank(ownerAddr);
+        vm.expectRevert(ThatsRekt.NotPurgeRemover.selector);
+        fresh.revokePurgeAdmin();
+
+        // whitelistRemover (the OLD design's holder) cannot — that's
+        // the whole point of splitting the slots.
+        vm.prank(whitelistRemoverAddr);
+        vm.expectRevert(ThatsRekt.NotPurgeRemover.selector);
+        fresh.revokePurgeAdmin();
+
+        // purgeAdmin cannot self-revoke.
+        vm.prank(purgeAdmin_);
+        vm.expectRevert(ThatsRekt.NotPurgeRemover.selector);
+        fresh.revokePurgeAdmin();
+
+        // Random cannot.
+        vm.prank(alice);
+        vm.expectRevert(ThatsRekt.NotPurgeRemover.selector);
+        fresh.revokePurgeAdmin();
+
+        // purgeRemover can.
+        vm.expectEmit(true, true, false, false);
+        emit ThatsRekt.PurgeAdminTransferred(purgeAdmin_, address(0));
+        vm.prank(purgeRemoverAddr);
+        fresh.revokePurgeAdmin();
+
+        assertEq(fresh.purgeAdmin(), address(0));
+    }
+
+    /// After revoke, purgePost is bricked — no caller can satisfy
+    /// `msg.sender == purgeAdmin` because msg.sender is never zero.
+    function test_revokePurgeAdmin_blocksPurgesByEveryone() public {
+        address purgeAdmin_ = makeAddr("purgeAdmin");
+        address purgeRemoverAddr = makeAddr("purgeRem");
+        ThatsRekt fresh = _deployProxiedRolesWithPurge(
+            governance, governance, governance, purgeAdmin_, purgeRemoverAddr, _emptyList()
+        );
+        vm.prank(governance); fresh.addWhitelisted(alice);
+        uint256 id = _postAs(fresh, alice, bob);
+
+        vm.prank(purgeRemoverAddr);
+        fresh.revokePurgeAdmin();
+
+        // Old purger blocked.
+        vm.prank(purgeAdmin_);
+        vm.expectRevert(ThatsRekt.NotPurgeAdmin.selector);
+        fresh.purgePost(id);
+
+        // Owner blocked.
+        vm.prank(governance);
+        vm.expectRevert(ThatsRekt.NotPurgeAdmin.selector);
+        fresh.purgePost(id);
+
+        // Remover blocked too — the kill-switch is one-way until owner
+        // re-installs.
+        vm.prank(purgeRemoverAddr);
+        vm.expectRevert(ThatsRekt.NotPurgeAdmin.selector);
+        fresh.purgePost(id);
+    }
+
+    /// After revoke, owner can re-install via setPurgeAdmin.
+    function test_revokePurgeAdmin_ownerCanReinstall() public {
+        address purgeAdmin_ = makeAddr("purgeAdmin");
+        address purgeRemoverAddr = makeAddr("purgeRem");
+        address newPurger = makeAddr("newPurger");
+        ThatsRekt fresh = _deployProxiedRolesWithPurge(
+            governance, governance, governance, purgeAdmin_, purgeRemoverAddr, _emptyList()
+        );
+
+        vm.prank(purgeRemoverAddr);
+        fresh.revokePurgeAdmin();
+        assertEq(fresh.purgeAdmin(), address(0));
+
+        vm.prank(governance);
+        fresh.setPurgeAdmin(newPurger);
+        assertEq(fresh.purgeAdmin(), newPurger);
+
+        vm.prank(governance); fresh.addWhitelisted(alice);
+        uint256 id = _postAs(fresh, alice, bob);
+        vm.prank(newPurger);
+        fresh.purgePost(id);
+        assertTrue(fresh.isPurged(id));
+    }
+
+    /*------------------ setPurgeRemover: owner-only ------------------*/
+
+    function test_setPurgeRemover_onlyOwner() public {
+        address purgeAdmin_ = makeAddr("purgeAdmin");
+        address purgeRemoverAddr = makeAddr("purgeRem");
+        address newPurgeRem = makeAddr("newPurgeRem");
+        ThatsRekt fresh = _deployProxiedRolesWithPurge(
+            governance, governance, governance, purgeAdmin_, purgeRemoverAddr, _emptyList()
+        );
+
+        // Admin cannot.
+        vm.prank(governance); // governance is owner+admin+remover here
+        // — bypass the test by deploying with split roles for clarity.
+        // Instead: make a separate fresh contract with a distinct admin.
+        address ownerAddr = makeAddr("ownerSPR");
+        address adminAddr = makeAddr("adminSPR");
+        address removerAddr = makeAddr("removerSPR");
+        ThatsRekt split = _deployProxiedRolesWithPurge(
+            ownerAddr, adminAddr, removerAddr, purgeAdmin_, purgeRemoverAddr, _emptyList()
+        );
+
+        // adminAddr cannot rotate purgeRemover.
+        vm.prank(adminAddr);
+        vm.expectRevert();
+        split.setPurgeRemover(newPurgeRem);
+
+        // whitelistRemover cannot.
+        vm.prank(removerAddr);
+        vm.expectRevert();
+        split.setPurgeRemover(newPurgeRem);
+
+        // Current purgeRemover cannot self-rotate.
+        vm.prank(purgeRemoverAddr);
+        vm.expectRevert();
+        split.setPurgeRemover(newPurgeRem);
+
+        // Random cannot.
+        vm.prank(alice);
+        vm.expectRevert();
+        split.setPurgeRemover(newPurgeRem);
+
+        // Owner can.
+        vm.expectEmit(true, true, false, false);
+        emit ThatsRekt.PurgeRemoverTransferred(purgeRemoverAddr, newPurgeRem);
+        vm.prank(ownerAddr);
+        split.setPurgeRemover(newPurgeRem);
+        assertEq(split.purgeRemover(), newPurgeRem);
+
+        // Old purgeRemover loses authority.
+        vm.prank(purgeRemoverAddr);
+        vm.expectRevert(ThatsRekt.NotPurgeRemover.selector);
+        split.revokePurgeAdmin();
+
+        // New purgeRemover gains it.
+        vm.prank(newPurgeRem);
+        split.revokePurgeAdmin();
+        assertEq(split.purgeAdmin(), address(0));
+
+        // The unused `fresh` ref / test_setPurgeRemover_onlyOwner is split
+        // for clarity — silence the unused-warning on `fresh`.
+        fresh;
+    }
+
+    function test_setPurgeRemover_revertsOnZero() public {
+        address purgeAdmin_ = makeAddr("purgeAdmin");
+        address purgeRemoverAddr = makeAddr("purgeRem");
+        ThatsRekt fresh = _deployProxiedRolesWithPurge(
+            governance, governance, governance, purgeAdmin_, purgeRemoverAddr, _emptyList()
+        );
+
+        vm.prank(governance);
+        vm.expectRevert(ThatsRekt.ZeroAddress.selector);
+        fresh.setPurgeRemover(address(0));
+    }
+
+    function test_setPurgeRemover_emitsTransferred() public {
+        address purgeAdmin_ = makeAddr("purgeAdmin");
+        address purgeRemoverAddr = makeAddr("purgeRem");
+        address newPurgeRem = makeAddr("newPurgeRem");
+        ThatsRekt fresh = _deployProxiedRolesWithPurge(
+            governance, governance, governance, purgeAdmin_, purgeRemoverAddr, _emptyList()
+        );
+
+        vm.expectEmit(true, true, false, false);
+        emit ThatsRekt.PurgeRemoverTransferred(purgeRemoverAddr, newPurgeRem);
+        vm.prank(governance);
+        fresh.setPurgeRemover(newPurgeRem);
+    }
+
+    /*------------------ setPurgeRemover: independence from whitelistRemover ------------------*/
+
+    /// Rotating one does not touch the other. The two slots are
+    /// independent and serve separate planes (whitelist vs purge).
+    function test_setPurgeRemover_doesNotChangeWhitelistRemover() public {
+        address ownerAddr = makeAddr("ownerInd");
+        address adminAddr = makeAddr("adminInd");
+        address whitelistRemoverAddr = makeAddr("wlRem");
+        address purgeAdmin_ = makeAddr("purgeAdmin");
+        address purgeRemoverAddr = makeAddr("purgeRem");
+        address newPurgeRem = makeAddr("newPurgeRem");
+        ThatsRekt fresh = _deployProxiedRolesWithPurge(
+            ownerAddr, adminAddr, whitelistRemoverAddr, purgeAdmin_, purgeRemoverAddr, _emptyList()
+        );
+
+        vm.prank(ownerAddr);
+        fresh.setPurgeRemover(newPurgeRem);
+
+        assertEq(fresh.purgeRemover(), newPurgeRem);
+        assertEq(fresh.whitelistRemover(), whitelistRemoverAddr, "whitelistRemover must not change");
+    }
+
+    /*------------------ initialize sets purgeRemover ------------------*/
+
+    function test_initialize_setsInitialPurgeRemover() public {
+        address purgeRemoverAddr = makeAddr("purgeRemInit");
+        ThatsRekt fresh = _deployProxiedRolesWithPurge(
+            governance, governance, governance, governance, purgeRemoverAddr, _emptyList()
+        );
+        assertEq(fresh.purgeRemover(), purgeRemoverAddr);
+    }
+
+    function test_initialize_emitsPurgeRemoverTransferred() public {
+        address purgeRemoverAddr = makeAddr("purgeRemEvt");
+        ThatsRekt impl = new ThatsRekt();
+        bytes memory initCalldata = abi.encodeCall(
+            ThatsRekt.initialize,
+            (governance, governance, governance, governance, purgeRemoverAddr, _emptyList())
+        );
+
+        vm.expectEmit(true, true, false, false);
+        emit ThatsRekt.PurgeRemoverTransferred(address(0), purgeRemoverAddr);
+        new ERC1967Proxy(address(impl), initCalldata);
+    }
+
+    /*------------------ helper ------------------*/
+
+    /// Whitelisted poster path with one attacker; returns the post id.
+    /// Mirrors `_post` but is parameterized on the contract instance so
+    /// the purge tests can drive non-default deployments.
+    function _postAs(ThatsRekt c, address poster, address atk) internal returns (uint256 id) {
+        address[] memory atks = new address[](1); atks[0] = atk;
+        address[] memory vics = new address[](0);
+        vm.prank(poster);
+        id = c.post("hack", atks, vics, "", uint64(block.timestamp));
     }
 }

@@ -33,19 +33,22 @@ contract DeployDevTest is Test {
     }
 
     /// @notice Happy path (single-principal dev mode): one EOA fills
-    ///         every role. Impl + both TLCs + proxy all deploy at the
-    ///         predicted CREATE2 addresses; three-role wiring matches.
+    ///         every role. Impl + all three TLCs + proxy all deploy at
+    ///         the predicted CREATE2 addresses; five-role wiring matches.
     function test_deploy_eoa_owner_accepted() public {
         deployer.deploy(DEV_EOA);
 
         address impl     = _predict(deployer.IMPL_SALT(),     keccak256(type(ThatsRekt).creationCode));
         address upgrade  = _predict(deployer.UPGRADE_TIMELOCK_SALT(), keccak256(_timelockInitCode(7 days, DEV_EOA)));
         address add_     = _predict(deployer.ADD_TIMELOCK_SALT(),     keccak256(_timelockInitCode(3 days, DEV_EOA)));
-        address proxy    = _predict(deployer.PROXY_SALT(), keccak256(_proxyInitCode(impl, upgrade, add_, DEV_EOA, new address[](0))));
+        address purge    = _predict(deployer.PURGE_TIMELOCK_SALT(),   keccak256(_timelockInitCode(1 days, DEV_EOA)));
+        address proxy    = _predict(deployer.PROXY_SALT(),
+            keccak256(_proxyInitCode(impl, upgrade, add_, DEV_EOA, purge, DEV_EOA, new address[](0))));
 
         assertGt(impl.code.length, 0,    "impl not deployed");
         assertGt(upgrade.code.length, 0, "upgrade timelock not deployed");
         assertGt(add_.code.length, 0,    "add timelock not deployed");
+        assertGt(purge.code.length, 0,   "purge timelock not deployed");
         assertGt(proxy.code.length, 0,   "proxy not deployed");
 
         // Proxy is owned by the upgrade timelock — the EOA cannot
@@ -53,10 +56,13 @@ contract DeployDevTest is Test {
         assertEq(ThatsRekt(proxy).owner(),            upgrade, "proxy.owner != upgrade timelock");
         assertEq(ThatsRekt(proxy).whitelistAdmin(),   add_,    "proxy.whitelistAdmin != add timelock");
         assertEq(ThatsRekt(proxy).whitelistRemover(), DEV_EOA, "proxy.whitelistRemover != DEV_EOA");
+        assertEq(ThatsRekt(proxy).purgeAdmin(),       purge,   "proxy.purgeAdmin != purge timelock");
+        assertEq(ThatsRekt(proxy).purgeRemover(),     DEV_EOA, "proxy.purgeRemover != DEV_EOA");
 
-        // EOA holds proposer/executor/canceller on both timelocks.
-        TimelockController upTL  = TimelockController(payable(upgrade));
-        TimelockController addTL = TimelockController(payable(add_));
+        // EOA holds proposer/executor/canceller on all three timelocks.
+        TimelockController upTL    = TimelockController(payable(upgrade));
+        TimelockController addTL   = TimelockController(payable(add_));
+        TimelockController purgeTL = TimelockController(payable(purge));
 
         assertTrue(upTL.hasRole(upTL.PROPOSER_ROLE(), DEV_EOA),  "EOA missing PROPOSER on upgrade TLC");
         assertTrue(upTL.hasRole(upTL.EXECUTOR_ROLE(), DEV_EOA),  "EOA missing EXECUTOR on upgrade TLC");
@@ -66,16 +72,22 @@ contract DeployDevTest is Test {
         assertTrue(addTL.hasRole(addTL.EXECUTOR_ROLE(), DEV_EOA),  "EOA missing EXECUTOR on add TLC");
         assertTrue(addTL.hasRole(addTL.CANCELLER_ROLE(), DEV_EOA), "EOA missing CANCELLER on add TLC");
 
+        assertTrue(purgeTL.hasRole(purgeTL.PROPOSER_ROLE(), DEV_EOA),  "EOA missing PROPOSER on purge TLC");
+        assertTrue(purgeTL.hasRole(purgeTL.EXECUTOR_ROLE(), DEV_EOA),  "EOA missing EXECUTOR on purge TLC");
+        assertTrue(purgeTL.hasRole(purgeTL.CANCELLER_ROLE(), DEV_EOA), "EOA missing CANCELLER on purge TLC");
+
         // Delays match production — testnet behavior matches mainnet.
-        assertEq(upTL.getMinDelay(),  7 days, "upgrade TLC delay drifted");
-        assertEq(addTL.getMinDelay(), 3 days, "add TLC delay drifted");
+        assertEq(upTL.getMinDelay(),    7 days, "upgrade TLC delay drifted");
+        assertEq(addTL.getMinDelay(),   3 days, "add TLC delay drifted");
+        assertEq(purgeTL.getMinDelay(), 1 days, "purge TLC delay drifted");
     }
 
     /// @notice Two-principal mode (mainnet rehearsal): owner fills the
-    ///         upgrade TLC; a distinct operator fills the add TLC and
-    ///         whitelistRemover. Owner has NO authority on the add path
-    ///         and operator has NO authority on the upgrade path —
-    ///         that's the asymmetry we want to verify on testnet.
+    ///         upgrade TLC; a distinct operator fills the add TLC,
+    ///         the purge TLC, the whitelistRemover slot, and the
+    ///         purgeRemover slot. Owner has NO authority on the add or
+    ///         purge paths and operator has NO authority on the upgrade
+    ///         path — that's the asymmetry we want to verify on testnet.
     function test_deploy_two_principal_split() public {
         address owner = makeAddr("gov-stand-in");
         address operator = makeAddr("operator-stand-in");
@@ -84,22 +96,29 @@ contract DeployDevTest is Test {
         address impl     = _predict(deployer.IMPL_SALT(),             keccak256(type(ThatsRekt).creationCode));
         address upgrade  = _predict(deployer.UPGRADE_TIMELOCK_SALT(), keccak256(_timelockInitCode(7 days, owner)));
         address add_     = _predict(deployer.ADD_TIMELOCK_SALT(),     keccak256(_timelockInitCode(3 days, operator)));
-        address proxy    = _predict(deployer.PROXY_SALT(),            keccak256(_proxyInitCode(impl, upgrade, add_, operator, new address[](0))));
+        address purge    = _predict(deployer.PURGE_TIMELOCK_SALT(),   keccak256(_timelockInitCode(1 days, operator)));
+        address proxy    = _predict(deployer.PROXY_SALT(),
+            keccak256(_proxyInitCode(impl, upgrade, add_, operator, purge, operator, new address[](0))));
 
         assertEq(ThatsRekt(proxy).owner(),            upgrade,  "proxy.owner != upgrade timelock");
         assertEq(ThatsRekt(proxy).whitelistAdmin(),   add_,     "proxy.whitelistAdmin != add timelock");
         assertEq(ThatsRekt(proxy).whitelistRemover(), operator, "proxy.whitelistRemover != operator");
+        assertEq(ThatsRekt(proxy).purgeAdmin(),       purge,    "proxy.purgeAdmin != purge timelock");
+        assertEq(ThatsRekt(proxy).purgeRemover(),     operator, "proxy.purgeRemover != operator");
 
-        TimelockController upTL  = TimelockController(payable(upgrade));
-        TimelockController addTL = TimelockController(payable(add_));
+        TimelockController upTL    = TimelockController(payable(upgrade));
+        TimelockController addTL   = TimelockController(payable(add_));
+        TimelockController purgeTL = TimelockController(payable(purge));
 
-        // Owner has roles on the upgrade TLC, NOT the add TLC.
-        assertTrue(upTL.hasRole(upTL.PROPOSER_ROLE(), owner),    "owner missing PROPOSER on upgrade");
-        assertFalse(addTL.hasRole(addTL.PROPOSER_ROLE(), owner), "owner unexpectedly on add PROPOSER");
+        // Owner has roles on the upgrade TLC, NOT the add or purge TLCs.
+        assertTrue(upTL.hasRole(upTL.PROPOSER_ROLE(), owner),         "owner missing PROPOSER on upgrade");
+        assertFalse(addTL.hasRole(addTL.PROPOSER_ROLE(), owner),      "owner unexpectedly on add PROPOSER");
+        assertFalse(purgeTL.hasRole(purgeTL.PROPOSER_ROLE(), owner),  "owner unexpectedly on purge PROPOSER");
 
-        // Operator has roles on the add TLC, NOT the upgrade TLC.
-        assertTrue(addTL.hasRole(addTL.PROPOSER_ROLE(), operator),  "operator missing PROPOSER on add");
-        assertFalse(upTL.hasRole(upTL.PROPOSER_ROLE(), operator),   "operator unexpectedly on upgrade PROPOSER");
+        // Operator has roles on the add + purge TLCs, NOT the upgrade TLC.
+        assertTrue(addTL.hasRole(addTL.PROPOSER_ROLE(), operator),       "operator missing PROPOSER on add");
+        assertTrue(purgeTL.hasRole(purgeTL.PROPOSER_ROLE(), operator),   "operator missing PROPOSER on purge");
+        assertFalse(upTL.hasRole(upTL.PROPOSER_ROLE(), operator),        "operator unexpectedly on upgrade PROPOSER");
     }
 
     /// @notice Idempotent: running twice on the same chain is a no-op
@@ -141,13 +160,22 @@ contract DeployDevTest is Test {
         assertTrue(deployer.IMPL_SALT()             != prod.IMPL_SALT(),             "IMPL_SALT collision");
         assertTrue(deployer.UPGRADE_TIMELOCK_SALT() != prod.UPGRADE_TIMELOCK_SALT(), "UPGRADE_TIMELOCK_SALT collision");
         assertTrue(deployer.ADD_TIMELOCK_SALT()     != prod.ADD_TIMELOCK_SALT(),     "ADD_TIMELOCK_SALT collision");
+        assertTrue(deployer.PURGE_TIMELOCK_SALT()   != prod.PURGE_TIMELOCK_SALT(),   "PURGE_TIMELOCK_SALT collision");
         assertTrue(deployer.PROXY_SALT()            != prod.PROXY_SALT(),            "PROXY_SALT collision");
-        // The two dev-side timelock salts must also be different from
+        // The three dev-side timelock salts must also be different from
         // each other — otherwise the first deploy would squat the
         // second's address.
         assertTrue(
             deployer.UPGRADE_TIMELOCK_SALT() != deployer.ADD_TIMELOCK_SALT(),
             "UPGRADE_TIMELOCK_SALT == ADD_TIMELOCK_SALT (would collide)"
+        );
+        assertTrue(
+            deployer.UPGRADE_TIMELOCK_SALT() != deployer.PURGE_TIMELOCK_SALT(),
+            "UPGRADE_TIMELOCK_SALT == PURGE_TIMELOCK_SALT (would collide)"
+        );
+        assertTrue(
+            deployer.ADD_TIMELOCK_SALT() != deployer.PURGE_TIMELOCK_SALT(),
+            "ADD_TIMELOCK_SALT == PURGE_TIMELOCK_SALT (would collide)"
         );
     }
 
@@ -160,8 +188,9 @@ contract DeployDevTest is Test {
         address impl    = _predict(deployer.IMPL_SALT(), keccak256(type(ThatsRekt).creationCode));
         address upgrade = _predict(deployer.UPGRADE_TIMELOCK_SALT(), keccak256(_timelockInitCode(7 days, DEV_EOA)));
         address add_    = _predict(deployer.ADD_TIMELOCK_SALT(),     keccak256(_timelockInitCode(3 days, DEV_EOA)));
+        address purge   = _predict(deployer.PURGE_TIMELOCK_SALT(),   keccak256(_timelockInitCode(1 days, DEV_EOA)));
 
-        bytes memory proxyInit = _proxyInitCode(impl, upgrade, add_, DEV_EOA, new address[](0));
+        bytes memory proxyInit = _proxyInitCode(impl, upgrade, add_, DEV_EOA, purge, DEV_EOA, new address[](0));
 
         // Predict the same address twice — should match (sanity check
         // that prediction is pure).
@@ -171,12 +200,13 @@ contract DeployDevTest is Test {
 
         // A different EOA must yield a different proxy address (so
         // different testnets with different owners don't collide).
-        address otherEoa = address(0x1234);
-        address otherUp  = _predict(deployer.UPGRADE_TIMELOCK_SALT(), keccak256(_timelockInitCode(7 days, otherEoa)));
-        address otherAdd = _predict(deployer.ADD_TIMELOCK_SALT(),     keccak256(_timelockInitCode(3 days, otherEoa)));
+        address otherEoa  = address(0x1234);
+        address otherUp   = _predict(deployer.UPGRADE_TIMELOCK_SALT(), keccak256(_timelockInitCode(7 days, otherEoa)));
+        address otherAdd  = _predict(deployer.ADD_TIMELOCK_SALT(),     keccak256(_timelockInitCode(3 days, otherEoa)));
+        address otherPurge = _predict(deployer.PURGE_TIMELOCK_SALT(),  keccak256(_timelockInitCode(1 days, otherEoa)));
         address otherProxy = _predict(
             deployer.PROXY_SALT(),
-            keccak256(_proxyInitCode(impl, otherUp, otherAdd, otherEoa, new address[](0)))
+            keccak256(_proxyInitCode(impl, otherUp, otherAdd, otherEoa, otherPurge, otherEoa, new address[](0)))
         );
         assertTrue(proxy1 != otherProxy, "different owners should yield different proxies");
     }
@@ -207,11 +237,13 @@ contract DeployDevTest is Test {
         address upgradeTimelock,
         address addTimelock,
         address whitelistRemover,
+        address purgeTimelock,
+        address purgeRemover,
         address[] memory initialWhitelisters
     ) internal pure returns (bytes memory) {
         bytes memory initCalldata = abi.encodeCall(
             ThatsRekt.initialize,
-            (upgradeTimelock, addTimelock, whitelistRemover, initialWhitelisters)
+            (upgradeTimelock, addTimelock, whitelistRemover, purgeTimelock, purgeRemover, initialWhitelisters)
         );
         return abi.encodePacked(type(ERC1967Proxy).creationCode, abi.encode(impl, initCalldata));
     }
