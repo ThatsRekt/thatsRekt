@@ -112,11 +112,10 @@ const SORT_TO_ORDER_BY: Record<SortOption, string> = {
 // `posts(limit, offset)` fans out to every enabled chain's squid,
 // sort-merges by createdAtTimestamp DESC, and paginates server-side.
 //
-// `purged` is selected so the client can defensively hide governance-purged
-// posts even if the gateway does not pre-filter them. Mesh-level filtering
-// (drop purged before pagination) is the long-term target — the
-// belt-and-suspenders client filter remains so a stale gateway can't leak
-// purged content.
+// Mesh filters governance-purged posts upstream (`where: { purged_eq: false }`),
+// so this query trusts the gateway's gate. `purged` is still selected because
+// the type is shared with other consumers (e.g. PostDetail tombstones) that
+// key off it.
 const FEED_QUERY = /* GraphQL */ `
   query Feed($limit: Int!, $offset: Int!, $chains: [String!]) {
     posts(limit: $limit, offset: $offset, chains: $chains) {
@@ -286,20 +285,13 @@ export async function fetchFeedPage(
     // value-or-null and graphql-request would otherwise send `undefined`.
     chains: chainSlugs?.length ? chainSlugs : null,
   })
-  // Defensive: drop purged posts client-side as well as gateway-side. If
-  // the Mesh deployment hasn't yet been updated to filter purged out (or
-  // the field isn't projected), this still hides them in the feed.
-  const visibleRaw = data.posts.items.filter((p) => p.purged !== true)
-  const droppedCount = data.posts.items.length - visibleRaw.length
-  const items = visibleRaw.map(adaptMeshPostToFeedPost)
-  // Adjust totalCount conservatively when we stripped some locally so the
-  // "showing X of Y" footer doesn't lie. Best-effort — over-counts are
-  // possible if the gateway filters AND the client also strips, which is
-  // a no-op intersection.
-  const totalCount = Math.max(0, data.posts.totalCount - droppedCount)
+  // Mesh filters purged posts upstream — pass through what the gateway
+  // returned. No client-side filtering: that would silently shrink pages
+  // and break pagination if upstream ever serves a purged post.
+  const items = data.posts.items.map(adaptMeshPostToFeedPost)
   return {
     items,
-    totalCount,
+    totalCount: data.posts.totalCount,
     hasMore: data.posts.hasMore,
     nextOffset: data.posts.hasMore ? offset + items.length : null,
   }
