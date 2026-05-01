@@ -2940,6 +2940,251 @@ contract ThatsRektTest is Test {
         new ERC1967Proxy(address(impl), initCalldata);
     }
 
+    /*------------------ purged-state guards on mutating fns ------------------*/
+
+    /// Audit C-1: After `purgePost`, the original poster could still call
+    /// `retract()` — the function only checked `p.removed`, not `p.purged`.
+    /// That double-reversed aggregates and zeroed `headPostId`/`tailPostId`,
+    /// bricking the active linked list whenever other live posts existed.
+    /// Fix: gate `retract` on `p.purged` and revert with `PostIsPurged`.
+    function test_purgeThenRetract_revertsWithPostIsPurged() public {
+        address purgeAdmin_ = makeAddr("purgeAdmin");
+        ThatsRekt fresh = _deployProxiedRolesWithPurge(
+            governance, governance, governance, purgeAdmin_, governance, _emptyList()
+        );
+        vm.prank(governance); fresh.addWhitelisted(alice);
+        uint256 id = _postAs(fresh, alice, bob);
+
+        vm.prank(purgeAdmin_);
+        fresh.purgePost(id);
+
+        vm.prank(alice);
+        vm.expectRevert(ThatsRekt.PostIsPurged.selector);
+        fresh.retract(id);
+    }
+
+    /// Inverse direction: retract first, THEN purge. This must still succeed
+    /// (purgePost has its own `if (!p.removed)` guard that skips the second
+    /// reversal) — the `PostIsPurged` guard added to retract must not
+    /// regress this composition.
+    function test_retractThenPurge_works() public {
+        address purgeAdmin_ = makeAddr("purgeAdmin");
+        ThatsRekt fresh = _deployProxiedRolesWithPurge(
+            governance, governance, governance, purgeAdmin_, governance, _emptyList()
+        );
+        vm.prank(governance); fresh.addWhitelisted(alice);
+        uint256 id = _postAs(fresh, alice, bob);
+
+        // Retract — reverses aggregates here.
+        vm.prank(alice);
+        fresh.retract(id);
+        assertEq(fresh.attackerAppearances(bob), 0);
+
+        // Purge after retract — must succeed and must NOT double-reverse.
+        vm.prank(purgeAdmin_);
+        fresh.purgePost(id);
+
+        assertTrue(fresh.isPurged(id));
+        (, , , , bool removed, , , ) = fresh.getPost(id);
+        assertTrue(removed);
+        assertEq(fresh.attackerAppearances(bob), 0, "no double reversal");
+    }
+
+    /// Audit H-1: After purge, `confirm` only checked `p.removed` and
+    /// happily added delta to `attackerScore` — letting whitelisters
+    /// continue pumping karma on attackers from a purged post. Fix: gate
+    /// `confirm` on `p.purged`.
+    function test_purgeThenConfirm_revertsWithPostIsPurged() public {
+        address purgeAdmin_ = makeAddr("purgeAdmin");
+        ThatsRekt fresh = _deployProxiedRolesWithPurge(
+            governance, governance, governance, purgeAdmin_, governance, _emptyList()
+        );
+        vm.prank(governance); fresh.addWhitelisted(alice);
+        vm.prank(governance); fresh.addWhitelisted(carol);
+        uint256 id = _postAs(fresh, alice, bob);
+
+        vm.prank(purgeAdmin_);
+        fresh.purgePost(id);
+
+        vm.prank(carol);
+        vm.expectRevert(ThatsRekt.PostIsPurged.selector);
+        fresh.confirm(id, ThatsRekt.ConfirmDirection.Up);
+    }
+
+    /// Audit H-1 (unconfirm path): After purge, an existing voter could
+    /// still `unconfirm`, which reverses delta on aggregates that were
+    /// already reversed during purge — corrupting `attackerScore`. Fix:
+    /// gate `unconfirm` on `p.purged`.
+    function test_purgeThenUnconfirm_revertsWithPostIsPurged() public {
+        address purgeAdmin_ = makeAddr("purgeAdmin");
+        ThatsRekt fresh = _deployProxiedRolesWithPurge(
+            governance, governance, governance, purgeAdmin_, governance, _emptyList()
+        );
+        vm.prank(governance); fresh.addWhitelisted(alice);
+        vm.prank(governance); fresh.addWhitelisted(carol);
+        uint256 id = _postAs(fresh, alice, bob);
+
+        // Carol votes first.
+        vm.prank(carol);
+        fresh.confirm(id, ThatsRekt.ConfirmDirection.Up);
+
+        // Now purge.
+        vm.prank(purgeAdmin_);
+        fresh.purgePost(id);
+
+        // Carol's unconfirm must revert — reversing again would corrupt.
+        vm.prank(carol);
+        vm.expectRevert(ThatsRekt.PostIsPurged.selector);
+        fresh.unconfirm(id);
+    }
+
+    /// Audit H-2 (note): after purge, the poster could still rewrite the
+    /// note — defeating governance moderation. Fix: gate `amendNote` on
+    /// `p.purged`.
+    function test_purgeThenAmendNote_revertsWithPostIsPurged() public {
+        address purgeAdmin_ = makeAddr("purgeAdmin");
+        ThatsRekt fresh = _deployProxiedRolesWithPurge(
+            governance, governance, governance, purgeAdmin_, governance, _emptyList()
+        );
+        vm.prank(governance); fresh.addWhitelisted(alice);
+        uint256 id = _postAs(fresh, alice, bob);
+
+        vm.prank(purgeAdmin_);
+        fresh.purgePost(id);
+
+        vm.prank(alice);
+        vm.expectRevert(ThatsRekt.PostIsPurged.selector);
+        fresh.amendNote(id, "new note");
+    }
+
+    /// Audit H-2 (title): after purge, the poster could still rewrite the
+    /// on-chain title. Fix: gate `amendTitle` on `p.purged`.
+    function test_purgeThenAmendTitle_revertsWithPostIsPurged() public {
+        address purgeAdmin_ = makeAddr("purgeAdmin");
+        ThatsRekt fresh = _deployProxiedRolesWithPurge(
+            governance, governance, governance, purgeAdmin_, governance, _emptyList()
+        );
+        vm.prank(governance); fresh.addWhitelisted(alice);
+        uint256 id = _postAs(fresh, alice, bob);
+
+        vm.prank(purgeAdmin_);
+        fresh.purgePost(id);
+
+        vm.prank(alice);
+        vm.expectRevert(ThatsRekt.PostIsPurged.selector);
+        fresh.amendTitle(id, "new title");
+    }
+
+    /// Audit H-2 (addAttackers): after purge, the poster could still bolt
+    /// on new attackers — flipping fresh appearances + inheriting the (now
+    /// reversed) net karma. Fix: gate `addAttackers` on `p.purged`.
+    function test_purgeThenAddAttackers_revertsWithPostIsPurged() public {
+        address purgeAdmin_ = makeAddr("purgeAdmin");
+        ThatsRekt fresh = _deployProxiedRolesWithPurge(
+            governance, governance, governance, purgeAdmin_, governance, _emptyList()
+        );
+        vm.prank(governance); fresh.addWhitelisted(alice);
+        uint256 id = _postAs(fresh, alice, bob);
+
+        vm.prank(purgeAdmin_);
+        fresh.purgePost(id);
+
+        address[] memory more = new address[](1);
+        more[0] = makeAddr("newAttacker");
+        vm.prank(alice);
+        vm.expectRevert(ThatsRekt.PostIsPurged.selector);
+        fresh.addAttackers(id, more);
+    }
+
+    /// Audit H-2 (addVictims): after purge, the poster could still flip
+    /// `isVictim` for fresh addresses by appending them to a purged post.
+    /// Fix: gate `addVictims` on `p.purged`.
+    function test_purgeThenAddVictims_revertsWithPostIsPurged() public {
+        address purgeAdmin_ = makeAddr("purgeAdmin");
+        ThatsRekt fresh = _deployProxiedRolesWithPurge(
+            governance, governance, governance, purgeAdmin_, governance, _emptyList()
+        );
+        vm.prank(governance); fresh.addWhitelisted(alice);
+        uint256 id = _postAs(fresh, alice, bob);
+
+        vm.prank(purgeAdmin_);
+        fresh.purgePost(id);
+
+        address[] memory more = new address[](1);
+        more[0] = makeAddr("newVictim");
+        vm.prank(alice);
+        vm.expectRevert(ThatsRekt.PostIsPurged.selector);
+        fresh.addVictims(id, more);
+    }
+
+    /// Concrete C-1 list-corruption regression: with three live posts in
+    /// the linked list (head=1, tail=3, 2 in the middle), purging id=2 and
+    /// THEN attempting retract(2) used to unconditionally zero head/tail
+    /// because both `prev` and `next` were already cleared — bricking the
+    /// active feed. With the `PostIsPurged` guard the retract reverts and
+    /// the list stays {head=1, tail=3} with id=2 unlinked but the rest
+    /// intact.
+    function test_purgeThenRetract_doesNotCorruptList() public {
+        address purgeAdmin_ = makeAddr("purgeAdmin");
+        ThatsRekt fresh = _deployProxiedRolesWithPurge(
+            governance, governance, governance, purgeAdmin_, governance, _emptyList()
+        );
+        vm.prank(governance); fresh.addWhitelisted(alice);
+
+        uint256 id1 = _postAs(fresh, alice, makeAddr("atk1"));
+        uint256 id2 = _postAs(fresh, alice, makeAddr("atk2"));
+        uint256 id3 = _postAs(fresh, alice, makeAddr("atk3"));
+        assertEq(fresh.headPostId(), id1);
+        assertEq(fresh.tailPostId(), id3);
+
+        // Purge the middle node — id2 is unlinked, head=1, tail=3.
+        vm.prank(purgeAdmin_);
+        fresh.purgePost(id2);
+        assertEq(fresh.headPostId(), id1, "head intact after purge");
+        assertEq(fresh.tailPostId(), id3, "tail intact after purge");
+
+        // Pre-fix: retract(id2) would zero head + tail. Post-fix: reverts.
+        vm.prank(alice);
+        vm.expectRevert(ThatsRekt.PostIsPurged.selector);
+        fresh.retract(id2);
+
+        // List must remain intact after the failed retract.
+        assertEq(fresh.headPostId(), id1, "head unchanged after failed retract");
+        assertEq(fresh.tailPostId(), id3, "tail unchanged after failed retract");
+    }
+
+    /// Concrete H-1 karma regression: pre-fix, a confirm after purge
+    /// silently pumped `attackerScore`. Post-fix, the confirm reverts and
+    /// the score stays at its post-purge baseline (zero in this scenario).
+    function test_purgeThenAttackerKarma_unchanged() public {
+        address purgeAdmin_ = makeAddr("purgeAdmin");
+        ThatsRekt fresh = _deployProxiedRolesWithPurge(
+            governance, governance, governance, purgeAdmin_, governance, _emptyList()
+        );
+        vm.prank(governance); fresh.addWhitelisted(alice);
+        vm.prank(governance); fresh.addWhitelisted(carol);
+        vm.prank(governance); fresh.addWhitelisted(dave);
+
+        uint256 id = _postAs(fresh, alice, bob);
+
+        // Carol confirms Up — attackerScore[bob] = +1.
+        vm.prank(carol);
+        fresh.confirm(id, ThatsRekt.ConfirmDirection.Up);
+        assertEq(fresh.attackerScore(bob), 1);
+
+        // Purge — aggregates reverse, attackerScore[bob] = 0.
+        vm.prank(purgeAdmin_);
+        fresh.purgePost(id);
+        assertEq(fresh.attackerScore(bob), 0, "score reversed by purge");
+
+        // Dave tries to confirm Up — must revert, must NOT bump score.
+        vm.prank(dave);
+        vm.expectRevert(ThatsRekt.PostIsPurged.selector);
+        fresh.confirm(id, ThatsRekt.ConfirmDirection.Up);
+
+        assertEq(fresh.attackerScore(bob), 0, "no karma pump on purged post");
+    }
+
     /*------------------ helper ------------------*/
 
     /// Whitelisted poster path with one attacker; returns the post id.
