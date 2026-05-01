@@ -1,4 +1,4 @@
-# thatsRekt — public-good on-chain hack alert registry.
+# thatsRekt — on-chain hack alerts for the public good.
 # All routes are public and indexable.
 
 User-agent: *

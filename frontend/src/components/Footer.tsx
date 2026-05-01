@@ -77,7 +77,7 @@ function BrandColumn() {
     <div>
       <ColumnHeading>[thatsrekt]</ColumnHeading>
       <p className="text-xs leading-relaxed text-neutral-800 mb-3">
-        free real-time hack alerts for evm chains, public good.
+        on-chain hack alerts for the public good.
       </p>
       <ul className="space-y-1.5">
         <li>

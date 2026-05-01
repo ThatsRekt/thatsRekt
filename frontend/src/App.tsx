@@ -202,7 +202,7 @@ function Header() {
           breathe — no more competing with the right-side CTAs. */}
       <div className="mt-2 flex flex-wrap items-baseline justify-between gap-x-6 gap-y-1">
         <p className="text-xs uppercase tracking-widest text-neutral-700">
-          on-chain hack alert registry for public good
+          on-chain hack alerts for the public good
         </p>
         <nav className="hidden sm:flex flex-wrap items-baseline gap-x-4 gap-y-1 text-xs uppercase tracking-widest">
           {visibleNavLinks.map((l) => (

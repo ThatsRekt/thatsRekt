@@ -1,6 +1,6 @@
 # thatsRekt
 
-> A public-good on-chain registry of hack alerts for EVM blockchains. Whitelisted security teams post structured alerts the moment they spot a live exploit — attacker addresses, victim contracts, free-form context. Other whitelisters race to vouch (`confirm`) or refute (`disconfirm`) on-chain. Wallets, DEXes, bridges, and lending markets read the registry directly to protect their users in real time.
+> An on-chain registry of hack alerts for EVM blockchains, run as a public good. Whitelisted security teams post structured alerts the moment they spot a live exploit — attacker addresses, victim contracts, free-form context. Other whitelisters race to vouch (`confirm`) or refute (`disconfirm`) on-chain. Wallets, DEXes, bridges, and lending markets read the registry directly to protect their users in real time.
 
 The registry is the canonical source. The web app and Telegram channel are convenience surfaces over the same on-chain data — anyone running an indexer can build their own.
 
