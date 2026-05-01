@@ -21,7 +21,13 @@ import { createServer } from 'node:http'
 import { z } from 'zod'
 
 import { enabledChains, type ChainEntry } from './chains.js'
-import { handleOgRoute, isOgRoute } from './og.js'
+import {
+  handleOgImageRoute,
+  handleOgRoute,
+  isOgImageRoute,
+  isOgRoute,
+} from './og.js'
+import { handleSitemapAttacksRoute, isSitemapAttacksRoute } from './sitemap.js'
 
 // ---------------------------------------------------------------------------
 // GraphiQL default query
@@ -564,9 +570,12 @@ const main = async () => {
     landingPage: false,
   })
 
-  // Lightweight HTTP router. We have exactly two route families:
-  //   1. /post/:chain/:postId  → SSR'd OG/Twitter card HTML (see og.ts)
-  //   2. everything else        → Yoga (which itself only serves /graphql)
+  // Lightweight HTTP router. Routes served from this dispatcher (in
+  // priority order):
+  //   1. /post/:chain/:postId      → SSR'd OG/Twitter card HTML (see og.ts)
+  //   2. /og/post/:chain/:postId   → SVG OG image for the above (og.ts)
+  //   3. /sitemap-attacks.xml      → Per-post sitemap (sitemap.ts)
+  //   4. everything else           → Yoga (/graphql + 404)
   //
   // We don't reach for express here — yoga is the only other handler and
   // it already understands a node http server. A 30-line dispatcher is
@@ -575,6 +584,7 @@ const main = async () => {
     try {
       // URL parsing — req.url is path+query; host is irrelevant for routing.
       const url = new URL(req.url ?? '/', 'http://internal.local')
+
       if (isOgRoute(url.pathname)) {
         const ua = req.headers['user-agent'] ?? null
         const result = await handleOgRoute(
@@ -584,17 +594,44 @@ const main = async () => {
         )
         if (result) {
           res.statusCode = result.status
-          res.setHeader('content-type', 'text/html; charset=utf-8')
+          res.setHeader('content-type', result.contentType)
           // Short cache — post mutations (edits, confirmations) update
           // the description. 60s is a fair compromise between cardable
           // freshness and not hammering the squid on every preview.
           res.setHeader('cache-control', 'public, max-age=60')
-          res.end(result.html)
+          res.end(result.body)
+          return
+        }
+      }
+
+      if (isOgImageRoute(url.pathname)) {
+        const result = await handleOgImageRoute(url.pathname, { chains })
+        if (result) {
+          res.statusCode = result.status
+          res.setHeader('content-type', result.contentType)
+          // Same 60s cache as the SSR HTML — counts mutate on every vote.
+          res.setHeader('cache-control', 'public, max-age=60')
+          res.end(result.body)
+          return
+        }
+      }
+
+      if (isSitemapAttacksRoute(url.pathname)) {
+        const result = await handleSitemapAttacksRoute(url.pathname, { chains })
+        if (result) {
+          res.statusCode = result.status
+          res.setHeader('content-type', result.contentType)
+          // Search engines don't refetch the sitemap aggressively, but
+          // there's no reason to make per-post discovery any more stale
+          // than the dynamic /post/ HTML. 5 minutes balances
+          // freshness vs squid load on bot bursts.
+          res.setHeader('cache-control', 'public, max-age=300')
+          res.end(result.body)
           return
         }
       }
     } catch (err) {
-      console.error('[mesh] og route handler failed:', err)
+      console.error('[mesh] route handler failed:', err)
       // Fall through to Yoga (which will 404 unknown paths). Don't
       // surface internal errors to the crawler.
     }
@@ -604,7 +641,9 @@ const main = async () => {
 
   server.listen(port, '0.0.0.0', () => {
     console.log(`[mesh] listening on http://0.0.0.0:${port}/graphql`)
-    console.log(`[mesh] og cards served at http://0.0.0.0:${port}/post/:chain/:postId`)
+    console.log(`[mesh] og html      → http://0.0.0.0:${port}/post/:chain/:postId`)
+    console.log(`[mesh] og image     → http://0.0.0.0:${port}/og/post/:chain/:postId`)
+    console.log(`[mesh] sitemap      → http://0.0.0.0:${port}/sitemap-attacks.xml`)
   })
 }
 

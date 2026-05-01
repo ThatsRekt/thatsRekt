@@ -51,11 +51,11 @@ type sendMessageReq struct {
 	ChatID    string `json:"chat_id"`
 	Text      string `json:"text"`
 	ParseMode string `json:"parse_mode,omitempty"`
-	// DisableWebPagePreview is true by default for all SendMessage calls.
-	// The OG card we render server-side at `/post/:chain/:postId` is
-	// currently sparse (top stripe + empty body) and duplicates the
-	// message body — net visual noise. Re-enable when the OG renderer is
-	// improved (mesh/src/og.ts).
+	// DisableWebPagePreview is false by default. The OG card rendered at
+	// `/post/:chain/:postId` is now informative (title, byline,
+	// attacker/victim counts, brand strip — see mesh/src/og.ts), so
+	// Telegram's link preview adds signal rather than noise. Flip back
+	// to true if the OG renderer regresses.
 	DisableWebPagePreview bool                  `json:"disable_web_page_preview"`
 	ReplyMarkup           *InlineKeyboardMarkup `json:"reply_markup,omitempty"`
 }
@@ -72,16 +72,17 @@ type sendMessageResp struct {
 // returns the resulting message id. ParseMode is "HTML" so we can use
 // `<b>`, `<a href="…">` etc. without escaping every emoji-looking thing.
 //
-// Web-page preview is disabled by default. The OG card we render
-// server-side at `/post/:chain/:postId` is currently sparse (top stripe +
-// empty body) and duplicates the message body — net visual noise.
-// Re-enable when the OG renderer is improved (mesh/src/og.ts).
+// Web-page preview is enabled. Mesh renders an informative OG card at
+// `/post/:chain/:postId` (title + byline + attacker/victim counts +
+// brand strip — see mesh/src/og.ts), so Telegram's link preview now
+// adds signal. Flip DisableWebPagePreview back to true if the renderer
+// regresses or if a particular notification needs to suppress it.
 func (b *Bot) SendMessage(ctx context.Context, chatID, text string, kb *InlineKeyboardMarkup) (int64, error) {
 	body, _ := json.Marshal(sendMessageReq{
 		ChatID:                chatID,
 		Text:                  text,
 		ParseMode:             "HTML",
-		DisableWebPagePreview: true,
+		DisableWebPagePreview: false,
 		ReplyMarkup:           kb,
 	})
 	var out sendMessageResp

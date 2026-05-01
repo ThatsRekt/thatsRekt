@@ -1,10 +1,9 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
   Static sitemap covering the SPA shell routes. Per-post pages
-  (`/post/:chain/:postId`) are dynamic and minted whenever a
-  whitelisted poster fires a `post(...)` tx; a future revision
-  will have Mesh generate the per-post entries from the indexer
-  data so this file lists every active post too.
+  (`/post/:chain/:postId`) are listed in the dynamic Mesh-generated
+  sitemap at /sitemap-attacks.xml; both URLs are advertised in
+  robots.txt so search engines crawl both.
 -->
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
   <url>
