@@ -64,6 +64,79 @@ query LatestAlerts {
 
 
 // ---------------------------------------------------------------------------
+// Tombstone for purged posts (audit M-2)
+// ---------------------------------------------------------------------------
+//
+// Defense-in-depth: per-chain `postById` (and any other path that surfaces a
+// Post entity) used to return the full payload regardless of `purged`. The
+// frontend rendered a tombstone via a runtime check on `data.purged`, but the
+// original title / note / attackers / victims still landed in the TanStack
+// Query cache under `['post', ...]` — readable to anyone with devtools or a
+// raw GraphQL request.
+//
+// This walker visits every object in an upstream `data` payload and, when it
+// finds an object with `purged === true`, scrubs the sensitive fields in
+// place (sets defaults of the right shape so downstream zod parsers and
+// frontend renderers stay happy). The keys we keep — id, removed, purged*,
+// confirmations, disconfirmations, netScore, createdAt*, lastUpdatedAt — are
+// either non-sensitive aggregates or required for the tombstone UI.
+//
+// Implementation note: detecting "is this a Post entity?" by the presence of
+// the `purged` boolean is a structural check rather than a type one. Post is
+// the only entity in the squid schema with that field, so collisions aren't
+// possible. If a future entity adds a `purged` field, scope this check.
+const TOMBSTONE_FIELDS = Object.freeze({
+  // Sensitive content scrubbed from the original post.
+  title: '',
+  note: '',
+  // Per-chain Post returns relations as `attackerLinks` / `victimLinks`.
+  attackerLinks: [],
+  victimLinks: [],
+  // Edit history leaks original title/note/added-addresses via newTitle,
+  // newNote, addedAttackers, addedVictims — empty it for the same reason.
+  edits: [],
+  // Confirmation log isn't sensitive on its own, but the frontend
+  // short-circuits to the tombstone before rendering it; emptying keeps the
+  // shape predictable and removes any indirect linkage.
+  confirmationLog: [],
+} as const)
+
+const isPlainObject = (v: unknown): v is Record<string, unknown> =>
+  typeof v === 'object' && v !== null && !Array.isArray(v)
+
+// Recursively walk a GraphQL response payload and tombstone any node whose
+// `purged` field is `true`. Mutates in place — the response is freshly
+// deserialized JSON owned by us, so no aliasing concerns. Returns the same
+// reference for caller convenience.
+const tombstonePurgedPosts = (node: unknown): unknown => {
+  if (Array.isArray(node)) {
+    for (const item of node) tombstonePurgedPosts(item)
+    return node
+  }
+  if (!isPlainObject(node)) return node
+
+  // Tombstone first so we don't recurse into the original (about-to-be-empty)
+  // attackerLinks / edits / etc. arrays — recursion below would still be a
+  // no-op on the freshly-emptied arrays, but skipping it is cleaner.
+  if (node.purged === true) {
+    for (const [key, val] of Object.entries(TOMBSTONE_FIELDS)) {
+      // Only overwrite if the field is actually projected by the caller.
+      // Adding a key that the caller didn't ask for would surface as an
+      // unexpected field on the wire.
+      if (key in node) {
+        // `as unknown` because TOMBSTONE_FIELDS is heterogeneous (string vs
+        // empty array). The shapes match upstream Post fields by construction.
+        node[key] = val as unknown
+      }
+    }
+    return node
+  }
+
+  for (const value of Object.values(node)) tombstonePurgedPosts(value)
+  return node
+}
+
+// ---------------------------------------------------------------------------
 // Per-upstream executor
 // ---------------------------------------------------------------------------
 
@@ -80,7 +153,14 @@ const makeExecutor = (endpoint: string): Executor => {
     if (!res.ok) {
       throw new Error(`Upstream ${endpoint} returned ${res.status}: ${await res.text()}`)
     }
-    return (await res.json()) as ExecutionResult
+    const result = (await res.json()) as ExecutionResult
+    // Audit M-2: scrub purged Post entities before they leave the gateway.
+    // Applies uniformly to every upstream call (postById, posts, nested
+    // post: ... fields, etc.) — see tombstonePurgedPosts for the policy.
+    if (result.data) {
+      tombstonePurgedPosts(result.data)
+    }
+    return result
   }) as Executor
 }
 
