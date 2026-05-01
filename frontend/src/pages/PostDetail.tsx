@@ -5,6 +5,7 @@ import { archiveSlugFromUrlId } from '../lib/archive'
 import { AddressLabel } from '../components/AddressLabel'
 import { ArchiveDetail } from '../components/ArchiveDetail'
 import { ChainBadge } from '../components/ChainBadge'
+import { Markdown } from '../components/Markdown'
 import { Timeline } from '../components/Timeline'
 import { EmptyState } from '../components/EmptyState'
 import { formatTimestamp, relativeTime } from '../lib/format'
@@ -139,9 +140,9 @@ function LivePostDetail({ postId }: { postId: string }) {
       {data.note?.trim() && (
         <section>
           <SectionLabel>note</SectionLabel>
-          <p className="mt-3 text-base leading-relaxed text-neutral-800 whitespace-pre-wrap break-words">
-            {data.note}
-          </p>
+          <div className="mt-3">
+            <Markdown source={data.note} />
+          </div>
         </section>
       )}
 
