@@ -9,6 +9,7 @@ import { relativeTime } from '../lib/format'
 import { AddressLabel } from './AddressLabel'
 import { ChainBadge } from './ChainBadge'
 import { ConfirmVoteButtons } from './ConfirmVoteButtons'
+import { Markdown } from './Markdown'
 
 /**
  * Discriminated union — `kind: 'live'` for on-chain posts, `kind:
@@ -73,9 +74,7 @@ function LivePostCard({ post }: { post: FeedPost }) {
       </Link>
 
       {body && (
-        <p className="text-sm leading-relaxed text-neutral-700 line-clamp-3">
-          {body}
-        </p>
+        <NotePreview body={body} />
       )}
 
       <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1 text-xs uppercase tracking-widest text-neutral-700">
@@ -167,9 +166,7 @@ function ArchivePostCard({ post }: { post: ArchivePost }) {
       </Link>
 
       {body && (
-        <p className="text-sm leading-relaxed text-neutral-700 line-clamp-3">
-          {body}
-        </p>
+        <NotePreview body={body} />
       )}
 
       <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1 text-xs uppercase tracking-widest text-neutral-700">
@@ -218,6 +215,27 @@ function ArchiveChip() {
     >
       archive
     </span>
+  )
+}
+
+/**
+ * Markdown-rendered note preview for feed cards.
+ *
+ * Wraps the rendered output in a fixed-height container (`max-h-24`,
+ * ~96px / ~4-5 lines of body text) with `overflow-hidden`, then overlays
+ * a parchment-colored gradient on the bottom 12px so the cut-off feels
+ * intentional rather than abrupt. The underlying card already links to
+ * the detail page; the fade is the visual hint that there's more.
+ */
+function NotePreview({ body }: { body: string }) {
+  return (
+    <div className="relative max-h-24 overflow-hidden">
+      <Markdown source={body} compact />
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-x-0 bottom-0 h-3 bg-gradient-to-t from-[#f5f4ee] to-transparent"
+      />
+    </div>
   )
 }
 

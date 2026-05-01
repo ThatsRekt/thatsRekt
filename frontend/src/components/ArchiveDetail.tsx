@@ -7,6 +7,7 @@ import {
 import { AddressLabel } from './AddressLabel'
 import { ChainBadge } from './ChainBadge'
 import { EmptyState } from './EmptyState'
+import { Markdown } from './Markdown'
 import { formatTimestamp, relativeTime } from '../lib/format'
 
 /**
@@ -104,9 +105,9 @@ function ArchiveDetailView({ post }: { post: ArchivePost }) {
       {post.note?.trim() && (
         <section>
           <SectionLabel>note</SectionLabel>
-          <p className="mt-3 text-base leading-relaxed text-neutral-800 whitespace-pre-wrap break-words">
-            {post.note}
-          </p>
+          <div className="mt-3">
+            <Markdown source={post.note} />
+          </div>
         </section>
       )}
 
