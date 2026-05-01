@@ -17,11 +17,17 @@ import {EnumerableSet} from "@openzeppelin/contracts/utils/structs/EnumerableSet
 ///         the proxy is the canonical permanent address (cross-chain identical
 ///         via CREATE2 with a constant salt).
 ///
-///         Three-role governance (asymmetric delays):
+///         Five-role governance (asymmetric delays):
 ///           - `owner` (TimelockController(7d) in prod): upgrade authority
-///             (`_authorizeUpgrade`) and re-installation path for the
-///             whitelist admin slot via `setWhitelistAdmin`. 7-day delay
-///             gives integrators a long disengage window for impl swaps.
+///             (`_authorizeUpgrade`), re-installation path for the
+///             whitelist admin slot via `setWhitelistAdmin`, install /
+///             rotation path for the `purgeAdmin` slot via
+///             `setPurgeAdmin`, and instant rotation path for both
+///             kill-switch slots via `setWhitelistRemover` /
+///             `setPurgeRemover`. 7-day delay gives integrators a long
+///             disengage window for sensitive moves; the kill-switch
+///             slot rotations are instant once the owner-tx lands
+///             because the owner is itself the only delay layer needed.
 ///           - `whitelistAdmin` (TimelockController(3d) in prod): adds
 ///             posters via `addWhitelisted` and self-rotates via
 ///             `setWhitelistAdmin`. 3-day delay so installing a new
@@ -31,8 +37,20 @@ import {EnumerableSet} from "@openzeppelin/contracts/utils/structs/EnumerableSet
 ///             instantly via `removeWhitelisted`, and can revoke the
 ///             whitelist admin slot instantly via `revokeWhitelistAdmin`
 ///             (zeros it; owner re-installs through the 7-day path).
-///             Kill-switch for incident response — compromised posters
+///             Kill-switch for the whitelist plane — compromised posters
 ///             or a captured admin TLC can be neutralized in one tx.
+///           - `purgeAdmin` (TimelockController(1d) in prod): permanently
+///             flags posts as purged via `purgePost` — governance-driven
+///             content moderation. 1-day delay balances "clean up
+///             illegal/spam content promptly" against "auditable public
+///             window".
+///           - `purgeRemover` (cold wallet EOA in prod): instantly
+///             revokes the `purgeAdmin` slot via `revokePurgeAdmin`
+///             (zeros it; owner re-installs through the 7-day path).
+///             Kill-switch for the purge plane. In production, this is
+///             *also* the proposer/canceller on the purge TLC, so the
+///             same address can both kill the role and cancel any
+///             pending purge operation before its 1-day delay elapses.
 contract ThatsRekt is Initializable, Ownable2StepUpgradeable, UUPSUpgradeable {
     using EnumerableSet for EnumerableSet.AddressSet;
 
@@ -86,13 +104,27 @@ contract ThatsRekt is Initializable, Ownable2StepUpgradeable, UUPSUpgradeable {
         uint64   attackedAt;
         uint32   confirmations;
         uint32   disconfirmations;
+        /// @dev Set by the poster via `retract()`. Reverses aggregates
+        ///      (attackerScore + victimActivePostCount) and unlinks the
+        ///      post from the active linked list.
         bool     removed;
+        /// @dev Set by governance via `purgePost()`. Distinct from
+        ///      `removed` — purge is for moderating illegal / spam /
+        ///      abusive content. Frontends should hide purged posts
+        ///      entirely; on-chain state retains the original data
+        ///      (events are immutable anyway, scrubbing storage is
+        ///      symbolic) but aggregates are reversed so a purged post
+        ///      no longer counts toward `attackerScore` /
+        ///      `victimActivePostCount`. Idempotent: once true, can
+        ///      never flip back.
+        bool     purged;
         /// @dev Block-time freshness signal. Set to `block.timestamp` at
         ///      post creation and bumped on every poster-driven edit
         ///      (`amendNote`, `addAttackers`, `addVictims`). Indexers and
         ///      consumers can use this to surface "recently edited" posts
         ///      without scanning the event log. Packs into the same storage
-        ///      slot as `disconfirmations` (u32) + `removed` (bool) + this u64.
+        ///      slot as `disconfirmations` (u32) + `removed` (bool) +
+        ///      `purged` (bool) + this u64.
         uint64   lastUpdatedAt;
         address[] attackers;
         address[] victims;
@@ -134,6 +166,51 @@ contract ThatsRekt is Initializable, Ownable2StepUpgradeable, UUPSUpgradeable {
     ///         integrator visibility.
     address public whitelistRemover;
 
+    /// @notice Address authorized to PURGE posts via `purgePost` —
+    ///         governance-driven content moderation for illegal / spam /
+    ///         abusive alerts. Distinct from `retract()` (poster-only).
+    ///         In production this is a 1-day TimelockController whose
+    ///         proposer is the operator cold wallet — short delay so the
+    ///         feed can be cleaned up promptly, but still long enough
+    ///         that integrators can audit each purge before it lands.
+    /// @dev    Set on initialize. Two rotation paths mirror the
+    ///         whitelistAdmin pattern:
+    ///           * `setPurgeAdmin` callable by `owner` only — 7-day
+    ///             path in prod, used to install or replace the purge
+    ///             admin. Owner-only (not self-rotating like
+    ///             `whitelistAdmin`) because the 1-day TLC delay is too
+    ///             short to be the gating delay on its own rotation:
+    ///             a captured purge TLC could otherwise install a
+    ///             hostile successor in 1 day.
+    ///           * `revokePurgeAdmin` callable by `purgeRemover`
+    ///             (instant) — kill-switch sets the slot to
+    ///             `address(0)`, after which all `purgePost` calls
+    ///             revert with `NotPurgeAdmin` until the owner
+    ///             re-installs an admin via the 7-day path.
+    ///         May be `address(0)` at deploy time ("purge disabled")
+    ///         or after revoke. Production deploys always wire a 1-day
+    ///         TimelockController here.
+    address public purgeAdmin;
+
+    /// @notice Address authorized to instantly revoke the `purgeAdmin`
+    ///         slot via `revokePurgeAdmin`. Mirrors the
+    ///         `whitelistRemover` pattern but scoped to the purge plane.
+    ///         In production this is the operator's cold wallet EOA —
+    ///         the same address that holds proposer + canceller on the
+    ///         1-day purge TimelockController, so it can both
+    ///         (a) neutralize a captured `purgeAdmin` TLC in one tx, and
+    ///         (b) cancel any pending purge operation on that TLC
+    ///         before its 1-day delay elapses.
+    /// @dev    Set on initialize; rotated via `setPurgeRemover`
+    ///         (`onlyOwner`, so 7-day delay in prod). Cannot be zero —
+    ///         losing this role means losing the purge kill-switch, so
+    ///         rotation requires the 7-day owner path with full
+    ///         integrator visibility. No internal timelock layer is
+    ///         needed for the rotation itself: the owner is itself a
+    ///         7-day TLC in production, which is the only delay layer
+    ///         required.
+    address public purgeRemover;
+
     uint256 public postCount;
     mapping(uint256 => Post) private _posts;
     mapping(uint256 => mapping(address => ConfirmDirection)) public confirmationOf;
@@ -165,6 +242,16 @@ contract ThatsRekt is Initializable, Ownable2StepUpgradeable, UUPSUpgradeable {
     event WhitelistUpdated(address indexed account, bool status);
     event WhitelistAdminTransferred(address indexed previousAdmin, address indexed newAdmin);
     event WhitelistRemoverTransferred(address indexed previousRemover, address indexed newRemover);
+    event PurgeAdminTransferred(address indexed previousAdmin, address indexed newAdmin);
+    event PurgeRemoverTransferred(address indexed previousRemover, address indexed newRemover);
+
+    /// @notice Emitted when governance permanently flags `postId` as purged.
+    /// @dev    `by` is `msg.sender` (the purgeAdmin at the time of call —
+    ///         in production this is the 1-day TimelockController, so the
+    ///         indexed `by` field surfaces the TLC address, not the
+    ///         underlying proposer EOA. Consumers wanting the proposer
+    ///         must cross-reference the TLC's own `CallScheduled` event.)
+    event PostPurged(uint256 indexed postId, address indexed by);
     event PostCreated(
         uint256 indexed id,
         address indexed poster,
@@ -217,6 +304,9 @@ contract ThatsRekt is Initializable, Ownable2StepUpgradeable, UUPSUpgradeable {
     error NotWhitelisted();
     error NotWhitelistAdmin();
     error NotWhitelistRemover();
+    error NotPurgeAdmin();
+    error NotPurgeRemover();
+    error AlreadyPurged();
     error Unauthorized();
     error PosterCannotConfirm();
     error PostIsRemoved();
@@ -271,6 +361,23 @@ contract ThatsRekt is Initializable, Ownable2StepUpgradeable, UUPSUpgradeable {
     ///                      (`revokeWhitelistAdmin`). Production:
     ///                      multisig directly. Cannot be zero — losing
     ///                      this slot means losing the kill-switch.
+    /// @param  initialPurgeAdmin Holds the governance-purge path
+    ///                      (`purgePost`). Production: 1-day
+    ///                      TimelockController whose proposer is the
+    ///                      same cold wallet that fills
+    ///                      `initialPurgeRemover`. May be `address(0)`
+    ///                      to deploy with purge disabled — the owner
+    ///                      can install one later via `setPurgeAdmin`
+    ///                      (7-day path).
+    /// @param  initialPurgeRemover Holds the purge kill-switch
+    ///                      (`revokePurgeAdmin`). Production: the
+    ///                      operator's cold wallet EOA, which is also
+    ///                      the proposer/canceller on the 1-day purge
+    ///                      TLC named in `initialPurgeAdmin` — same
+    ///                      principal handles both kill-switch and
+    ///                      pending-purge cancellation. Cannot be
+    ///                      zero — losing this slot at init means
+    ///                      losing the purge kill-switch.
     /// @param  initialWhitelisters Posters to mark as whitelisted at
     ///                      deploy time, bypassing the 3-day add
     ///                      timelock. Each entry must be non-zero;
@@ -283,17 +390,31 @@ contract ThatsRekt is Initializable, Ownable2StepUpgradeable, UUPSUpgradeable {
     ///         with `InvalidInitialization()`. The owner role is fully
     ///         transferable via the inherited Ownable2Step two-step
     ///         flow; the whitelistAdmin slot is rotated via
-    ///         `setWhitelistAdmin` (single-step), and the
+    ///         `setWhitelistAdmin` (single-step), the
     ///         whitelistRemover slot via `setWhitelistRemover`
-    ///         (single-step, onlyOwner).
+    ///         (single-step, onlyOwner), the purgeAdmin slot via
+    ///         `setPurgeAdmin` (single-step, onlyOwner), and the
+    ///         purgeRemover slot via `setPurgeRemover` (single-step,
+    ///         onlyOwner).
     function initialize(
         address initialOwner,
         address initialWhitelistAdmin,
         address initialWhitelistRemover,
+        address initialPurgeAdmin,
+        address initialPurgeRemover,
         address[] calldata initialWhitelisters
     ) external initializer {
         if (initialWhitelistAdmin == address(0)) revert ZeroAddress();
         if (initialWhitelistRemover == address(0)) revert ZeroAddress();
+        if (initialPurgeRemover == address(0)) revert ZeroAddress();
+        // Note: `initialPurgeAdmin == address(0)` is *allowed* — it means
+        // "deploy with purge disabled". The owner can install a purge
+        // admin later via `setPurgeAdmin` (7-day path). All `purgePost`
+        // calls revert with `NotPurgeAdmin` while the slot is zero
+        // (msg.sender on an external call is always non-zero).
+        // `initialPurgeRemover` is required even when the admin slot
+        // is zero, so the kill-switch is in place for the day the
+        // owner does install a purgeAdmin via the 7-day path.
 
         __Ownable_init(initialOwner);
         __Ownable2Step_init();
@@ -303,8 +424,12 @@ contract ThatsRekt is Initializable, Ownable2StepUpgradeable, UUPSUpgradeable {
 
         whitelistAdmin   = initialWhitelistAdmin;
         whitelistRemover = initialWhitelistRemover;
+        purgeAdmin       = initialPurgeAdmin;
+        purgeRemover     = initialPurgeRemover;
         emit WhitelistAdminTransferred(address(0), initialWhitelistAdmin);
         emit WhitelistRemoverTransferred(address(0), initialWhitelistRemover);
+        emit PurgeAdminTransferred(address(0), initialPurgeAdmin);
+        emit PurgeRemoverTransferred(address(0), initialPurgeRemover);
 
         // Pre-populate the poster whitelist. This is the only legitimate
         // bypass of the 3-day add timelock and exists solely for the
@@ -345,6 +470,16 @@ contract ThatsRekt is Initializable, Ownable2StepUpgradeable, UUPSUpgradeable {
 
     modifier onlyWhitelistRemover() {
         if (msg.sender != whitelistRemover) revert NotWhitelistRemover();
+        _;
+    }
+
+    modifier onlyPurgeAdmin() {
+        if (msg.sender != purgeAdmin) revert NotPurgeAdmin();
+        _;
+    }
+
+    modifier onlyPurgeRemover() {
+        if (msg.sender != purgeRemover) revert NotPurgeRemover();
         _;
     }
 
@@ -408,6 +543,66 @@ contract ThatsRekt is Initializable, Ownable2StepUpgradeable, UUPSUpgradeable {
         address prev = whitelistAdmin;
         whitelistAdmin = address(0);
         emit WhitelistAdminTransferred(prev, address(0));
+    }
+
+    /// @notice Rotate the `purgeAdmin` slot. Owner-only — 7-day delay in
+    ///         production. Allows installing a fresh purge admin or
+    ///         replacing an existing one.
+    /// @dev    Owner-only (not self-rotating like `whitelistAdmin`)
+    ///         because the purge TLC's delay is only 1 day in
+    ///         production — too short to be the gating delay on its
+    ///         own rotation. Forcing rotation through the owner keeps
+    ///         the 7-day public window between proposal and effect.
+    ///
+    ///         `address(0)` is permitted: it disables purge entirely
+    ///         and emits a `PurgeAdminTransferred(prev, 0)` event.
+    ///         This is functionally equivalent to `revokePurgeAdmin`
+    ///         but goes through the slow path — useful when the
+    ///         decision is "we don't need this anymore" rather than
+    ///         "we have a security incident".
+    /// @param  newAdmin New holder of the purgeAdmin slot. May be zero.
+    function setPurgeAdmin(address newAdmin) external onlyOwner {
+        address prev = purgeAdmin;
+        purgeAdmin = newAdmin;
+        emit PurgeAdminTransferred(prev, newAdmin);
+    }
+
+    /// @notice Kill-switch for the `purgeAdmin` slot — sets it to
+    ///         `address(0)` instantly. After revoke, no one can call
+    ///         `purgePost` until the owner re-installs an admin via
+    ///         `setPurgeAdmin` (7-day path). Existing purged posts
+    ///         remain purged; this only stops new purges.
+    /// @dev    Mirrors `revokeWhitelistAdmin`'s shape but uses a
+    ///         dedicated `purgeRemover` slot (not `whitelistRemover`)
+    ///         so the two kill-switches can be held by different
+    ///         principals if the operator chooses. In production both
+    ///         slots are intentionally distinct: `whitelistRemover` is
+    ///         the Safe multisig, `purgeRemover` is the operator's
+    ///         cold wallet EOA — same EOA that proposes/cancels on
+    ///         the 1-day purge TLC, so a single party can both
+    ///         neutralize a captured purge admin AND cancel pending
+    ///         purges before their delay elapses.
+    function revokePurgeAdmin() external onlyPurgeRemover {
+        address prev = purgeAdmin;
+        purgeAdmin = address(0);
+        emit PurgeAdminTransferred(prev, address(0));
+    }
+
+    /// @notice Rotate the `purgeRemover` slot. Only callable by
+    ///         `owner`, so 7-day delay in production. Cannot be zero —
+    ///         losing this slot means losing the purge kill-switch.
+    /// @dev    Mirrors `setWhitelistRemover`: owner-only, single-step,
+    ///         instant once the owner-tx lands. No internal timelock
+    ///         layer added here — the 7-day owner TLC in production is
+    ///         the only delay layer needed, and rotating the
+    ///         kill-switch requires the same level of integrator
+    ///         visibility as rotating any other governance slot.
+    /// @param  newRemover New holder of the purgeRemover slot.
+    function setPurgeRemover(address newRemover) external onlyOwner {
+        if (newRemover == address(0)) revert ZeroAddress();
+        address prev = purgeRemover;
+        purgeRemover = newRemover;
+        emit PurgeRemoverTransferred(prev, newRemover);
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -617,25 +812,10 @@ contract ThatsRekt is Initializable, Ownable2StepUpgradeable, UUPSUpgradeable {
     function _removePost(uint256 id, RemovalReason reason) internal {
         Post storage p = _posts[id];
 
-        int256 net = int256(uint256(p.confirmations)) - int256(uint256(p.disconfirmations));
+        // 1. reverse attacker + victim aggregates (shared with purgePost)
+        _reverseAggregates(id);
 
-        // 1. reverse attacker aggregates
-        uint256 aLen = p.attackers.length;
-        for (uint256 i; i < aLen; ++i) {
-            address a = p.attackers[i];
-            attackerScore[a] -= net;
-            unchecked { --attackerAppearances[a]; }
-        }
-
-        // 2. reverse victim aggregates
-        uint256 vLen = p.victims.length;
-        for (uint256 i; i < vLen; ++i) {
-            address v = p.victims[i];
-            unchecked { --_victimActivePosts[v]; }
-            if (_victimActivePosts[v] == 0) isVictim[v] = false;
-        }
-
-        // 3. unlink from active-post linked list
+        // 2. unlink from active-post linked list
         uint256 prev = prevPostId[id];
         uint256 next = nextPostId[id];
         if (prev != 0) nextPostId[prev] = next; else headPostId = next;
@@ -643,10 +823,44 @@ contract ThatsRekt is Initializable, Ownable2StepUpgradeable, UUPSUpgradeable {
         delete prevPostId[id];
         delete nextPostId[id];
 
-        // 4. mark removed
+        // 3. mark removed
         p.removed = true;
 
         emit PostRemoved(id, reason);
+    }
+
+    /// @dev Reverse the post's contribution to the global aggregates:
+    ///      `attackerScore` decremented by `net` for each attacker,
+    ///      `attackerAppearances` decremented for each attacker, and
+    ///      `_victimActivePosts` decremented for each victim (with
+    ///      `isVictim` flipping false on the last live post).
+    ///
+    ///      Called exactly once per post lifecycle change: by
+    ///      `_removePost` on poster retract, or by `purgePost` on
+    ///      governance purge — but never both, since `purgePost` skips
+    ///      the call when the post is already `removed` (aggregates
+    ///      were reversed at retract time). This is what "AlreadyPurged"
+    ///      protects against on the second-purge path; "removed first
+    ///      then purged" is handled by the explicit `if (!p.removed)`
+    ///      guard in `purgePost`.
+    function _reverseAggregates(uint256 id) internal {
+        Post storage p = _posts[id];
+
+        int256 net = int256(uint256(p.confirmations)) - int256(uint256(p.disconfirmations));
+
+        uint256 aLen = p.attackers.length;
+        for (uint256 i; i < aLen; ++i) {
+            address a = p.attackers[i];
+            attackerScore[a] -= net;
+            unchecked { --attackerAppearances[a]; }
+        }
+
+        uint256 vLen = p.victims.length;
+        for (uint256 i; i < vLen; ++i) {
+            address v = p.victims[i];
+            unchecked { --_victimActivePosts[v]; }
+            if (_victimActivePosts[v] == 0) isVictim[v] = false;
+        }
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -659,6 +873,68 @@ contract ThatsRekt is Initializable, Ownable2StepUpgradeable, UUPSUpgradeable {
         if (p.poster != msg.sender)     revert NotPoster();
         if (p.removed)                  revert PostIsRemoved();
         _removePost(postId, RemovalReason.Retracted);
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                        PURGE ADMIN (governance moderation)
+    //////////////////////////////////////////////////////////////*/
+
+    /// @notice Permanently flag a post as purged by governance. Use
+    ///         case: removing illegal / spam / abusive content from
+    ///         the public feed. Frontends should hide purged posts
+    ///         entirely; on-chain state retains the original data
+    ///         (events are immutable anyway, scrubbing storage would
+    ///         be symbolic) but aggregates are reversed so a purged
+    ///         post no longer counts toward `attackerScore` /
+    ///         `attackerAppearances` / `isVictim`.
+    /// @dev    Distinct from `retract()` (poster-controlled). Purge is
+    ///         the governance moderation path; retract is the poster
+    ///         take-back path. The two CAN compose: a post that was
+    ///         retracted by its poster can still be purged by
+    ///         governance afterward (the `purged` flag is independent
+    ///         of `removed`). When that happens, aggregates are NOT
+    ///         double-reversed — the `if (!p.removed)` guard skips
+    ///         the second reversal.
+    ///
+    ///         The post is NOT unlinked from the active linked list
+    ///         here when it is also currently `removed` — that was
+    ///         already done at retract. When the post is *only*
+    ///         purged (not previously retracted), we DO unlink it,
+    ///         so the active feed stops surfacing it. The `removed`
+    ///         flag is intentionally left untouched: indexers and
+    ///         frontends can distinguish "poster retracted" from
+    ///         "governance purged" by checking both flags.
+    ///
+    ///         Idempotent via the `AlreadyPurged` check — calling
+    ///         `purgePost` twice on the same post reverts the second
+    ///         time, matching the audit-trail-preserving design.
+    /// @param postId Target post id (must exist and not already be purged).
+    function purgePost(uint256 postId) external onlyPurgeAdmin {
+        Post storage p = _posts[postId];
+        if (p.poster == address(0)) revert PostNotFound();
+        if (p.purged)               revert AlreadyPurged();
+
+        p.purged = true;
+
+        // If the poster already retracted, aggregates were reversed
+        // there and the post was already unlinked from the active
+        // list — don't double-reverse, don't re-unlink.
+        if (!p.removed) {
+            _reverseAggregates(postId);
+
+            // Unlink from active-post linked list. Same logic as
+            // `_removePost` step 2; not extracted because there are
+            // only two callers and a 7-line helper would obscure the
+            // ordering with `_reverseAggregates` above.
+            uint256 prev = prevPostId[postId];
+            uint256 next = nextPostId[postId];
+            if (prev != 0) nextPostId[prev] = next; else headPostId = next;
+            if (next != 0) prevPostId[next] = prev; else tailPostId = prev;
+            delete prevPostId[postId];
+            delete nextPostId[postId];
+        }
+
+        emit PostPurged(postId, msg.sender);
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -869,6 +1145,17 @@ contract ThatsRekt is Initializable, Ownable2StepUpgradeable, UUPSUpgradeable {
         return (attackerScore[a], attackerAppearances[a]);
     }
 
+    /// @notice Whether `postId` has been purged by governance. Distinct
+    ///         from the `removed` flag (poster retract) returned by
+    ///         `getPost`.
+    /// @dev    Kept as a separate view rather than added as a 9th return
+    ///         to `getPost` to avoid breaking the v1.0 ABI for indexers
+    ///         and integrators destructuring the existing 8-tuple.
+    /// @return purged True if `purgePost(postId)` has been called.
+    function isPurged(uint256 postId) external view returns (bool) {
+        return _posts[postId].purged;
+    }
+
     function recentActivePosts(uint256 limit) external view returns (uint256[] memory ids) {
         if (limit > MAX_VIEW_LIMIT) limit = MAX_VIEW_LIMIT;
         uint256[] memory tmp = new uint256[](limit);
@@ -951,6 +1238,10 @@ contract ThatsRekt is Initializable, Ownable2StepUpgradeable, UUPSUpgradeable {
     ///      collide with this sequential layout.
     ///      v1.0 gap was [50]; v1.1 added `postTitle` (1 slot for the
     ///      mapping reference) → [49]; v1.2 added `whitelistRemover`
-    ///      (1 slot) → [48].
-    uint256[48] private __gap;
+    ///      (1 slot) → [48]; v1.3 added `purgeAdmin` and `purgeRemover`
+    ///      (2 slots, one address each) → [46]. The `purged` bool on
+    ///      `Post` doesn't touch this gap — it packs into the existing
+    ///      slot beside `removed` / `disconfirmations` /
+    ///      `lastUpdatedAt`.
+    uint256[46] private __gap;
 }

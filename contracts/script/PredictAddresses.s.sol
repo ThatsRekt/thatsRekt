@@ -24,10 +24,22 @@ contract PredictAddresses is Script {
         bytes32 IMPL_SALT             = keccak256("thatsRekt.impl.v1.0.0");
         bytes32 UPGRADE_TIMELOCK_SALT = keccak256("thatsRekt.upgradeTimelock.v1");
         bytes32 ADD_TIMELOCK_SALT     = keccak256("thatsRekt.addTimelock.v1");
+        bytes32 PURGE_TIMELOCK_SALT   = keccak256("thatsRekt.purgeTimelock.v1");
         bytes32 PROXY_SALT            = keccak256("thatsRekt.proxy");
 
         address multisig = vm.envAddress("GOVERNANCE_OWNER");
         address operator = vm.envAddress("WHITELIST_OPERATOR");
+        // Match Deploy.s.sol: env-or-default. We don't have direct access
+        // to Deploy's `DEFAULT_PURGE_REMOVER_EOA` constant from this view
+        // function, so duplicate the literal — must stay in sync.
+        address purgeRemoverEOA;
+        try vm.envAddress("PURGE_REMOVER_EOA") returns (address eoa) {
+            purgeRemoverEOA = eoa == address(0)
+                ? 0x5822B262EDdA82d2C6A436b598Ff96fA9AB894c4
+                : eoa;
+        } catch {
+            purgeRemoverEOA = 0x5822B262EDdA82d2C6A436b598Ff96fA9AB894c4;
+        }
         address[] memory initialWhitelisters;
         try vm.envString("INITIAL_WHITELISTERS") returns (string memory raw) {
             if (bytes(raw).length == 0) {
@@ -61,10 +73,19 @@ contract PredictAddresses is Script {
         ));
         address addTL = computeCreate2Address(ADD_TIMELOCK_SALT, addHash, CREATE2_FACTORY);
 
-        // 4. proxy
+        // 4. purge TLC (purge remover EOA as proposer/executor)
+        address[] memory purgeProp = new address[](1); purgeProp[0] = purgeRemoverEOA;
+        address[] memory purgeExec = new address[](1); purgeExec[0] = purgeRemoverEOA;
+        bytes32 purgeHash = keccak256(abi.encodePacked(
+            type(TimelockController).creationCode,
+            abi.encode(uint256(1 days), purgeProp, purgeExec, address(0))
+        ));
+        address purgeTL = computeCreate2Address(PURGE_TIMELOCK_SALT, purgeHash, CREATE2_FACTORY);
+
+        // 5. proxy
         bytes memory initCalldata = abi.encodeCall(
             ThatsRekt.initialize,
-            (upgradeTL, addTL, operator, initialWhitelisters)
+            (upgradeTL, addTL, operator, purgeTL, purgeRemoverEOA, initialWhitelisters)
         );
         bytes32 proxyHash = keccak256(abi.encodePacked(
             type(ERC1967Proxy).creationCode,
@@ -75,6 +96,8 @@ contract PredictAddresses is Script {
         console2.log("=== Predicted CREATE2 addresses (PROD salts) ===");
         console2.log("Multisig (gov):        ", multisig);
         console2.log("Operator (whitelister):", operator);
+        console2.log("Purge remover EOA:     ", purgeRemoverEOA);
+        console2.log("  (purgeAdmin = Purge TLC; purgeRemover = same EOA)");
         console2.log("Initial whitelisters:  ", initialWhitelisters.length);
         for (uint256 i; i < initialWhitelisters.length; ++i) {
             console2.log("  -", initialWhitelisters[i]);
@@ -83,6 +106,7 @@ contract PredictAddresses is Script {
         console2.log("Implementation:        ", impl);
         console2.log("Upgrade TLC (7-day):   ", upgradeTL);
         console2.log("Add TLC (3-day):       ", addTL);
+        console2.log("Purge TLC (1-day):     ", purgeTL);
         console2.log("Proxy (canonical):     ", proxy);
         // Suppress unused-variable warning for the sentinel.
         d;
