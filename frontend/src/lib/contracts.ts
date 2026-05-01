@@ -18,10 +18,12 @@ export const REGISTRY_PROXIES = {
   // address and swap this entry. Until then, prod runs against the
   // legacy contract so the feed/voting/posting all still work.
   8453: '0x390f7b37545CaD278dD3DADC92a20b9f45865936',
-  // Base Sepolia — purge-capable contract (DeployDev, single-principal
-  // testnet posture: all roles flattened to deployer EOA 0xb5A6...).
-  // Used for end-to-end purge-flow testing ahead of the mainnet redeploy.
-  84532: '0x309c2C20Cf07Dc4ae4c51a7813677d3D0c5Afb80',
+  // Base Sepolia — purge-capable contract (DeployDev, cross-canceller
+  // role split: deployer 0xb5A6 proposes upgrades + whitelist, cold
+  // 0x5822 cancels; cold proposes purges, deployer cancels). Salts
+  // bumped to v2 for this redeploy (previous unversioned salt at
+  // 0x309c…fb80 hosted the buggy pre-PR-#87/#89 contract).
+  84532: '0xcd289C9e99D1B8EA6dc0B3fFDED7FEBe26Da0E23',
 } as const satisfies Record<number, `0x${string}`>
 
 /** Chain IDs that have a deployed registry. Literal-narrowed for wagmi. */
