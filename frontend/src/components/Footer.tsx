@@ -26,6 +26,10 @@ const APPLY_EMAIL = 'thatsrekt@protonmail.com'
 /** Project X (Twitter) account — distinct from any maintainer's
  *  personal handle (those go on the bottom credits line). */
 const PROJECT_X_URL = 'https://x.com/ThatsRekt_'
+/** Telegram community chat — distinct from the alerts channel
+ *  (`TG_CHANNEL_URL`): alerts is broadcast-only (bot posts, readers
+ *  follow), community is the conversation space. */
+const TG_COMMUNITY_URL = 'https://t.me/thatsRekt_community'
 
 /**
  * Build the same mailto string `WhitelistGateModal` uses, minus the
@@ -114,6 +118,16 @@ function CommunityColumn() {
             className="text-[11px] uppercase tracking-widest font-mono rekt-link"
           >
             [telegram alerts <span aria-hidden="true">↗</span>]
+          </a>
+        </li>
+        <li>
+          <a
+            href={TG_COMMUNITY_URL}
+            target="_blank"
+            rel="noreferrer noopener"
+            className="text-[11px] uppercase tracking-widest font-mono rekt-link"
+          >
+            [telegram chat <span aria-hidden="true">↗</span>]
           </a>
         </li>
         <li>
