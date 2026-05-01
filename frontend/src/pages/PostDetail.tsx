@@ -1,10 +1,12 @@
 import { useParams, Link } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { fetchPostDetail } from '../lib/queries'
+import { fetchCommentCount } from '../lib/comments'
 import { archiveSlugFromUrlId } from '../lib/archive'
 import { AddressLabel } from '../components/AddressLabel'
 import { ArchiveDetail } from '../components/ArchiveDetail'
 import { ChainBadge } from '../components/ChainBadge'
+import { CommentThread } from '../components/CommentThread'
 import { Markdown } from '../components/Markdown'
 import { ShareButton } from '../components/ShareButton'
 import { ConfirmVoteButtons } from '../components/ConfirmVoteButtons'
@@ -59,6 +61,15 @@ function LivePostDetail({ postId }: { postId: string }) {
   const { data, isLoading, error } = useQuery({
     queryKey: ['post', postId],
     queryFn: () => fetchPostDetail(postId),
+    enabled: postId.length > 0,
+  })
+
+  // Comment count is a separate, cheap query so the existing post-detail
+  // path stays untouched. Failures here are silent — a missing count
+  // chip is better than tearing down the whole post page.
+  const { data: commentCount } = useQuery({
+    queryKey: ['commentCount', postId],
+    queryFn: () => fetchCommentCount(postId),
     enabled: postId.length > 0,
   })
 
@@ -131,6 +142,14 @@ function LivePostDetail({ postId }: { postId: string }) {
           <span title={formatTimestamp(data.attackedAt)}>
             attacked {relativeTime(data.attackedAt)}
           </span>
+          {typeof commentCount === 'number' && commentCount > 0 && (
+            <>
+              <span className="text-neutral-700">·</span>
+              <span className="text-neutral-700" title={`${commentCount} comment${commentCount === 1 ? '' : 's'}`}>
+                [{commentCount} comment{commentCount === 1 ? '' : 's'}]
+              </span>
+            </>
+          )}
           <span className="ml-auto">
             <ScoreLine net={data.netScore} up={data.confirmations} down={data.disconfirmations} />
           </span>
@@ -273,6 +292,12 @@ function LivePostDetail({ postId }: { postId: string }) {
           <Timeline post={data} log={data.confirmationLog} edits={data.edits} chainSlug={chainSlug} />
         </div>
       </section>
+
+      {/* Guardian comments thread. Lives at the bottom — it's a
+          discussion layer over the headline data above. The thread
+          handles its own connect/whitelist gate inside ComposeBox, so
+          it's safe to mount unconditionally. */}
+      <CommentThread postId={data.id} chainSlug={chainSlug} />
     </article>
   )
 }
