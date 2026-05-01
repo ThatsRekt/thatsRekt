@@ -35,8 +35,16 @@ export function PostAlertButton({
   /** invoked after the button is clicked — used by mobile menu to close itself */
   onAfterClick?: () => void
 }) {
-  const [gateOpen, setGateOpen] = useState(false)
-  const [composerOpen, setComposerOpen] = useState(false)
+  // Single state machine for the two-modal flow. Encoding mutual
+  // exclusion at the type level (rather than as two booleans we promise
+  // never to both set true) means there is no representable state with
+  // both modals open — closes the L-2 audit finding about relying on
+  // React 18's automatic batching for the gate→composer transition.
+  type ModalMode = 'closed' | 'gate' | 'composer'
+  const [mode, setMode] = useState<ModalMode>('closed')
+  const gateOpen = mode === 'gate'
+  const composerOpen = mode === 'composer'
+
   const { address, isConnected } = useAccount()
   const {
     isWhitelisted,
@@ -55,34 +63,34 @@ export function PostAlertButton({
 
   // Auto-promote from gate → composer once the post-connect whitelist
   // read resolves true. This replaces the old "silent close" effect:
-  // the gate goes away AND the composer opens in the same tick, so the
-  // user clicks "post" once and sees the form (operator requirement).
+  // the gate goes away AND the composer opens in the same tick (single
+  // setState call now, not two), so the user clicks "post" once and
+  // sees the form (operator requirement).
   useEffect(() => {
     if (
-      gateOpen &&
+      mode === 'gate' &&
       isConnected &&
       !isCheckingWhitelist &&
       isWhitelisted &&
       chainsAvailable.length > 0
     ) {
-      setGateOpen(false)
-      setComposerOpen(true)
+      setMode('composer')
     }
-  }, [gateOpen, isConnected, isCheckingWhitelist, isWhitelisted, chainsAvailable.length])
+  }, [mode, isConnected, isCheckingWhitelist, isWhitelisted, chainsAvailable.length])
 
   const handleClick = () => {
     onAfterClick?.()
     // Fast path: already connected + whitelisted + we know which chain(s)
     // → straight to the composer, no gate flash.
     if (isConnected && isWhitelisted && chainsAvailable.length > 0) {
-      setComposerOpen(true)
+      setMode('composer')
       return
     }
     // Otherwise route through the gate. The gate handles connect AND the
     // not-whitelisted panel; the auto-promote effect above will swap to
     // the composer once the read settles in our favor (e.g. user just
     // connected and the per-chain reads are still in flight).
-    setGateOpen(true)
+    setMode('gate')
   }
 
   return (
@@ -101,7 +109,7 @@ export function PostAlertButton({
       </button>
       <WhitelistGateModal
         open={gateOpen}
-        onClose={() => setGateOpen(false)}
+        onClose={() => setMode('closed')}
         isConnected={isConnected}
         address={address}
         isCheckingWhitelist={isCheckingWhitelist}
@@ -113,7 +121,7 @@ export function PostAlertButton({
       />
       <PostFormModal
         open={composerOpen}
-        onClose={() => setComposerOpen(false)}
+        onClose={() => setMode('closed')}
         whitelistedChains={chainsAvailable}
       />
     </>
