@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useInfiniteQuery, useQueryClient } from '@tanstack/react-query'
 import { fetchFeedPage, type FeedPost, type SortOption } from '../lib/queries'
-import { selectArchive, type ArchivePost } from '../lib/archive'
+import { selectArchive, formatAmountUsd, type ArchivePost } from '../lib/archive'
 import { PostCard } from '../components/PostCard'
 import { ChainSelector } from '../components/ChainSelector'
 import { ArchiveDivider } from '../components/ArchiveDivider'
@@ -384,8 +384,38 @@ function ArchiveSection({ posts }: { posts: readonly ArchivePost[] }) {
   const visiblePosts = posts.slice(0, visibleCount)
   const hasMore = visibleCount < posts.length
 
+  // Aggregate "total lost" over the currently filtered archive set.
+  // Skip entries with no usable USD amount so they don't pad the count.
+  // Computed over `posts` (full filtered set), NOT `visiblePosts` — the
+  // banner reflects the whole filtered scope, not the currently rendered
+  // page slice.
+  const { totalLostUsd, incidentCount } = useMemo(() => {
+    let sum = 0
+    let count = 0
+    for (const p of posts) {
+      if (p.amountUsd > 0) {
+        sum += p.amountUsd
+        count += 1
+      }
+    }
+    return { totalLostUsd: sum, incidentCount: count }
+  }, [posts])
+
   return (
     <section className="bg-neutral-300/40 -mx-4 sm:-mx-6 px-4 sm:px-6 py-8 border-y-2 border-neutral-500/60">
+      {incidentCount > 0 && (
+        <div className="mb-8 flex items-baseline justify-center gap-x-2 border-y border-red-700/50 py-3 font-mono">
+          <span className="text-[10px] uppercase tracking-widest text-neutral-700">
+            [ total lost ·
+          </span>
+          <span className="text-xl sm:text-2xl font-black tracking-tight text-red-700">
+            {formatAmountUsd(totalLostUsd)}
+          </span>
+          <span className="text-[10px] uppercase tracking-widest text-neutral-600">
+            across {incidentCount} incident{incidentCount === 1 ? '' : 's'} ]
+          </span>
+        </div>
+      )}
       {visiblePosts.map((post, i) => (
         <div key={post.id}>
           {i > 0 && <hr className="my-8 border-t-2 border-neutral-400/60" />}
