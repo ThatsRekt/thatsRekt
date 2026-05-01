@@ -630,6 +630,26 @@
     "amountUsd": 128640000
   },
   {
+    "id": "resolv-2026-mar",
+    "protocol": "Resolv",
+    "chain": "ethereum",
+    "attackedAt": "2026-03-22T02:21:35Z",
+    "title": "Resolv — compromised SERVICE_ROLE key mints 80M unbacked USR for ~$300K USDC, $25M extracted",
+    "attackers": [
+      "0x04A288a7789DD6Ade935361a4fB1Ec5db513caEd",
+      "0x8ED8cF0C1c531C1b20848E78f1CB32fa5B99b81C",
+      "0xb945eC1be1f42777F3AA7D683562800B4CDD3890"
+    ],
+    "victims": [
+      "0xa27a69Ae180e202fDe5D38189a3F24Fe24E55861",
+      "0xAC85eF29192487E0a109b7f9E40C267a9ea95f2e",
+      "0x66a1E37c9b0eAddca17d3662D6c05F4DECf3e110"
+    ],
+    "note": "Off-chain infrastructure compromise, not a smart contract bug. Attackers pivoted from a contractor's GitHub credentials into Resolv's AWS KMS environment and altered access policies to gain control of the SERVICE_ROLE signing EOA (0x15CAd41e6BdCaDc7121ce65080489C92CF6de398). The two-step USR mint flow trusted that key to set the minted amount as an unchecked parameter via completeSwap on the USR Counter (0xa27a69Ae...). With ~$100K-$300K USDC deposited across three transactions, the attacker minted ~80M USR, swapped to ~11,400 ETH (~$25M) on Curve before USR's peg collapsed (low ~$0.025 on USR/USDC, 17 minutes after the first 50M mint). First malicious completeSwap tx 0xfe37f25e... at 02:21:35 UTC. Attacker EOAs labeled 'Resolv Exploiter' (0x04A288a7...) and 'Resolv Exploiter 2' (0x8ED8cF0C...) on Etherscan; 0xb945eC1b... funded Exploiter 2 with 524 ETH. Resolv paused the protocol, burned hacker-held wstUSR/stUSR balances via contract upgrade, and published the post-mortem on April 4, 2026. Knock-on impact: Euler disabled USR/RLP collateral; Gauntlet USDC Core had ~$5M wstUSR/USDC exposure.",
+    "sourceUrl": "https://www.chainalysis.com/blog/lessons-from-the-resolv-hack/",
+    "amountUsd": 25000000
+  },
+  {
     "id": "kelp-dao-2026-apr",
     "protocol": "Kelp DAO",
     "chain": "ethereum",
