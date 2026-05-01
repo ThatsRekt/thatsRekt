@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useInfiniteQuery, useQueryClient } from '@tanstack/react-query'
 import { fetchFeedPage, type FeedPost, type SortOption } from '../lib/queries'
 import { selectArchive, type ArchivePost } from '../lib/archive'
@@ -13,7 +13,10 @@ import { useChainFilter } from '../hooks/useChainFilter'
 import { useArchiveToggle } from '../hooks/useArchiveToggle'
 import { useIndexerStatus } from '../hooks/useIndexerStatus'
 
-const PAGE_SIZE = 25
+const PAGE_SIZE = 20
+/** Archive entries (static JSON) revealed per "load more" click. Same
+ *  cadence as the live feed so the two feel consistent. */
+const ARCHIVE_PAGE_SIZE = 20
 
 const SORT_OPTIONS: { value: SortOption; label: string }[] = [
   { value: 'newest', label: 'newest' },
@@ -366,17 +369,49 @@ function ArchiveSection({ posts }: { posts: readonly ArchivePost[] }) {
   // darker / cooler tone. Keeps the brutalist aesthetic but signals
   // "you've crossed into the archive subspace" without needing to read
   // the divider text.
+  //
+  // Pagination is purely client-side here — the archive is static JSON
+  // that's already in memory after `selectArchive(...)`. We just cap how
+  // many entries hit the DOM at once so a user with archive toggled on
+  // doesn't render 40+ post cards in a single paint. Reset the visible
+  // window when the underlying `posts` array identity changes (e.g. the
+  // user flipped the chain filter or sort).
+  const [visibleCount, setVisibleCount] = useState(ARCHIVE_PAGE_SIZE)
+  useEffect(() => {
+    setVisibleCount(ARCHIVE_PAGE_SIZE)
+  }, [posts])
+
+  const visiblePosts = posts.slice(0, visibleCount)
+  const hasMore = visibleCount < posts.length
+
   return (
     <section className="bg-neutral-200/50 -mx-4 sm:-mx-6 px-4 sm:px-6 py-8 border-y-2 border-neutral-400/60">
-      {posts.map((post, i) => (
+      {visiblePosts.map((post, i) => (
         <div key={post.id}>
           {i > 0 && <hr className="my-8 border-t-2 border-neutral-400/60" />}
           <PostCard item={{ kind: 'archive', post }} />
         </div>
       ))}
-      <p className="mt-8 text-center text-xs uppercase tracking-widest text-neutral-600">
-        end of archive · {posts.length} entr{posts.length === 1 ? 'y' : 'ies'}
-      </p>
+      {hasMore ? (
+        <div className="mt-8 flex flex-col items-center gap-2">
+          <button
+            type="button"
+            onClick={() =>
+              setVisibleCount((n) => Math.min(n + ARCHIVE_PAGE_SIZE, posts.length))
+            }
+            className="px-3 py-1.5 text-xs uppercase tracking-widest font-black border-2 border-black hover:bg-black hover:text-[#f5f4ee] transition-colors"
+          >
+            load more
+          </button>
+          <p className="text-[10px] uppercase tracking-widest text-neutral-600">
+            showing {visiblePosts.length} of {posts.length}
+          </p>
+        </div>
+      ) : (
+        <p className="mt-8 text-center text-xs uppercase tracking-widest text-neutral-600">
+          end of archive · {posts.length} entr{posts.length === 1 ? 'y' : 'ies'}
+        </p>
+      )}
     </section>
   )
 }

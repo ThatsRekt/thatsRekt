@@ -1,14 +1,18 @@
 import { Link } from 'react-router-dom'
 import { TG_CHANNEL_URL } from './TgChannelCTA'
+import { twitterUrl } from '../lib/format'
 
 /**
  * Site-wide footer rendered after every routed page.
  *
- * Four-column brutalist grid (collapses to one column on mobile) that
- * surfaces the project's key external surfaces — registry contracts on
- * Base + Optimism, the public Telegram alert channel, source code, and
- * a how-to-apply contact path. Bottom strip is the standard
- * license/credits/version line.
+ * Three-column brutalist grid (collapses to one column on mobile)
+ * surfacing the project's external surfaces — public alerts channel,
+ * source code, and a how-to-apply contact path. Bottom strip is
+ * license + maintainer credits.
+ *
+ * The contracts deployment list lives on the Docs page (under
+ * `[reference] / [deployments]`) — it's reference data, not a
+ * call-to-action, so it doesn't earn space here.
  *
  * Visual rules: top border 2px black to separate from page content,
  * page background (`#f5f4ee`) to feel continuous with the layout, mono
@@ -19,15 +23,9 @@ import { TG_CHANNEL_URL } from './TgChannelCTA'
 const GITHUB_URL = 'https://github.com/JeronimoHoulin/thatsRekt'
 const GITHUB_ISSUES_URL = `${GITHUB_URL}/issues`
 const APPLY_EMAIL = 'thatsrekt@protonmail.com'
-
-const BASE_PROXY = '0x390f7b37545CaD278dD3DADC92a20b9f45865936'
-const OPTIMISM_PROXY = '0x75bDe0394Dd0D92a2cEd1E0E4Fd5abB21319fD0e'
-const BASE_EXPLORER_URL = `https://basescan.org/address/${BASE_PROXY}`
-const OPTIMISM_EXPLORER_URL = `https://optimistic.etherscan.io/address/${OPTIMISM_PROXY}`
-
-function truncateAddr(addr: string): string {
-  return `${addr.slice(0, 6)}…${addr.slice(-4)}`
-}
+/** Project X (Twitter) account — distinct from any maintainer's
+ *  personal handle (those go on the bottom credits line). */
+const PROJECT_X_URL = 'https://x.com/ThatsRekt_'
 
 /**
  * Build the same mailto string `WhitelistGateModal` uses, minus the
@@ -52,9 +50,8 @@ function buildApplyMailto(): string {
 export function Footer() {
   return (
     <footer className="mt-16 border-t-2 border-black bg-[#f5f4ee] py-8 sm:py-10">
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-8">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-8">
         <BrandColumn />
-        <OnchainColumn />
         <CommunityColumn />
         <ContactColumn />
       </div>
@@ -104,48 +101,6 @@ function BrandColumn() {
   )
 }
 
-function OnchainColumn() {
-  return (
-    <div>
-      <ColumnHeading>[onchain]</ColumnHeading>
-      <ul className="space-y-2">
-        <li>
-          <a
-            href={BASE_EXPLORER_URL}
-            target="_blank"
-            rel="noreferrer noopener"
-            className="block group"
-            aria-label={`view base mainnet contract ${BASE_PROXY} on basescan`}
-          >
-            <span className="block text-[11px] uppercase tracking-widest font-black text-neutral-800 group-hover:text-red-600">
-              base mainnet <span aria-hidden="true">↗</span>
-            </span>
-            <span className="block font-mono text-[10px] text-neutral-600">
-              {truncateAddr(BASE_PROXY)}
-            </span>
-          </a>
-        </li>
-        <li>
-          <a
-            href={OPTIMISM_EXPLORER_URL}
-            target="_blank"
-            rel="noreferrer noopener"
-            className="block group"
-            aria-label={`view optimism mainnet contract ${OPTIMISM_PROXY} on optimistic etherscan`}
-          >
-            <span className="block text-[11px] uppercase tracking-widest font-black text-neutral-800 group-hover:text-red-600">
-              optimism mainnet <span aria-hidden="true">↗</span>
-            </span>
-            <span className="block font-mono text-[10px] text-neutral-600">
-              {truncateAddr(OPTIMISM_PROXY)}
-            </span>
-          </a>
-        </li>
-      </ul>
-    </div>
-  )
-}
-
 function CommunityColumn() {
   return (
     <div>
@@ -158,7 +113,17 @@ function CommunityColumn() {
             rel="noreferrer noopener"
             className="text-[11px] uppercase tracking-widest font-mono rekt-link"
           >
-            [telegram <span aria-hidden="true">↗</span>]
+            [telegram alerts <span aria-hidden="true">↗</span>]
+          </a>
+        </li>
+        <li>
+          <a
+            href={PROJECT_X_URL}
+            target="_blank"
+            rel="noreferrer noopener"
+            className="text-[11px] uppercase tracking-widest font-mono rekt-link"
+          >
+            [x / twitter <span aria-hidden="true">↗</span>]
           </a>
         </li>
         <li>
@@ -187,7 +152,7 @@ function ContactColumn() {
             href={mailto}
             className="text-[11px] uppercase tracking-widest font-mono rekt-link"
           >
-            become a poster — apply <span aria-hidden="true">→</span>
+            apply to post <span aria-hidden="true">→</span>
           </a>
         </li>
         <li>
@@ -205,10 +170,33 @@ function ContactColumn() {
   )
 }
 
+/**
+ * Maintainer credits link to each maintainer's X profile (same handles
+ * exposed in the `Maintainers` component on the About page). ENS names
+ * read as the canonical on-chain identity; X is where commentary lives.
+ */
 function BottomBar() {
   return (
     <div className="mt-8 pt-4 border-t border-black/30 text-[10px] uppercase tracking-widest text-neutral-600">
-      licensed under MIT &nbsp;·&nbsp; built by jerry &amp; bauti &nbsp;·&nbsp; v0.1
+      licensed under MIT &nbsp;·&nbsp; built by{' '}
+      <a
+        href={twitterUrl('jerrythekid')}
+        target="_blank"
+        rel="noreferrer noopener"
+        className="rekt-link font-mono"
+      >
+        jerrythekid.eth
+      </a>{' '}
+      &amp;{' '}
+      <a
+        href={twitterUrl('BautiDeFi')}
+        target="_blank"
+        rel="noreferrer noopener"
+        className="rekt-link font-mono"
+      >
+        bauti.eth
+      </a>
+      &nbsp;·&nbsp; v0.1
     </div>
   )
 }

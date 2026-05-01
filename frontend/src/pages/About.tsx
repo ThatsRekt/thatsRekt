@@ -4,16 +4,15 @@ import { BecomeAPosterCallout } from '../components/BecomeAPosterCallout'
 import { TgChannelCTA } from '../components/TgChannelCTA'
 
 /**
- * "About thatsRekt." Four-section narrative:
+ * "About thatsRekt." Five-section narrative:
  *
  *   1. Hero          — the elevator pitch
  *   2. How it works  — posts / governance / reads (terse)
- *   3. Maintainers   — who runs it
- *   4. Donate        — how to support
- *
- * The "for protocol teams" yellow callout was deliberately removed —
- * a curious integrator can find /docs from the top nav without being
- * funneled there. Better to under-sell than over-funnel.
+ *   3. Ways to use   — concrete scenarios for visitors
+ *   4. Get alerts    — Telegram channel CTA (high-intent placement
+ *                       directly after "ways to use" is read)
+ *   5. Maintainers   — who runs it
+ *   6. Donate        — how to support
  */
 export function About() {
   return (
@@ -21,8 +20,8 @@ export function About() {
       <Hero />
       <HowItWorks />
       <WaysToUse />
-      <Maintainers />
       <GetAlertsSection />
+      <Maintainers />
       <DonateSection />
     </article>
   )

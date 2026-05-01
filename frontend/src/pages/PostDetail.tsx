@@ -6,6 +6,7 @@ import { AddressLabel } from '../components/AddressLabel'
 import { ArchiveDetail } from '../components/ArchiveDetail'
 import { ChainBadge } from '../components/ChainBadge'
 import { Markdown } from '../components/Markdown'
+import { ShareButton } from '../components/ShareButton'
 import { Timeline } from '../components/Timeline'
 import { EmptyState } from '../components/EmptyState'
 import { formatTimestamp, relativeTime } from '../lib/format'
@@ -82,6 +83,12 @@ function LivePostDetail({ postId }: { postId: string }) {
   }
 
   const chainSlug = chainSlugFromId(data.id)
+  // Build the canonical share path. The clean `/post/:chain/:postId`
+  // shape is what the Mesh OG handler matches and what we want pasted
+  // into chats — Telegram et al. render the OG card from that URL.
+  const sharePath = chainSlug
+    ? `/post/${chainSlug}/${data.id.slice(chainSlug.length + 1)}`
+    : `/post/${data.id}`
 
   return (
     <article className="space-y-10">
@@ -115,9 +122,17 @@ function LivePostDetail({ postId }: { postId: string }) {
           </span>
         </div>
 
-        <h1 className="font-black tracking-tight text-3xl sm:text-4xl leading-tight text-neutral-900 whitespace-pre-wrap break-words">
-          {data.title?.trim() || '(untitled)'}
-        </h1>
+        <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
+          <h1 className="flex-1 min-w-0 font-black tracking-tight text-3xl sm:text-4xl leading-tight text-neutral-900 whitespace-pre-wrap break-words">
+            {data.title?.trim() || '(untitled)'}
+          </h1>
+          {/* Share lives next to the title so it's the first thing a
+              reader reaches for after they've decided this post is
+              worth sending around. The path resolves to the canonical
+              `/post/:chain/:id` URL — pasting it into Telegram / X /
+              Discord triggers Mesh's OG card render. */}
+          <ShareButton path={sharePath} size="md" />
+        </div>
 
         <dl className="grid grid-cols-1 gap-1 text-xs uppercase tracking-widest text-neutral-700 sm:grid-cols-2">
           <Field label="poster">

@@ -10,6 +10,7 @@ import { AddressLabel } from './AddressLabel'
 import { ChainBadge } from './ChainBadge'
 import { ConfirmVoteButtons } from './ConfirmVoteButtons'
 import { Markdown } from './Markdown'
+import { ShareButton } from './ShareButton'
 
 /**
  * Discriminated union — `kind: 'live'` for on-chain posts, `kind:
@@ -103,6 +104,7 @@ function LivePostCard({ post }: { post: FeedPost }) {
             downCount={post.disconfirmations}
           />
         )}
+        <ShareButton path={detailHref} />
         <Link
           to={detailHref}
           className="inline-block text-xs font-black uppercase tracking-widest rekt-link"
@@ -197,12 +199,15 @@ function ArchivePostCard({ post }: { post: ArchivePost }) {
         </span>
       </div>
 
-      <Link
-        to={detailHref}
-        className="inline-block text-xs font-black uppercase tracking-widest rekt-link"
-      >
-        more →
-      </Link>
+      <div className="flex flex-wrap items-center gap-3">
+        <ShareButton path={detailHref} />
+        <Link
+          to={detailHref}
+          className="inline-block text-xs font-black uppercase tracking-widest rekt-link"
+        >
+          more →
+        </Link>
+      </div>
     </article>
   )
 }
