@@ -38,6 +38,15 @@ type Caches = {
   proposers: Map<string, Proposer>
   postAttackers: Map<string, PostAttacker>
   postVictims: Map<string, PostVictim>
+  // Per-batch memo of getPostAttackerLinks / getPostVictimLinks results
+  // keyed by postId. Avoids redundant `ctx.store.find` roundtrips when a
+  // single post receives multiple Confirmed events in the same batch
+  // (each Confirmed with delta != 0 calls the helper). Invalidated by
+  // `getOrCreatePostAttacker` / `getOrCreatePostVictim` whenever a new
+  // link is added to `postAttackers` / `postVictims`, so the next call
+  // re-queries DB + re-merges with the now-updated cache.
+  postAttackerLinksByPost: Map<string, PostAttacker[]>
+  postVictimLinksByPost: Map<string, PostVictim[]>
   // append-only — never read back this batch
   confirmationLog: Confirmation[]
   edits: Edit[]
@@ -53,6 +62,8 @@ const newCaches = (): Caches => ({
   proposers: new Map(),
   postAttackers: new Map(),
   postVictims: new Map(),
+  postAttackerLinksByPost: new Map(),
+  postVictimLinksByPost: new Map(),
   confirmationLog: [],
   edits: [],
   whitelistChanges: [],
@@ -168,10 +179,16 @@ async function getOrCreatePostAttacker(
   const existing = await ctx.store.get(PostAttacker, id)
   if (existing) {
     caches.postAttackers.set(id, existing)
+    // Invalidate the per-post links memo: a previously cached result for
+    // this post may not have included `existing` if it was cached before
+    // this DB-loaded entry was added to caches.postAttackers.
+    caches.postAttackerLinksByPost.delete(post.id)
     return undefined
   }
   const link = new PostAttacker({ id, post, address, createdAtBlock: blockNumber })
   caches.postAttackers.set(id, link)
+  // New same-batch link: any cached result for this post is now stale.
+  caches.postAttackerLinksByPost.delete(post.id)
   return link
 }
 
@@ -187,10 +204,13 @@ async function getOrCreatePostVictim(
   const existing = await ctx.store.get(PostVictim, id)
   if (existing) {
     caches.postVictims.set(id, existing)
+    // Invalidate per-post links memo (see getOrCreatePostAttacker note).
+    caches.postVictimLinksByPost.delete(post.id)
     return undefined
   }
   const link = new PostVictim({ id, post, address, createdAtBlock: blockNumber })
   caches.postVictims.set(id, link)
+  caches.postVictimLinksByPost.delete(post.id)
   return link
 }
 
@@ -213,6 +233,8 @@ async function getPostAttackerLinks(
   caches: Caches,
   postId: string,
 ): Promise<PostAttacker[]> {
+  const memo = caches.postAttackerLinksByPost.get(postId)
+  if (memo !== undefined) return memo
   const dbLinks = await ctx.store.find(PostAttacker, {
     where: { post: { id: postId } },
     relations: { address: true },
@@ -224,7 +246,9 @@ async function getPostAttackerLinks(
     if (byId.has(l.id)) continue
     byId.set(l.id, l)
   }
-  return [...byId.values()]
+  const merged = [...byId.values()]
+  caches.postAttackerLinksByPost.set(postId, merged)
+  return merged
 }
 
 async function getPostVictimLinks(
@@ -232,6 +256,8 @@ async function getPostVictimLinks(
   caches: Caches,
   postId: string,
 ): Promise<PostVictim[]> {
+  const memo = caches.postVictimLinksByPost.get(postId)
+  if (memo !== undefined) return memo
   const dbLinks = await ctx.store.find(PostVictim, {
     where: { post: { id: postId } },
     relations: { address: true },
@@ -243,7 +269,9 @@ async function getPostVictimLinks(
     if (byId.has(l.id)) continue
     byId.set(l.id, l)
   }
-  return [...byId.values()]
+  const merged = [...byId.values()]
+  caches.postVictimLinksByPost.set(postId, merged)
+  return merged
 }
 
 const directionFromUint8 = (n: number): ConfirmDirection => {
