@@ -7,6 +7,7 @@ import { ArchiveDetail } from '../components/ArchiveDetail'
 import { ChainBadge } from '../components/ChainBadge'
 import { Markdown } from '../components/Markdown'
 import { ShareButton } from '../components/ShareButton'
+import { ConfirmVoteButtons } from '../components/ConfirmVoteButtons'
 import { Timeline } from '../components/Timeline'
 import { EmptyState } from '../components/EmptyState'
 import { formatTimestamp, relativeTime } from '../lib/format'
@@ -151,6 +152,32 @@ function LivePostDetail({ postId }: { postId: string }) {
           )}
         </dl>
       </header>
+
+      {/* Vote action bar — same component the feed uses, so the cache
+          invalidation + tx flow is shared. The hooks for this component
+          handle whitelist gating internally. Numeric postId is the
+          on-chain part of the composite id (`base-2` → `2n`). */}
+      {(() => {
+        const onchainPart = chainSlug
+          ? data.id.slice(chainSlug.length + 1)
+          : data.id
+        let numericPostId: bigint | null = null
+        try {
+          numericPostId = BigInt(onchainPart)
+        } catch {
+          numericPostId = null
+        }
+        if (numericPostId === null) return null
+        return (
+          <div className="flex flex-wrap items-center gap-3">
+            <ConfirmVoteButtons
+              postId={numericPostId}
+              upCount={data.confirmations}
+              downCount={data.disconfirmations}
+            />
+          </div>
+        )
+      })()}
 
       {data.note?.trim() && (
         <section>

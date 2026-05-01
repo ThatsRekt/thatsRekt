@@ -77,20 +77,42 @@ export function ConfirmVoteButtons({
     }
   }, [modalOpen, isConnected, isCheckingWhitelist, isWhitelisted])
 
-  // After a successful tx: refresh the feed (counts) and the local
-  // vote read (highlight). Reset the write hook so a future click
+  // After a successful tx: refresh both the feed (`['feed', ...]`) and
+  // any open post-detail page (`['post', ...]`), plus the local vote
+  // read for the highlight. Reset the write hook so a future click
   // starts from a clean slate.
+  //
+  // Indexer lag: the receipt arrives the moment the chain confirms,
+  // but the Subsquid processor is on its own poll cadence — typically
+  // 2-5s behind chain head. An immediate refetch can come back with
+  // pre-vote data and stick. We therefore fan out a few staggered
+  // refetches: one immediate (in case the indexer was already current),
+  // one at 3s (catches the common case), one at 8s (worst-case lag).
+  // Cheap — same query, cache-deduped if the data is unchanged between
+  // refetches.
   const lastSuccessHash = useRef<`0x${string}` | undefined>(undefined)
   useEffect(() => {
     if (!isSuccess || !hash || lastSuccessHash.current === hash) return
     lastSuccessHash.current = hash
     setPendingDirection(null)
-    void queryClient.invalidateQueries({ queryKey: ['feed'] })
-    void refetchUserVote()
+
+    const refresh = () => {
+      void queryClient.invalidateQueries({ queryKey: ['feed'] })
+      void queryClient.invalidateQueries({ queryKey: ['post'] })
+      void refetchUserVote()
+    }
+    refresh()
+    const t1 = window.setTimeout(refresh, 3_000)
+    const t2 = window.setTimeout(refresh, 8_000)
+
     // Don't `reset()` synchronously — wagmi will surface `isSuccess: true`
     // again next render if we did, fighting our guard. Defer.
-    const t = window.setTimeout(() => reset(), 0)
-    return () => window.clearTimeout(t)
+    const tReset = window.setTimeout(() => reset(), 0)
+    return () => {
+      window.clearTimeout(t1)
+      window.clearTimeout(t2)
+      window.clearTimeout(tReset)
+    }
   }, [isSuccess, hash, queryClient, refetchUserVote, reset])
 
   // If the broadcast errors out (user rejected, sim revert, etc.),
