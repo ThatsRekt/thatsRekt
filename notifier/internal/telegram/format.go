@@ -31,6 +31,13 @@ func FormatPostMessage(p graphql.Post, siteURL string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "🚨 <b>%s</b> · %s\n", html(title), strings.ToLower(chainName))
 
+	// TODO(ens): resolve to primary name where one is set on mainnet. Needs
+	// an ETH RPC client + on-disk cache; out of scope for the immediate
+	// "show who posted" fix.
+	if poster := strings.TrimSpace(p.Poster); poster != "" {
+		fmt.Fprintf(&b, "by <code>%s</code>\n", html(truncateAddr(poster)))
+	}
+
 	if note := strings.TrimSpace(p.Note); note != "" {
 		// Cap the note to avoid overflowing Telegram's 4096-char limit
 		// after we add buttons + URL preview. 280 is plenty.
@@ -100,6 +107,17 @@ func plural(n int) string {
 		return ""
 	}
 	return "s"
+}
+
+// truncateAddr renders a hex address as `0xda1b…7f45` (first 6 chars +
+// last 4, with a Unicode middle ellipsis). Non-address-shaped inputs
+// (anything shorter than 12 chars) are returned unchanged so we don't
+// produce nonsense for malformed posters.
+func truncateAddr(addr string) string {
+	if len(addr) < 12 {
+		return addr
+	}
+	return addr[:6] + "…" + addr[len(addr)-4:]
 }
 
 // html escapes the four characters Telegram's HTML parse mode treats

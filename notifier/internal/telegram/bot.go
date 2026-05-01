@@ -48,9 +48,14 @@ type InlineKeyboardMarkup struct {
 }
 
 type sendMessageReq struct {
-	ChatID                string                `json:"chat_id"`
-	Text                  string                `json:"text"`
-	ParseMode             string                `json:"parse_mode,omitempty"`
+	ChatID    string `json:"chat_id"`
+	Text      string `json:"text"`
+	ParseMode string `json:"parse_mode,omitempty"`
+	// DisableWebPagePreview is true by default for all SendMessage calls.
+	// The OG card we render server-side at `/post/:chain/:postId` is
+	// currently sparse (top stripe + empty body) and duplicates the
+	// message body — net visual noise. Re-enable when the OG renderer is
+	// improved (mesh/src/og.ts).
 	DisableWebPagePreview bool                  `json:"disable_web_page_preview"`
 	ReplyMarkup           *InlineKeyboardMarkup `json:"reply_markup,omitempty"`
 }
@@ -66,12 +71,17 @@ type sendMessageResp struct {
 // SendMessage posts to a chat (channel @username or numeric -100… id) and
 // returns the resulting message id. ParseMode is "HTML" so we can use
 // `<b>`, `<a href="…">` etc. without escaping every emoji-looking thing.
+//
+// Web-page preview is disabled by default. The OG card we render
+// server-side at `/post/:chain/:postId` is currently sparse (top stripe +
+// empty body) and duplicates the message body — net visual noise.
+// Re-enable when the OG renderer is improved (mesh/src/og.ts).
 func (b *Bot) SendMessage(ctx context.Context, chatID, text string, kb *InlineKeyboardMarkup) (int64, error) {
 	body, _ := json.Marshal(sendMessageReq{
 		ChatID:                chatID,
 		Text:                  text,
 		ParseMode:             "HTML",
-		DisableWebPagePreview: false,
+		DisableWebPagePreview: true,
 		ReplyMarkup:           kb,
 	})
 	var out sendMessageResp
