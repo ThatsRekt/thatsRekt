@@ -102,6 +102,7 @@ function LivePostCard({ post }: { post: FeedPost }) {
             postId={numericPostId}
             upCount={post.confirmations}
             downCount={post.disconfirmations}
+            posterAddress={post.poster.id}
           />
         )}
         <ShareButton path={detailHref} />

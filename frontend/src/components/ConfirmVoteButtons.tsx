@@ -4,32 +4,36 @@ import { useQueryClient } from '@tanstack/react-query'
 import { useIsWhitelisted } from '../hooks/useIsWhitelisted'
 import { useUserVote } from '../hooks/useUserVote'
 import { useConfirmPost, type ConfirmAction } from '../hooks/useConfirmPost'
-import { ConfirmDirection } from '../lib/contracts'
+import { ConfirmDirection, type ConfirmDirectionValue } from '../lib/contracts'
 import { WhitelistGateModal } from './WhitelistGateModal'
 
 /**
- * Up/Down vote controls rendered on each live PostCard. Click flow:
+ * Up/Down vote controls for a single post.
  *
- *   - **Disconnected.** Click → opens the connector picker. After a
- *     successful connect we DON'T auto-submit; we re-evaluate state
- *     (now: connected + maybe whitelisted) and the modal swaps to the
- *     gate or auto-closes. Auto-submitting silently right after a
- *     fresh connect would be hostile UX (the user just signed in,
- *     they didn't ask for a tx popup).
- *   - **Connected, NOT whitelisted.** Click → opens the gate modal
- *     showing the "become a poster" panel.
+ * Click flow:
+ *   - **Disconnected.** Click → opens the connector picker. No auto-submit
+ *     after connect (hostile UX to fire a tx popup the user didn't ask for).
+ *   - **Connected, NOT whitelisted.** Click → opens the gate modal showing
+ *     the "become a poster" panel.
  *   - **Connected, whitelisted, no current vote.** Click → submits
- *     `confirm(postId, dir)` directly. Button shows a pending state
- *     while the wallet popup is up and the tx is mining.
- *   - **Connected, whitelisted, already voted in same direction.**
- *     Click → submits `unconfirm(postId)` (toggles the vote off).
+ *     `confirm(postId, dir)`. Optimistic UI shows the new count immediately.
+ *   - **Connected, whitelisted, voted same direction.** Click → submits
+ *     `unconfirm(postId)` (toggles the vote off).
  *   - **Connected, whitelisted, voted opposite direction.** Click →
- *     submits `confirm(postId, dir)`; the contract atomically swaps.
+ *     `confirm(postId, dir)`; the contract atomically swaps.
+ *   - **Connected, IS the post's author.** No buttons rendered — counts
+ *     are shown read-only with a `[your post]` tag. The contract reverts
+ *     self-votes (`onlyWhitelisted` + a NoSelfConfirm check), so popping
+ *     a wallet that would 100% revert is just bad UX.
  *
- * On tx success we invalidate `['feed']` so the on-screen counts
- * refetch from the indexer. The user's own vote also re-reads via
- * `useUserVote.refetch()` so the highlighted button updates without
- * a manual reload.
+ * **Optimistic UI.** The moment the user clicks, we predict the new counts
+ * and the new "your vote" highlight by reading the current state and the
+ * action. The button shows the predicted values immediately. After the tx
+ * confirms we kick off a 30s polling loop (3s cadence) that invalidates
+ * the feed/post queries until the indexer catches up to the prediction —
+ * then we clear the optimistic overlay and the displayed numbers fall back
+ * to props (which now equal what we predicted). If the tx fails, we revert
+ * the overlay and surface the error implicitly via the next render.
  *
  * Visual: small icon-only buttons, brutalist (`border-2 border-black`,
  * sharp corners). Active vote is filled (green for Up, red for Down).
@@ -38,6 +42,7 @@ export function ConfirmVoteButtons({
   postId,
   upCount,
   downCount,
+  posterAddress,
 }: {
   /**
    * The on-chain `uint256` post id. The PostCard composite id is
@@ -47,6 +52,13 @@ export function ConfirmVoteButtons({
   postId: bigint
   upCount: number
   downCount: number
+  /**
+   * Address of the post's author. Used to detect "this is my post" so
+   * we hide the vote buttons (the contract reverts self-votes anyway).
+   * Case-insensitive comparison; pass whatever the indexer / contract
+   * gives you.
+   */
+  posterAddress: string
 }) {
   const queryClient = useQueryClient()
   const { address, isConnected } = useAccount()
@@ -60,66 +72,111 @@ export function ConfirmVoteButtons({
   const { submit, isBroadcasting, isMining, isSuccess, error, hash, reset } =
     useConfirmPost()
 
-  // The modal only opens for the "needs to connect or get whitelisted"
-  // branches. Whitelisted users go straight to a tx popup — no modal.
+  // Self-vote detection: connected + connected addr is the post author.
+  // Address comparison is case-insensitive (poster comes from the indexer
+  // lowercased; wagmi gives `0x` checksum form).
+  const isOwnPost =
+    !!address && address.toLowerCase() === posterAddress.toLowerCase()
+
   const [modalOpen, setModalOpen] = useState(false)
 
   // Track which direction the user clicked so the button shows a
   // pending spinner on the right side. `null` between actions.
   const [pendingDirection, setPendingDirection] = useState<1 | 2 | null>(null)
 
+  // ----- optimistic overlay --------------------------------------------
+  // When set, the displayed counts + the active-vote highlight come from
+  // these instead of props. Cleared once the props (refetched after the
+  // indexer catches up) match the predicted values, or on cutoff.
+  const [optimisticUp, setOptimisticUp] = useState<number | null>(null)
+  const [optimisticDown, setOptimisticDown] = useState<number | null>(null)
+  const [optimisticVote, setOptimisticVote] =
+    useState<ConfirmDirectionValue | null>(null)
+
+  const clearOptimistic = () => {
+    setOptimisticUp(null)
+    setOptimisticDown(null)
+    setOptimisticVote(null)
+  }
+
   // Auto-close the modal once the wallet becomes connected + whitelisted.
-  // Same pattern as PostAlertButton — we don't auto-submit because the
-  // user just connected; they need to click again to opt into the tx.
   useEffect(() => {
     if (modalOpen && isConnected && !isCheckingWhitelist && isWhitelisted) {
       setModalOpen(false)
     }
   }, [modalOpen, isConnected, isCheckingWhitelist, isWhitelisted])
 
-  // After a successful tx: refresh both the feed (`['feed', ...]`) and
-  // any open post-detail page (`['post', ...]`), plus the local vote
-  // read for the highlight. Reset the write hook so a future click
-  // starts from a clean slate.
-  //
-  // Indexer lag: the receipt arrives the moment the chain confirms,
-  // but the Subsquid processor is on its own poll cadence — typically
-  // 2-5s behind chain head. An immediate refetch can come back with
-  // pre-vote data and stick. We therefore fan out a few staggered
-  // refetches: one immediate (in case the indexer was already current),
-  // one at 3s (catches the common case), one at 8s (worst-case lag).
-  // Cheap — same query, cache-deduped if the data is unchanged between
-  // refetches.
+  // After a successful tx: kick off a polling loop that invalidates the
+  // feed + post queries every 3s for up to 30s, until the indexer's
+  // observed counts match our optimistic prediction. The 30s ceiling is
+  // a defensive cutoff in case the indexer is unreachable or the tx
+  // hash never resolves through the upstream chain — at that point we
+  // give up and show whatever props say.
   const lastSuccessHash = useRef<`0x${string}` | undefined>(undefined)
   useEffect(() => {
     if (!isSuccess || !hash || lastSuccessHash.current === hash) return
     lastSuccessHash.current = hash
     setPendingDirection(null)
 
-    const refresh = () => {
+    const startedAt = Date.now()
+    const POLL_INTERVAL_MS = 3_000
+    const POLL_CUTOFF_MS = 30_000
+
+    const tick = () => {
       void queryClient.invalidateQueries({ queryKey: ['feed'] })
       void queryClient.invalidateQueries({ queryKey: ['post'] })
       void refetchUserVote()
     }
-    refresh()
-    const t1 = window.setTimeout(refresh, 3_000)
-    const t2 = window.setTimeout(refresh, 8_000)
+    tick() // immediate first tick
+
+    const intervalId = window.setInterval(() => {
+      if (Date.now() - startedAt > POLL_CUTOFF_MS) {
+        window.clearInterval(intervalId)
+        // Cutoff hit. Drop the overlay so the UI reflects whatever the
+        // server actually returned — even if it disagrees with our
+        // prediction. Better to show stale-but-real than a hopeful lie.
+        clearOptimistic()
+        return
+      }
+      tick()
+    }, POLL_INTERVAL_MS)
 
     // Don't `reset()` synchronously — wagmi will surface `isSuccess: true`
     // again next render if we did, fighting our guard. Defer.
     const tReset = window.setTimeout(() => reset(), 0)
     return () => {
-      window.clearTimeout(t1)
-      window.clearTimeout(t2)
+      window.clearInterval(intervalId)
       window.clearTimeout(tReset)
     }
   }, [isSuccess, hash, queryClient, refetchUserVote, reset])
 
-  // If the broadcast errors out (user rejected, sim revert, etc.),
-  // surface it briefly via the button state and clear the pending
-  // direction so the button isn't stuck spinning.
+  // Once props (counts) catch up to the optimistic prediction, clear
+  // the overlay so subsequent renders are driven by props alone. Doing
+  // this in an effect keeps the polling loop simple — it only has to
+  // refetch; reconciliation lives here.
   useEffect(() => {
-    if (error) setPendingDirection(null)
+    if (optimisticUp === null && optimisticDown === null) return
+    const upMatch = optimisticUp === null || upCount === optimisticUp
+    const downMatch = optimisticDown === null || downCount === optimisticDown
+    if (upMatch && downMatch) {
+      setOptimisticUp(null)
+      setOptimisticDown(null)
+    }
+  }, [upCount, downCount, optimisticUp, optimisticDown])
+
+  // Same for the user's own-vote highlight.
+  useEffect(() => {
+    if (optimisticVote === null) return
+    if (currentVote === optimisticVote) setOptimisticVote(null)
+  }, [currentVote, optimisticVote])
+
+  // If the broadcast errors out (user rejected, sim revert, etc.),
+  // surface it briefly via the button state, drop the optimistic
+  // overlay so the UI snaps back to truth, and clear the pending dir.
+  useEffect(() => {
+    if (!error) return
+    setPendingDirection(null)
+    clearOptimistic()
   }, [error])
 
   const handleClick = (clicked: 1 | 2) => {
@@ -128,24 +185,36 @@ export function ConfirmVoteButtons({
       setModalOpen(true)
       return
     }
-    // Connected but whitelist still unknown → wait. Don't fire a tx
-    // we'd then have to revert from the UI side; don't open the gate
-    // either (might wrongly imply the user isn't whitelisted).
     if (isCheckingWhitelist) return
-
-    // Connected and not whitelisted → gate.
     if (!isWhitelisted) {
       setModalOpen(true)
       return
     }
+    // Self-vote attempt slipping through somehow (shouldn't be possible —
+    // we don't render the buttons in that case). Defensive.
+    if (isOwnPost) return
 
-    // Connected + whitelisted → submit. Build the action based on the
-    // user's current on-chain vote so the button always does the right
-    // thing (toggle off, switch, or fresh vote).
-    const action: ConfirmAction =
-      currentVote === clicked
-        ? { kind: 'clear' }
-        : { kind: 'vote', direction: clicked }
+    // Build the action based on the user's CURRENT on-chain vote.
+    const isToggleOff = currentVote === clicked
+    const action: ConfirmAction = isToggleOff
+      ? { kind: 'clear' }
+      : { kind: 'vote', direction: clicked }
+
+    // ---- optimistic overlay --------------------------------------------
+    // Predict the post-action counts + the user's new highlight.
+    // Subtract the user's PREVIOUS contribution, then add the new one.
+    let nextUp = upCount
+    let nextDown = downCount
+    if (currentVote === ConfirmDirection.Up) nextUp = Math.max(0, nextUp - 1)
+    else if (currentVote === ConfirmDirection.Down)
+      nextDown = Math.max(0, nextDown - 1)
+    if (!isToggleOff) {
+      if (clicked === ConfirmDirection.Up) nextUp += 1
+      else nextDown += 1
+    }
+    setOptimisticUp(nextUp)
+    setOptimisticDown(nextDown)
+    setOptimisticVote(isToggleOff ? ConfirmDirection.None : clicked)
 
     setPendingDirection(clicked)
     submit({ postId, action })
@@ -153,35 +222,66 @@ export function ConfirmVoteButtons({
 
   const isAnyPending = isBroadcasting || isMining
 
+  // Effective values to render — optimistic overlay wins when set, props
+  // are the fallback. The user-vote highlight follows the same pattern.
+  const displayUp = optimisticUp ?? upCount
+  const displayDown = optimisticDown ?? downCount
+  const effectiveVote = optimisticVote ?? currentVote
+  const displayIsUp = effectiveVote === ConfirmDirection.Up
+  const displayIsDown = effectiveVote === ConfirmDirection.Down
+
+  // Self-post path: read-only counts, no buttons. Style mirrors the
+  // VoteButton vocabulary so the row visually rhymes with other posts.
+  if (isOwnPost) {
+    return (
+      <span className="inline-flex items-center gap-1">
+        <span className="inline-flex items-center gap-1 border-2 border-black px-2 py-0.5 text-[11px] font-mono font-black uppercase tracking-widest bg-white text-emerald-700">
+          <span aria-hidden="true">↑</span>
+          <span>{displayUp}</span>
+        </span>
+        <span className="inline-flex items-center gap-1 border-2 border-black px-2 py-0.5 text-[11px] font-mono font-black uppercase tracking-widest bg-white text-red-700">
+          <span aria-hidden="true">↓</span>
+          <span>{displayDown}</span>
+        </span>
+        <span
+          className="ml-1 text-[10px] uppercase tracking-widest text-neutral-500"
+          title="You authored this post — the contract reverts self-votes."
+        >
+          [your post]
+        </span>
+      </span>
+    )
+  }
+
   return (
     <>
       <span className="inline-flex items-center gap-1">
         <VoteButton
           direction="up"
-          count={upCount}
-          isActive={isUp}
+          count={displayUp}
+          isActive={displayIsUp}
           isPending={isAnyPending && pendingDirection === ConfirmDirection.Up}
           isDisabled={isAnyPending}
           onClick={() => handleClick(ConfirmDirection.Up)}
           ariaLabel={
-            isUp
+            displayIsUp
               ? 'remove up vote'
-              : isDown
+              : displayIsDown
                 ? 'switch to up vote'
                 : 'vote up'
           }
         />
         <VoteButton
           direction="down"
-          count={downCount}
-          isActive={isDown}
+          count={displayDown}
+          isActive={displayIsDown}
           isPending={isAnyPending && pendingDirection === ConfirmDirection.Down}
           isDisabled={isAnyPending}
           onClick={() => handleClick(ConfirmDirection.Down)}
           ariaLabel={
-            isDown
+            displayIsDown
               ? 'remove down vote'
-              : isUp
+              : displayIsUp
                 ? 'switch to down vote'
                 : 'vote down'
           }

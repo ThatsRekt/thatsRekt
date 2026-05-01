@@ -174,6 +174,7 @@ function LivePostDetail({ postId }: { postId: string }) {
               postId={numericPostId}
               upCount={data.confirmations}
               downCount={data.disconfirmations}
+              posterAddress={data.poster.id}
             />
           </div>
         )
