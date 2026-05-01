@@ -1,30 +1,30 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useEnsLookup } from '../hooks/useEnsLookup'
 import { useAccount, useDisconnect } from 'wagmi'
 import { useIsWhitelisted } from '../hooks/useIsWhitelisted'
 import { WhitelistGateModal } from './WhitelistGateModal'
+import { PostFormModal } from './PostFormModal'
+import { chainsWithRegistry } from '../lib/contracts'
 
 /**
- * Header-mounted "Post" CTA. Three-state UX:
+ * Header-mounted "Post" CTA. Two-modal flow:
  *
- *   1. **Disconnected.** Click → opens the connector picker (injected /
- *      Coinbase / Safe / future WalletConnect). Once a connector
- *      succeeds wagmi advances state to "connected".
- *   2. **Connected, whitelisted.** No modal pops up. The user is now
- *      ready to post — the on-chain composer (full form + tx) is the
- *      next feature; for v1 we just confirm the connect succeeded by
- *      letting the modal close. The connected address is shown in the
- *      header (see {@link AccountChip}).
- *   3. **Connected, not whitelisted.** Modal swaps to the
- *      "become a poster" gate explaining the application path.
+ *   - **Gate modal** (`WhitelistGateModal`) handles connect + the
+ *     "not whitelisted, here's how to apply" panel.
+ *   - **Composer modal** (`PostFormModal`) is the actual on-chain post
+ *     form, scoped to the chains the user is whitelisted on.
  *
- * On any "wallet not whitelisted" judgment we wait for the read to
- * actually settle before deciding — flashing the gate while
- * `isWhitelisted` is still loading would mislead users who actually
- * are whitelisted.
+ * Click matrix:
  *
- * Visual: red-fill button, matches the `REKT` brand accent. Red is the
- * site's reserved CTA color.
+ *   1. **Disconnected.** → opens gate (connector picker). Once a
+ *      connector succeeds AND the per-chain whitelist read settles in
+ *      the user's favor, the gate auto-closes and the composer auto-
+ *      opens — operator requirement: no second click.
+ *   2. **Connected, whitelisted.** → opens composer directly.
+ *   3. **Connected, not whitelisted.** → opens gate; the gate's own
+ *      panel logic shows the "become a poster" mailto.
+ *
+ * Visual: red-fill button, matches the `REKT` brand accent.
  */
 export function PostAlertButton({
   variant = 'desktop',
@@ -35,25 +35,54 @@ export function PostAlertButton({
   /** invoked after the button is clicked — used by mobile menu to close itself */
   onAfterClick?: () => void
 }) {
-  const [open, setOpen] = useState(false)
+  const [gateOpen, setGateOpen] = useState(false)
+  const [composerOpen, setComposerOpen] = useState(false)
   const { address, isConnected } = useAccount()
-  const { isWhitelisted, isLoading: isCheckingWhitelist } = useIsWhitelisted(address)
+  const {
+    isWhitelisted,
+    isLoading: isCheckingWhitelist,
+    perChain,
+  } = useIsWhitelisted(address)
 
-  // Whitelisted = no popup, ever. Two paths into that state:
-  //   1. User clicks Post while ALREADY whitelisted → silent no-op.
-  //   2. User clicks Post → connects via the modal → check resolves
-  //      true → modal auto-closes here. The gate (NotWhitelistedPanel)
-  //      is the only thing the user reads, and only when needed.
+  // Chains the user is currently whitelisted on. Filtering on `=== true`
+  // (not truthy) deliberately excludes `undefined` (read still in flight)
+  // and `false`. Recomputed on every render — `perChain` is a small
+  // record (2 entries today), so the cost is negligible.
+  const chainsAvailable = useMemo(
+    () => chainsWithRegistry().filter((id) => perChain[id] === true),
+    [perChain],
+  )
+
+  // Auto-promote from gate → composer once the post-connect whitelist
+  // read resolves true. This replaces the old "silent close" effect:
+  // the gate goes away AND the composer opens in the same tick, so the
+  // user clicks "post" once and sees the form (operator requirement).
   useEffect(() => {
-    if (open && isConnected && !isCheckingWhitelist && isWhitelisted) {
-      setOpen(false)
+    if (
+      gateOpen &&
+      isConnected &&
+      !isCheckingWhitelist &&
+      isWhitelisted &&
+      chainsAvailable.length > 0
+    ) {
+      setGateOpen(false)
+      setComposerOpen(true)
     }
-  }, [open, isConnected, isCheckingWhitelist, isWhitelisted])
+  }, [gateOpen, isConnected, isCheckingWhitelist, isWhitelisted, chainsAvailable.length])
 
   const handleClick = () => {
     onAfterClick?.()
-    if (isConnected && isWhitelisted) return
-    setOpen(true)
+    // Fast path: already connected + whitelisted + we know which chain(s)
+    // → straight to the composer, no gate flash.
+    if (isConnected && isWhitelisted && chainsAvailable.length > 0) {
+      setComposerOpen(true)
+      return
+    }
+    // Otherwise route through the gate. The gate handles connect AND the
+    // not-whitelisted panel; the auto-promote effect above will swap to
+    // the composer once the read settles in our favor (e.g. user just
+    // connected and the per-chain reads are still in flight).
+    setGateOpen(true)
   }
 
   return (
@@ -71,16 +100,21 @@ export function PostAlertButton({
         post
       </button>
       <WhitelistGateModal
-        open={open}
-        onClose={() => setOpen(false)}
+        open={gateOpen}
+        onClose={() => setGateOpen(false)}
         isConnected={isConnected}
         address={address}
         isCheckingWhitelist={isCheckingWhitelist}
         isWhitelisted={isWhitelisted}
         title="[post]"
-        // No `whenWhitelisted` slot: post-connect silent close. The
-        // composer (full form + tx) is the next feature; for v1 we
-        // just want connecting to "just work" for vetted posters.
+        // No `whenWhitelisted` slot: the auto-promote effect above does
+        // the work — gate closes, composer opens — so the user never
+        // needs an interstitial "ready to post" panel.
+      />
+      <PostFormModal
+        open={composerOpen}
+        onClose={() => setComposerOpen(false)}
+        whitelistedChains={chainsAvailable}
       />
     </>
   )

@@ -1,12 +1,37 @@
 /**
  * On-chain registry contract handles.
  *
- * Cross-chain identical-address deploy: the same proxy address resolves
- * on every chain we deploy to (CREATE2 deterministic). Today only Base
- * is live; future chains drop in here.
+ * Per-chain proxy registry. CREATE2-deterministic per (governance, whitelist)
+ * triple — Base and Optimism use different whitelists today, hence different
+ * proxy addresses. Future canonical re-launch will collapse them.
+ *
+ * Typed as a literal-keyed record (not `Record<number, ...>`) so wagmi's
+ * `chainId` field — which narrows to the configured chain literal union —
+ * accepts the keys we pass back via `chainsWithRegistry()` without a cast.
  */
-export const REGISTRY_PROXY_ADDRESS =
-  '0x390f7b37545CaD278dD3DADC92a20b9f45865936' as const
+export const REGISTRY_PROXIES = {
+  8453: '0x390f7b37545CaD278dD3DADC92a20b9f45865936', // Base
+  10: '0x75bDe0394Dd0D92a2cEd1E0E4Fd5abB21319fD0e', // Optimism
+} as const satisfies Record<number, `0x${string}`>
+
+/** Chain IDs that have a deployed registry. Literal-narrowed for wagmi. */
+export type SupportedChainId = keyof typeof REGISTRY_PROXIES
+
+export const registryAddress = (
+  chainId: number,
+): `0x${string}` | undefined =>
+  (REGISTRY_PROXIES as Record<number, `0x${string}`>)[chainId]
+
+/** Chain IDs with a deployed registry, in display order (Base first). */
+export const chainsWithRegistry = (): readonly SupportedChainId[] =>
+  [8453, 10] as const
+
+/**
+ * @deprecated Use `registryAddress(chainId)` instead. This still resolves to
+ * Base's proxy for back-compat — the existing vote/whitelist hooks are
+ * Base-pinned and will be migrated to multi-chain in a follow-up.
+ */
+export const REGISTRY_PROXY_ADDRESS = REGISTRY_PROXIES[8453]
 
 /**
  * On-chain `ConfirmDirection` enum mirror.
@@ -74,5 +99,33 @@ export const registryAbi = [
     stateMutability: 'nonpayable',
     inputs: [{ name: 'postId', type: 'uint256' }],
     outputs: [],
+  },
+  // Total post count — public state var auto-getter. Useful for caches /
+  // "any posts yet" checks without hammering the indexer.
+  {
+    type: 'function',
+    name: 'postCount',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ name: '', type: 'uint256' }],
+  },
+  // Submit a new alert. Reverts unless caller is whitelisted.
+  //   title       — required, 1..200 bytes
+  //   attackers_  — addresses suspected of perpetrating the attack
+  //   victims_    — addresses that lost funds
+  //   note        — free-form description
+  //   attackedAt  — unix seconds, > 0, <= block.timestamp
+  {
+    type: 'function',
+    name: 'post',
+    stateMutability: 'nonpayable',
+    inputs: [
+      { name: 'title', type: 'string' },
+      { name: 'attackers_', type: 'address[]' },
+      { name: 'victims_', type: 'address[]' },
+      { name: 'note', type: 'string' },
+      { name: 'attackedAt', type: 'uint64' },
+    ],
+    outputs: [{ name: 'id', type: 'uint256' }],
   },
 ] as const

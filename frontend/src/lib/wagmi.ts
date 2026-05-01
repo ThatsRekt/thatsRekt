@@ -1,5 +1,5 @@
 import { http, createConfig, fallback } from 'wagmi'
-import { base, mainnet } from 'wagmi/chains'
+import { base, mainnet, optimism } from 'wagmi/chains'
 import { injected, coinbaseWallet, safe } from 'wagmi/connectors'
 
 /**
@@ -14,6 +14,19 @@ import { injected, coinbaseWallet, safe } from 'wagmi/connectors'
 const baseTransport = fallback([
   http('https://lb.routeme.sh/rpc/8453/3bd2e340-f97c-46b3-80ed-17975de5af89'),
   http('https://mainnet.base.org'),
+])
+
+/**
+ * Public read RPC for Optimism mainnet. Same role as `baseTransport` —
+ * powers the wagmi public client for chain state reads on OP. Wallet RPC
+ * takes over for writes once connected.
+ *
+ * `routeme.sh` is primary, the public OP endpoint is the fallback. Both
+ * no-key for browser-side reads.
+ */
+const optimismTransport = fallback([
+  http('https://lb.routeme.sh/rpc/10/3bd2e340-f97c-46b3-80ed-17975de5af89'),
+  http('https://mainnet.optimism.io'),
 ])
 
 /**
@@ -32,8 +45,10 @@ const mainnetTransport = fallback([
  * wagmi v2 config.
  *
  * Chains:
- *   - `base`    — registry is deployed here; reads/writes for the contract.
- *   - `mainnet` — ENS reverse resolution only; we don't connect wallets here.
+ *   - `base`     — registry is deployed here; reads/writes for the contract.
+ *   - `optimism` — registry is also deployed here (different whitelist set
+ *                  → different CREATE2 proxy address); reads/writes.
+ *   - `mainnet`  — ENS reverse resolution only; we don't connect wallets here.
  *
  * Connectors:
  *   - `injected()`     — covers MetaMask, Rabby, Brave Wallet, Frame, Trust browser extension, etc.
@@ -45,7 +60,7 @@ const mainnetTransport = fallback([
  * `walletConnect({ projectId })` into the connectors array and it just works.
  */
 export const wagmiConfig = createConfig({
-  chains: [base, mainnet],
+  chains: [base, optimism, mainnet],
   connectors: [
     injected({ shimDisconnect: true }),
     coinbaseWallet({ appName: 'thatsRekt', appLogoUrl: 'https://thatsrekt.com/favicon.svg' }),
@@ -53,6 +68,7 @@ export const wagmiConfig = createConfig({
   ],
   transports: {
     [base.id]: baseTransport,
+    [optimism.id]: optimismTransport,
     [mainnet.id]: mainnetTransport,
   },
   // SSR: false — this is a Vite SPA, no server-rendered hydration step.
