@@ -157,7 +157,7 @@ function Header() {
           aria-label="thatsRekt home"
         >
           <img
-            src="/logo.jpg"
+            src="/logo.png"
             alt=""
             aria-hidden="true"
             className="h-9 w-9 sm:h-11 sm:w-11 shrink-0"
