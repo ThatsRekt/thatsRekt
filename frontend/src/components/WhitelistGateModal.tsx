@@ -76,6 +76,19 @@ export function WhitelistGateModal({
     dialogRef.current?.querySelector<HTMLButtonElement>('[data-close]')?.focus()
   }, [open])
 
+  // When the modal is open AND we just transitioned from connected to
+  // disconnected, close the modal — the auto-disconnect-if-not-whitelisted
+  // hook just fired and there's nothing left to ask the user.
+  // Without this, the modal would re-render the connector picker on top
+  // of the gate panel, which is confusing.
+  const prevConnectedRef = useRef(isConnected)
+  useEffect(() => {
+    if (open && prevConnectedRef.current && !isConnected) {
+      onClose()
+    }
+    prevConnectedRef.current = isConnected
+  }, [open, isConnected, onClose])
+
   // Hide the modal during the post-connect on-chain whitelist check,
   // and silently after a verdict of "whitelisted" when no
   // `whenWhitelisted` slot is provided. Two reasons:

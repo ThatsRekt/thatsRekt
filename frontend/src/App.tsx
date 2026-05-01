@@ -8,6 +8,7 @@ import { Leaderboard } from './pages/Leaderboard'
 import { Docs } from './pages/Docs'
 import { IS_MOCK_MODE } from './lib/queries'
 import { useHasPosts } from './hooks/useHasPosts'
+import { useDisconnectIfNotWhitelisted } from './hooks/useDisconnectIfNotWhitelisted'
 import { PostAlertButton, AccountChip } from './components/PostAlertButton'
 import { TgChannelCTA, GetAlertsButton } from './components/TgChannelCTA'
 import { Footer } from './components/Footer'
@@ -34,6 +35,11 @@ const LEADERBOARD_ENABLED = false
 const HARD_DISABLED_ROUTES = new Set(LEADERBOARD_ENABLED ? [] : ['/leaderboard'])
 
 export function App() {
+  // Security UX: if a connected wallet isn't whitelisted on any chain,
+  // disconnect it. Mounted once at the App root so it covers every
+  // entry path (gate modals, AccountChip auto-reconnect, deeplinks).
+  useDisconnectIfNotWhitelisted()
+
   return (
     <div className="mx-auto flex min-h-full max-w-3xl flex-col px-6 py-10">
       {IS_MOCK_MODE && <MockBanner />}
