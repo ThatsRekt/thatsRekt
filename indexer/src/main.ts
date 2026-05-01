@@ -72,7 +72,20 @@ async function getOrCreatePost(
   id: string,
 ): Promise<Post | undefined> {
   if (caches.posts.has(id)) return caches.posts.get(id)
-  const existing = await ctx.store.get(Post, id)
+  // Load with the `poster` relation populated. `handleConfirmed` and
+  // `handlePostRemoved` both touch `post.poster.id` to update the
+  // poster's leaderboard / aggregates, and TypeORM's bare `store.get`
+  // returns the entity with relation refs as `undefined`. Without the
+  // relation, a Confirmed event hitting a post created in a *previous*
+  // batch (cache miss) crashes the processor on `post.poster.id`. The
+  // crash retries forever — blocking the indexer at that block.
+  //
+  // Cheap one-off JOIN per post lookup. The cache hit above still
+  // covers the same-batch case so this only kicks in on cold lookups.
+  const existing = await ctx.store.findOne(Post, {
+    where: { id },
+    relations: { poster: true },
+  })
   if (existing) caches.posts.set(id, existing)
   return existing
 }
