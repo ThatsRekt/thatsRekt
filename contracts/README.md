@@ -142,10 +142,9 @@ Use the SAME `INITIAL_WHITELISTERS` set on every chain so the canonical proxy ad
 | `0x9E8680dbBcA1127add812abE209A10E621b385dF` | jerrythekid.eth |
 | `0x24C2167054A9A9e00F67233F1eBc4060501f54FA` | aux operator EOA |
 | `0xE0396d6d738e726D39f96099b8f6a55d11184374` | jerrythekid.eth's relayer bot — automated detector that submits alerts on Jerry's behalf |
+| `0xb5A6c8ca369e38050784e2A6793beE6447109340` | DAMM hot wallet — deployer EOA, also pre-whitelisted so the operator can submit posts directly without scheduling an `addWhitelisted` tx through the 3-day timelock |
 
-> **Note (2026-05-01):** the relayer bot above (`0xE039…4374`) is **not** in the deployed Base mainnet proxy's initial set — it was added to the canonical list after deploy. Until we re-deploy Base (or schedule it via the 3-day add timelock), Jerry's bot can't post. Plan is to fold it in on the next re-launch.
-
-When you add a new chain, set `INITIAL_WHITELISTERS` to all five addresses joined by commas. **Adding a chain with a different set produces a different proxy address** (CREATE2 hashes the full init calldata).
+When you add a new chain, set `INITIAL_WHITELISTERS` to all six addresses joined by commas. **Adding a chain with a different set produces a different proxy address** (CREATE2 hashes the full init calldata).
 
 ## Build / test / deploy
 
