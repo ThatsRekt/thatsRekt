@@ -30,7 +30,9 @@ import {
 // pre-purge proxy on Base mainnet — see `frontend/src/lib/contracts.ts`).
 const FIX_POST_ID = 'base-1'
 const FIX_BODY = 'gm'
-const FIX_NEW_BODY = 'edited gm'
+// Must match the mesh fixture in `mesh/test/comments.test.ts`
+// byte-for-byte — the cross-repo fingerprint sentinel relies on this.
+const FIX_NEW_BODY = 'gm edited'
 const FIX_COMMENT_ID = '42'
 const FIX_SIGNED_AT = '2026-05-01T00:00:00.000Z'
 
@@ -100,7 +102,7 @@ describe('canonical typed-data fingerprints', () => {
       FIX_SIGNED_AT,
     )
     expect(hashTypedData(td)).toBe(
-      '0xaeb67df68a48e2211e0cce7c6e426d35493cee6f7db974ca93c914eb1c24ec7f',
+      '0x34b6ed63c0008147dc66280b75eb69446cbce31fbcc9bfe5d0a56aa48b25d3a5',
     )
   })
 
