@@ -172,11 +172,17 @@ interface MeshUnifiedPost {
 // All on-chain data — confirmations, edits, address scores, etc. — is consumable
 // here. We parse the chain prefix from the composite id and pick the
 // matching root field at query time.
+// Must match the `prefix` field in `mesh/src/chains.ts::CHAINS` for every
+// actively-served chain. Missing entries here cause `/post/<slug>/<id>`
+// detail pages to 404 even when the unified `posts(...)` query returns
+// the post — the detail-page path goes through `<prefix>_postById` and
+// fails fast on an unknown slug.
 const SLUG_TO_PREFIX: Record<string, string> = {
   'anvil-eth': 'AnvilEth',
   'anvil-base': 'AnvilBase',
   sepolia: 'Sepolia',
   base: 'Base',
+  'base-sepolia': 'BaseSepolia',
 }
 
 const buildPostDetailQuery = (prefix: string): string => /* GraphQL */ `
