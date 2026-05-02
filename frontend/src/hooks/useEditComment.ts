@@ -1,9 +1,9 @@
 import { useState } from 'react'
-import { useAccount, useSignMessage } from 'wagmi'
+import { useAccount, useSignTypedData } from 'wagmi'
 import { useQueryClient } from '@tanstack/react-query'
 import { useIsWhitelisted } from './useIsWhitelisted'
 import {
-  buildEditMessage,
+  buildEditTypedData,
   editComment,
   CommentMutationError,
   type Comment,
@@ -12,40 +12,48 @@ import type { CommentFlowError, CommentFlowPhase } from './useSubmitComment'
 
 /**
  * Edit-comment hook — same lifecycle as `useSubmitComment` but signs an
- * `op: edit` message and targets the existing comment id. The connected
- * wallet must match `comment.signer`; the contract path enforces this on
- * the server side too, but we short-circuit locally so a user who's
- * switched accounts mid-page gets immediate feedback.
+ * `EditComment` EIP-712 payload and targets the existing comment id. The
+ * connected wallet must match `comment.signer`; the contract path
+ * enforces this on the server side too, but we short-circuit locally so
+ * a user who's switched accounts mid-page gets immediate feedback.
+ *
+ * Unlike `useSubmitComment`, this hook does NOT track a `needsConnect`
+ * state — the [edit] button only renders when `isOwner` is true (see
+ * `CommentRow` in `CommentThread.tsx`), which is itself gated on a
+ * connected wallet whose address matches the comment's signer. By the
+ * time `submit()` runs, we know the user is connected. We still keep
+ * the `!address` guard as a defensive belt-and-braces check that fails
+ * fast if the wallet disconnects mid-flight.
  */
 export function useEditComment(comment: Comment): {
   submit: (newBody: string) => Promise<void>
   phase: CommentFlowPhase
   error: CommentFlowError | null
-  needsConnect: boolean
-  dismissNeedsConnect: () => void
   reset: () => void
 } {
-  const { address, isConnected } = useAccount()
+  const { address } = useAccount()
   const { isWhitelisted, isLoading: isCheckingWhitelist } = useIsWhitelisted(address)
-  const { signMessageAsync } = useSignMessage()
+  const { signTypedDataAsync } = useSignTypedData()
   const queryClient = useQueryClient()
 
   const [phase, setPhase] = useState<CommentFlowPhase>('idle')
   const [error, setError] = useState<CommentFlowError | null>(null)
-  const [needsConnect, setNeedsConnect] = useState(false)
 
   const reset = () => {
     setPhase('idle')
     setError(null)
-    setNeedsConnect(false)
   }
 
   const submit = async (newBody: string) => {
     setError(null)
-    setNeedsConnect(false)
 
-    if (!isConnected || !address) {
-      setNeedsConnect(true)
+    // Defensive: edit UI is gated on `isOwner` (which requires a
+    // connected wallet), so this branch is unreachable in normal flow.
+    // Bail loudly rather than silently no-op'ing if the wallet
+    // disconnected between render and submit.
+    if (!address) {
+      setPhase('error')
+      setError({ code: 'NetworkError', message: 'Wallet disconnected — please reconnect.' })
       return
     }
     if (isCheckingWhitelist) return
@@ -68,11 +76,16 @@ export function useEditComment(comment: Comment): {
 
     setPhase('signing')
     const signedAt = new Date().toISOString()
-    const message = buildEditMessage(comment.id, comment.postId, newBody, signedAt)
+    const typedData = buildEditTypedData(comment.id, comment.postId, newBody, signedAt)
 
     let signature: `0x${string}`
     try {
-      signature = await signMessageAsync({ message })
+      signature = await signTypedDataAsync({
+        domain: typedData.domain,
+        types: typedData.types,
+        primaryType: typedData.primaryType,
+        message: typedData.message,
+      })
     } catch {
       setPhase('error')
       setError({ code: 'UserRejected', message: 'Signature rejected.' })
@@ -107,8 +120,6 @@ export function useEditComment(comment: Comment): {
     submit,
     phase,
     error,
-    needsConnect,
-    dismissNeedsConnect: () => setNeedsConnect(false),
     reset,
   }
 }

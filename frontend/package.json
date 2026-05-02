@@ -12,7 +12,8 @@
     "dev:lan": "vite --host 0.0.0.0",
     "build": "tsc -b && vite build",
     "preview": "vite preview --host",
-    "typecheck": "tsc -b --pretty"
+    "typecheck": "tsc -b --pretty",
+    "test": "bun test"
   },
   "dependencies": {
     "@tanstack/react-query": "5.62.11",

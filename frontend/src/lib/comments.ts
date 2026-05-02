@@ -1,12 +1,21 @@
 // =============================================================================
-// Comments — GraphQL helpers + canonical message builders.
+// Comments — GraphQL helpers + canonical EIP-712 typed-data builders.
 // =============================================================================
 // Backed by the Mesh comments mutation surface (frozen contract). Each
 // mutation returns a discriminated union; helpers unwrap and either
 // return the success value or throw a typed `CommentMutationError`. The
 // caller (mutation hooks) inspects `error.code` to drive UI.
+//
+// The signing contract uses EIP-712 typed data (not personal_sign). This
+// means wallets render parsed field/value rows (Domain: thatsRekt v1 /
+// chainId N / contract 0x… / Type: CreateComment / postId / body / signedAt)
+// instead of opaque text. The domain binds each signature to a specific
+// chain + registry contract — replaying a signature across chains or
+// against a different contract fails verification.
 
 import { gqlClient } from './client'
+import { REGISTRY_PROXIES } from './contracts'
+import { getChainBySlug } from './chains'
 
 // ---- types (mirror the GraphQL `Comment` type exactly) ----------------------
 
@@ -85,54 +94,165 @@ export interface DeleteCommentInput {
   signedAt: string
 }
 
-// ---- canonical message builders --------------------------------------------
-// The wallet signs the EIP-191 prefix automatically (wagmi's
-// `useSignMessage` handles that). What we build here is the unprefixed
-// message body — must match the backend's verification byte-for-byte.
+// ---- canonical EIP-712 typed-data builders ---------------------------------
+// The frontend builds typed data (domain + types + message) and hands it to
+// wagmi's `useSignTypedData`. The backend verifies the same typed-data
+// payload via viem's `verifyTypedData` — the two halves must match
+// byte-for-byte (any drift in the type ordering, field names, or domain
+// surfaces as `InvalidSignature`).
+//
+// Domain binds each signature to (chainId, verifyingContract). The chainId
+// is derived from the post's chain slug; the verifyingContract is the
+// registry proxy on that chain. Replaying a Base signature against
+// Base Sepolia, or against a different contract, fails verification.
 
-/** Build the canonical create-comment message string. */
-export const buildCreateMessage = (
+/** EIP-712 domain. Per-chain — chainId + verifyingContract change. */
+export interface CommentDomain {
+  name: string
+  version: string
+  chainId: number
+  verifyingContract: `0x${string}`
+}
+
+/**
+ * EIP-712 type definitions for the three comment operations. Frozen —
+ * any change here is a contract break that requires both halves to bump
+ * the domain version in lockstep. `commentId` is `uint256` on the wire
+ * (passed as a `bigint` to viem's signTypedData call); the GraphQL
+ * `Comment.id` is a string, so callers convert via `BigInt(comment.id)`
+ * at the signing site.
+ */
+export const COMMENT_TYPES = {
+  CreateComment: [
+    { name: 'postId', type: 'string' },
+    { name: 'body', type: 'string' },
+    { name: 'signedAt', type: 'string' },
+  ],
+  EditComment: [
+    { name: 'commentId', type: 'uint256' },
+    { name: 'postId', type: 'string' },
+    { name: 'newBody', type: 'string' },
+    { name: 'signedAt', type: 'string' },
+  ],
+  DeleteComment: [
+    { name: 'commentId', type: 'uint256' },
+    { name: 'postId', type: 'string' },
+    { name: 'signedAt', type: 'string' },
+  ],
+} as const
+
+// ---- post-id → chain-slug helper -------------------------------------------
+//
+// Composite postIds look like `{slug}-{onchainId}`, e.g. `base-42` or
+// `base-sepolia-7`. We have to match the *longest* slug first so
+// `base-sepolia-7` doesn't get parsed as `base` + `sepolia-7`.
+
+const KNOWN_SLUGS = [
+  'anvil-eth',
+  'anvil-base',
+  'sepolia',
+  'base-sepolia',
+  'base',
+  'optimism',
+  'ethereum',
+  'arbitrum',
+  'bsc',
+  'blast',
+] as const
+
+const chainSlugFromPostId = (postId: string): string => {
+  // Sort longest-first to avoid `base-sepolia` matching as `base`.
+  const sorted = [...KNOWN_SLUGS].sort((a, b) => b.length - a.length)
+  for (const slug of sorted) {
+    if (postId.startsWith(`${slug}-`)) return slug
+  }
+  throw new Error(`cannot derive chain slug from postId: ${postId}`)
+}
+
+const commentDomainFor = (postId: string): CommentDomain => {
+  const slug = chainSlugFromPostId(postId)
+  const chain = getChainBySlug(slug)
+  if (!chain) throw new Error(`unknown chain slug: ${slug}`)
+  const verifyingContract = (REGISTRY_PROXIES as Record<number, `0x${string}`>)[chain.chainId]
+  if (!verifyingContract) {
+    throw new Error(`no registry contract deployed on chainId ${chain.chainId}`)
+  }
+  return {
+    name: 'thatsRekt',
+    version: '1',
+    chainId: chain.chainId,
+    verifyingContract,
+  }
+}
+
+/** Public typed-data shape returned by every builder. */
+export interface CreateCommentTypedData {
+  domain: CommentDomain
+  types: typeof COMMENT_TYPES
+  primaryType: 'CreateComment'
+  message: { postId: string; body: string; signedAt: string }
+}
+
+export interface EditCommentTypedData {
+  domain: CommentDomain
+  types: typeof COMMENT_TYPES
+  primaryType: 'EditComment'
+  message: { commentId: bigint; postId: string; newBody: string; signedAt: string }
+}
+
+export interface DeleteCommentTypedData {
+  domain: CommentDomain
+  types: typeof COMMENT_TYPES
+  primaryType: 'DeleteComment'
+  message: { commentId: bigint; postId: string; signedAt: string }
+}
+
+/** Build EIP-712 typed data for a create-comment signature. */
+export const buildCreateTypedData = (
   postId: string,
   body: string,
   signedAt: string,
-): string =>
-  [
-    'thatsRekt comment v1',
-    'op: create',
-    `post: ${postId}`,
-    `signed_at: ${signedAt}`,
-    `body: ${body}`,
-  ].join('\n')
+): CreateCommentTypedData => ({
+  domain: commentDomainFor(postId),
+  types: COMMENT_TYPES,
+  primaryType: 'CreateComment',
+  message: { postId, body, signedAt },
+})
 
-/** Build the canonical edit-comment message string. */
-export const buildEditMessage = (
+/** Build EIP-712 typed data for an edit-comment signature. */
+export const buildEditTypedData = (
   commentId: string,
   postId: string,
   newBody: string,
   signedAt: string,
-): string =>
-  [
-    'thatsRekt comment v1',
-    'op: edit',
-    `comment_id: ${commentId}`,
-    `post: ${postId}`,
-    `signed_at: ${signedAt}`,
-    `body: ${newBody}`,
-  ].join('\n')
+): EditCommentTypedData => ({
+  domain: commentDomainFor(postId),
+  types: COMMENT_TYPES,
+  primaryType: 'EditComment',
+  message: {
+    // GraphQL `Comment.id` is a string; viem accepts a bigint for uint256.
+    commentId: BigInt(commentId),
+    postId,
+    newBody,
+    signedAt,
+  },
+})
 
-/** Build the canonical delete-comment message string. */
-export const buildDeleteMessage = (
+/** Build EIP-712 typed data for a delete-comment signature. */
+export const buildDeleteTypedData = (
   commentId: string,
   postId: string,
   signedAt: string,
-): string =>
-  [
-    'thatsRekt comment v1',
-    'op: delete',
-    `comment_id: ${commentId}`,
-    `post: ${postId}`,
-    `signed_at: ${signedAt}`,
-  ].join('\n')
+): DeleteCommentTypedData => ({
+  domain: commentDomainFor(postId),
+  types: COMMENT_TYPES,
+  primaryType: 'DeleteComment',
+  message: {
+    commentId: BigInt(commentId),
+    postId,
+    signedAt,
+  },
+})
 
 // ---- queries ----------------------------------------------------------------
 

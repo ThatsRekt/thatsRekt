@@ -1,9 +1,9 @@
 import { useState } from 'react'
-import { useAccount, useSignMessage } from 'wagmi'
+import { useAccount, useSignTypedData } from 'wagmi'
 import { useQueryClient } from '@tanstack/react-query'
 import { useIsWhitelisted } from './useIsWhitelisted'
 import {
-  buildDeleteMessage,
+  buildDeleteTypedData,
   deleteComment,
   CommentMutationError,
   type Comment,
@@ -11,43 +11,45 @@ import {
 import type { CommentFlowError, CommentFlowPhase } from './useSubmitComment'
 
 /**
- * Delete-comment hook — signs `op: delete` with the comment id and
- * posts the mutation. Hard delete: no version history, no soft-delete
- * marker on the row. The list query is invalidated on success so the
- * row drops out of the UI.
+ * Delete-comment hook — signs an `DeleteComment` EIP-712 payload with
+ * the comment id and posts the mutation. Hard delete: no version
+ * history, no soft-delete marker on the row. The list query is
+ * invalidated on success so the row drops out of the UI.
  *
  * Caller is responsible for confirming with the user before calling
  * `submit()` — a button click without a confirm step is a footgun.
+ *
+ * Like `useEditComment`, this hook does NOT track a `needsConnect`
+ * state — the [delete] button only renders when `isOwner` is true,
+ * which is gated on a connected wallet matching the comment's signer.
+ * The `!address` guard remains as a defensive fail-fast for the
+ * mid-flight disconnect case.
  */
 export function useDeleteComment(comment: Comment): {
   submit: () => Promise<void>
   phase: CommentFlowPhase
   error: CommentFlowError | null
-  needsConnect: boolean
-  dismissNeedsConnect: () => void
   reset: () => void
 } {
-  const { address, isConnected } = useAccount()
+  const { address } = useAccount()
   const { isWhitelisted, isLoading: isCheckingWhitelist } = useIsWhitelisted(address)
-  const { signMessageAsync } = useSignMessage()
+  const { signTypedDataAsync } = useSignTypedData()
   const queryClient = useQueryClient()
 
   const [phase, setPhase] = useState<CommentFlowPhase>('idle')
   const [error, setError] = useState<CommentFlowError | null>(null)
-  const [needsConnect, setNeedsConnect] = useState(false)
 
   const reset = () => {
     setPhase('idle')
     setError(null)
-    setNeedsConnect(false)
   }
 
   const submit = async () => {
     setError(null)
-    setNeedsConnect(false)
 
-    if (!isConnected || !address) {
-      setNeedsConnect(true)
+    if (!address) {
+      setPhase('error')
+      setError({ code: 'NetworkError', message: 'Wallet disconnected — please reconnect.' })
       return
     }
     if (isCheckingWhitelist) return
@@ -70,11 +72,16 @@ export function useDeleteComment(comment: Comment): {
 
     setPhase('signing')
     const signedAt = new Date().toISOString()
-    const message = buildDeleteMessage(comment.id, comment.postId, signedAt)
+    const typedData = buildDeleteTypedData(comment.id, comment.postId, signedAt)
 
     let signature: `0x${string}`
     try {
-      signature = await signMessageAsync({ message })
+      signature = await signTypedDataAsync({
+        domain: typedData.domain,
+        types: typedData.types,
+        primaryType: typedData.primaryType,
+        message: typedData.message,
+      })
     } catch {
       setPhase('error')
       setError({ code: 'UserRejected', message: 'Signature rejected.' })
@@ -109,8 +116,6 @@ export function useDeleteComment(comment: Comment): {
     submit,
     phase,
     error,
-    needsConnect,
-    dismissNeedsConnect: () => setNeedsConnect(false),
     reset,
   }
 }

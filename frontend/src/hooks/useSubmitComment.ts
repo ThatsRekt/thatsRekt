@@ -1,9 +1,9 @@
 import { useState } from 'react'
-import { useAccount, useSignMessage } from 'wagmi'
+import { useAccount, useSignTypedData } from 'wagmi'
 import { useQueryClient } from '@tanstack/react-query'
 import { useIsWhitelisted } from './useIsWhitelisted'
 import {
-  buildCreateMessage,
+  buildCreateTypedData,
   submitComment,
   CommentMutationError,
   type CommentErrorCode,
@@ -20,11 +20,18 @@ import {
  *      App-level `useDisconnectIfNotWhitelisted` will eventually kick
  *      the user, but we pre-empt with a synchronous error so the user
  *      gets feedback faster than the auto-disconnect's settling delay.
- *   3. Build the canonical message string + sign it via wagmi (which
- *      handles the EIP-191 prefix).
+ *   3. Build the canonical EIP-712 typed-data payload + sign it via
+ *      wagmi's `useSignTypedData`. Wallets render parsed field rows
+ *      (Domain: thatsRekt v1 / chainId N / contract 0x… / Type: ...).
  *   4. POST the mutation. Discriminated-union response: success →
  *      invalidate the post's comment + count queries; error → store the
  *      typed code + message for the caller to render.
+ *
+ * Note: this hook keeps the connect-gate state — the compose box is
+ * visible to anyone (including disconnected viewers), so we need to
+ * signal "open the connect modal" when an anonymous user clicks send.
+ * The edit/delete hooks don't need this because their UI is gated on
+ * `isOwner` which already implies a connected wallet.
  */
 export interface CommentFlowError {
   code: CommentErrorCode
@@ -43,7 +50,7 @@ export function useSubmitComment(postId: string): {
 } {
   const { address, isConnected } = useAccount()
   const { isWhitelisted, isLoading: isCheckingWhitelist } = useIsWhitelisted(address)
-  const { signMessageAsync } = useSignMessage()
+  const { signTypedDataAsync } = useSignTypedData()
   const queryClient = useQueryClient()
 
   const [phase, setPhase] = useState<CommentFlowPhase>('idle')
@@ -76,11 +83,16 @@ export function useSubmitComment(postId: string): {
 
     setPhase('signing')
     const signedAt = new Date().toISOString()
-    const message = buildCreateMessage(postId, body, signedAt)
+    const typedData = buildCreateTypedData(postId, body, signedAt)
 
     let signature: `0x${string}`
     try {
-      signature = await signMessageAsync({ message })
+      signature = await signTypedDataAsync({
+        domain: typedData.domain,
+        types: typedData.types,
+        primaryType: typedData.primaryType,
+        message: typedData.message,
+      })
     } catch {
       // wagmi throws on user-rejection or wallet-side failure. We don't
       // try to distinguish these — both surface as "you didn't sign".
