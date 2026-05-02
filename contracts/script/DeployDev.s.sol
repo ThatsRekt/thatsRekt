@@ -76,18 +76,18 @@ contract DeployDev is Script {
     bytes32 public constant IMPL_SALT = keccak256("thatsRekt.impl.dev.v1.2.0");
 
     /// @dev 7-day TimelockController (owner slot). Bump on bytecode/config change.
-    bytes32 public constant UPGRADE_TIMELOCK_SALT = keccak256("thatsRekt.upgradeTimelock.dev.v2");
+    bytes32 public constant UPGRADE_TIMELOCK_SALT = keccak256("thatsRekt.upgradeTimelock.dev.v3");
 
     /// @dev 3-day TimelockController (whitelistAdmin slot). Bump on bytecode/config change.
-    bytes32 public constant ADD_TIMELOCK_SALT = keccak256("thatsRekt.addTimelock.dev.v2");
+    bytes32 public constant ADD_TIMELOCK_SALT = keccak256("thatsRekt.addTimelock.dev.v3");
 
     /// @dev 1-day TimelockController (purgeAdmin slot). Bump on bytecode/config change.
-    bytes32 public constant PURGE_TIMELOCK_SALT = keccak256("thatsRekt.purgeTimelock.dev.v2");
+    bytes32 public constant PURGE_TIMELOCK_SALT = keccak256("thatsRekt.purgeTimelock.dev.v3");
 
     /// @dev Versioned dev proxy address (v2). Previous unversioned salt
     ///      `thatsRekt.proxy.dev` is claimed at 0x309c…fb80 with the buggy
     ///      pre-PR-#87/#89 contracts; v2 yields a fresh proxy address.
-    bytes32 public constant PROXY_SALT = keccak256("thatsRekt.proxy.dev.v2");
+    bytes32 public constant PROXY_SALT = keccak256("thatsRekt.proxy.dev.v3");
 
     /// @dev Identical to production. Keeping the delays matched means
     ///      upgrade and rotation flows behave the same on testnet as on

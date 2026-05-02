@@ -127,21 +127,21 @@ contract Deploy is Script {
     ///      Bump only if its bytecode/config changes (rare — delay
     ///      tweaks happen through this timelock itself, not via
     ///      redeploy).
-    bytes32 public constant UPGRADE_TIMELOCK_SALT = keccak256("thatsRekt.upgradeTimelock.v1");
+    bytes32 public constant UPGRADE_TIMELOCK_SALT = keccak256("thatsRekt.upgradeTimelock.v2");
 
     /// @dev 3-day TimelockController. Holds the `whitelistAdmin` slot —
     ///      adds posters and self-rotates. Bump only if its
     ///      bytecode/config changes.
-    bytes32 public constant ADD_TIMELOCK_SALT = keccak256("thatsRekt.addTimelock.v1");
+    bytes32 public constant ADD_TIMELOCK_SALT = keccak256("thatsRekt.addTimelock.v2");
 
     /// @dev 1-day TimelockController. Holds the `purgeAdmin` slot —
     ///      governance-driven content moderation (`purgePost`). Bump
     ///      only if its bytecode/config changes.
-    bytes32 public constant PURGE_TIMELOCK_SALT = keccak256("thatsRekt.purgeTimelock.v1");
+    bytes32 public constant PURGE_TIMELOCK_SALT = keccak256("thatsRekt.purgeTimelock.v2");
 
     /// @dev NOT versioned — the proxy is the canonical permanent address
     ///      that integrators bake in. Never change this salt.
-    bytes32 public constant PROXY_SALT = keccak256("thatsRekt.proxy");
+    bytes32 public constant PROXY_SALT = keccak256("thatsRekt.proxy.v2");
 
     /*//////////////////////////////////////////////////////////////
                                 DELAYS
@@ -232,7 +232,15 @@ contract Deploy is Script {
     ) public {
         require(deployerAddr != address(0), "deployer is zero");
         require(multisig != address(0), "GOVERNANCE_OWNER env var is zero");
-        require(multisig.code.length > 0, "GOVERNANCE_OWNER has no code (must be a Safe / contract)");
+        // v1.1.0 launch posture: GOVERNANCE_OWNER may be an EOA. The
+        // historical Safe-only requirement was a launch-time guardrail
+        // for the v1.0.0 deploy where governance had to be a multisig
+        // from day one. For this re-launch (no live integrators yet,
+        // small whitelisted set) we explicitly accept an EOA owner —
+        // the upgrade timelock can swap it for a Safe later.
+        if (multisig.code.length == 0) {
+            console2.log("[deploy] WARN: GOVERNANCE_OWNER is an EOA, not a Safe:", multisig);
+        }
         require(operator != address(0), "WHITELIST_OPERATOR env var is zero");
         require(purgeRemoverEOA != address(0), "PURGE_REMOVER_EOA resolved to zero");
 

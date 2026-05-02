@@ -568,11 +568,10 @@ query LatestPosts {
  * with the same governance + initial whitelisters — pending deploys
  * resolve to the canonical proxy address.
  *
- * Base is currently mid-redeploy with the new purge-admin governance
- * role; the canonical proxy address will refresh once that lands.
- * Optimism is temporarily out of the table while the redeploy
- * stabilises — it'll return alongside the canonical cross-chain
- * whitelist.
+ * Base mainnet went live with v1.1.0 (caller-supplied `expectedPostId`,
+ * EIP-712 comments off-chain, cross-canceller TLC role split) on
+ * 2026-05-02 at the address shown below. Old v1.0.0 proxy
+ * (`0x390f7b…865936`) is abandoned.
  */
 const PLANNED_DEPLOYMENTS: ReadonlyArray<{
   name: string
@@ -581,7 +580,12 @@ const PLANNED_DEPLOYMENTS: ReadonlyArray<{
   status?: 'live' | 'redeploying'
 }> = [
   { name: 'ethereum', chainId: 1, proxy: null },
-  { name: 'base', chainId: 8453, proxy: null, status: 'redeploying' },
+  {
+    name: 'base',
+    chainId: 8453,
+    proxy: '0x585192Be5805Dc6D2F326369E6D0F8B7E11a7974',
+    status: 'live',
+  },
   { name: 'arbitrum', chainId: 42161, proxy: null },
   { name: 'polygon', chainId: 137, proxy: null },
   { name: 'bsc', chainId: 56, proxy: null },

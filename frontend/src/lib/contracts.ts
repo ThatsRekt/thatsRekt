@@ -2,28 +2,28 @@
  * On-chain registry contract handles.
  *
  * Per-chain proxy registry. CREATE2-deterministic per (governance, whitelist,
- * purgeAdmin) triple. Base mainnet runs the *legacy* (pre-purge) contract;
- * Base Sepolia runs the new purge-capable contract for end-to-end testing
- * before mainnet redeploy. Optimism is temporarily deprecated while the
- * canonical whitelist + purge contract stabilise.
+ * purgeAdmin, initialWhitelisters) tuple. v1.1.0 fresh deploy: caller-
+ * supplied `expectedPostId` on `post()`, EIP-712 comments off-chain,
+ * cross-canceller TLC role split, full purge surface. Old v1.0.0 proxies
+ * are abandoned (no migration, no integrators relied on them).
  *
  * Typed as a literal-keyed record (not `Record<number, ...>`) so wagmi's
  * `chainId` field — which narrows to the configured chain literal union —
  * accepts the keys we pass back via `chainsWithRegistry()` without a cast.
  */
 export const REGISTRY_PROXIES = {
-  // Base mainnet — this is the *legacy* proxy without purgeAdmin. The
-  // new purge-capable contract is being tested on Base Sepolia first;
-  // when that lands, we'll fresh-deploy on Base mainnet at a new
-  // address and swap this entry. Until then, prod runs against the
-  // legacy contract so the feed/voting/posting all still work.
-  8453: '0x390f7b37545CaD278dD3DADC92a20b9f45865936',
-  // Base Sepolia — purge-capable contract (DeployDev, cross-canceller
-  // role split: deployer 0xb5A6 proposes upgrades + whitelist, cold
-  // 0x5822 cancels; cold proposes purges, deployer cancels). Salts
-  // bumped to v2 for this redeploy (previous unversioned salt at
-  // 0x309c…fb80 hosted the buggy pre-PR-#87/#89 contract).
-  84532: '0xcd289C9e99D1B8EA6dc0B3fFDED7FEBe26Da0E23',
+  // Base mainnet — v1.1.0 deploy 2026-05-02. Block 45476762.
+  // Cross-canceller geometry:
+  //   - GOVERNANCE_OWNER  = bauti.eth EOA (proposes upgrade + add TLCs)
+  //   - WHITELIST_OPERATOR = cold wallet (cancels upgrade + add TLCs;
+  //                          instant whitelist kill-switch)
+  //   - PURGE_REMOVER_EOA  = cold wallet (proposes purge TLC; instant
+  //                          purge kill-switch)
+  // 6 initial whitelisters: cold, bauti, jerry, aux, jerry-bot, DAMM hot.
+  8453: '0x585192Be5805Dc6D2F326369E6D0F8B7E11a7974',
+  // Base Sepolia — v1.1.0 dev deploy 2026-05-02. Block 40987178.
+  // Same role geometry as Base mainnet.
+  84532: '0x5278dD25e8551Cc98f2dC89791f5C89a9C83F695',
 } as const satisfies Record<number, `0x${string}`>
 
 /** Chain IDs that have a deployed registry. Literal-narrowed for wagmi. */

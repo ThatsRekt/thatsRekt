@@ -189,11 +189,15 @@ contract DeployTest is Test {
         deployer.deploy(address(deployer), safe, COLD, COLD, new address[](0));
     }
 
-    /// @notice GOVERNANCE_OWNER without code is rejected (production
-    ///         requires a Safe / contract).
-    function test_deploy_rejects_eoa_governance_owner() public {
+    /// @notice GOVERNANCE_OWNER may be an EOA on the v1.1.0 re-launch
+    ///         path — the historical Safe-only requirement was dropped
+    ///         (see Deploy.s.sol comment). The script now logs a warning
+    ///         instead of reverting. We assert the deploy succeeds with
+    ///         a no-code governance owner so a regression that re-adds
+    ///         the require fails this test.
+    function test_deploy_acceptsEOAGovernanceOwner() public {
         address eoa = makeAddr("eoa-no-code");
-        vm.expectRevert("GOVERNANCE_OWNER has no code (must be a Safe / contract)");
+        // Should not revert; the deploy completes with governance pointing at an EOA.
         deployer.deploy(address(deployer), eoa, COLD, COLD, new address[](0));
     }
 
