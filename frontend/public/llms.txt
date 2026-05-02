@@ -28,6 +28,7 @@ The registry is the canonical source. The web app and Telegram channel are conve
 | Chain | Proxy address | Status |
 | --- | --- | --- |
 | Base mainnet (chainId 8453) | `0x585192Be5805Dc6D2F326369E6D0F8B7E11a7974` | live (canonical, v1.1.0) |
+| Optimism mainnet (chainId 10) | `0x585192Be5805Dc6D2F326369E6D0F8B7E11a7974` | live (canonical, v1.1.0 — same address as Base mainnet) |
 | Base Sepolia (chainId 84532) | `0x5278dD25e8551Cc98f2dC89791f5C89a9C83F695` | live (testnet, v1.1.0) |
 
 Other chains (Ethereum, Arbitrum, Polygon, BSC, Blast, Avalanche) are planned but not yet deployed.

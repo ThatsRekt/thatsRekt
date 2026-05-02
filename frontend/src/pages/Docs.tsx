@@ -586,6 +586,12 @@ const PLANNED_DEPLOYMENTS: ReadonlyArray<{
     proxy: '0x585192Be5805Dc6D2F326369E6D0F8B7E11a7974',
     status: 'live',
   },
+  {
+    name: 'optimism',
+    chainId: 10,
+    proxy: '0x585192Be5805Dc6D2F326369E6D0F8B7E11a7974',
+    status: 'live',
+  },
   { name: 'arbitrum', chainId: 42161, proxy: null },
   { name: 'polygon', chainId: 137, proxy: null },
   { name: 'bsc', chainId: 56, proxy: null },

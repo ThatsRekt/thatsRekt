@@ -1,5 +1,5 @@
 import { http, createConfig, fallback } from 'wagmi'
-import { base, baseSepolia, mainnet } from 'wagmi/chains'
+import { base, baseSepolia, mainnet, optimism } from 'wagmi/chains'
 import { injected, coinbaseWallet, safe } from 'wagmi/connectors'
 
 /**
@@ -26,6 +26,16 @@ const baseSepoliaTransport = fallback([
 ])
 
 /**
+ * Optimism mainnet transport — registry is deployed here at the same
+ * canonical address as Base mainnet (cross-chain CREATE2). Same fallback
+ * shape as `baseTransport`.
+ */
+const optimismTransport = fallback([
+  http('https://lb.routeme.sh/rpc/10/3bd2e340-f97c-46b3-80ed-17975de5af89'),
+  http('https://mainnet.optimism.io'),
+])
+
+/**
  * Ethereum mainnet transport — *only* used for ENS reverse resolution.
  * ENS primary names live on mainnet regardless of which chain the address
  * is active on, so even though our registry is on Base, ENS lookups for
@@ -41,12 +51,11 @@ const mainnetTransport = fallback([
  * wagmi v2 config.
  *
  * Chains:
- *   - `base`     — registry is deployed here; reads/writes for the contract.
- *   - `mainnet`  — ENS reverse resolution only; we don't connect wallets here.
- *
- * Optimism was temporarily removed alongside the registry redeploy with the
- * new `purgeAdmin` governance role. It'll be re-added once the canonical
- * cross-chain whitelist ships.
+ *   - `base`         — registry is deployed here; reads/writes for the contract.
+ *   - `optimism`     — registry is deployed here at the same canonical
+ *                      cross-chain CREATE2 address as Base mainnet.
+ *   - `baseSepolia`  — testnet registry.
+ *   - `mainnet`      — ENS reverse resolution only; we don't connect wallets here.
  *
  * Connectors:
  *   - `injected()`     — covers MetaMask, Rabby, Brave Wallet, Frame, Trust browser extension, etc.
@@ -58,7 +67,7 @@ const mainnetTransport = fallback([
  * `walletConnect({ projectId })` into the connectors array and it just works.
  */
 export const wagmiConfig = createConfig({
-  chains: [base, baseSepolia, mainnet],
+  chains: [base, optimism, baseSepolia, mainnet],
   connectors: [
     injected({ shimDisconnect: true }),
     coinbaseWallet({ appName: 'thatsRekt', appLogoUrl: 'https://thatsrekt.com/favicon.svg' }),
@@ -66,6 +75,7 @@ export const wagmiConfig = createConfig({
   ],
   transports: {
     [base.id]: baseTransport,
+    [optimism.id]: optimismTransport,
     [baseSepolia.id]: baseSepoliaTransport,
     [mainnet.id]: mainnetTransport,
   },

@@ -17,11 +17,7 @@ export type ChainSlug =
   | 'sepolia'
   | 'base'
   | 'base-sepolia'
-  // Note: `optimism` was a registered chain — temporarily dropped from the
-  // gateway while the registry redeploys with the new purge-admin role.
-  // The OP processor + graphql containers may still be running; this just
-  // stops the gateway from fanning out to them. Re-add the slug here once
-  // the canonical cross-chain whitelist ships.
+  | 'optimism'
 
 export interface ChainEntry {
   /** EIP-155 chain id. Distinct values across all entries (anvil forks
@@ -99,9 +95,18 @@ export const CHAINS: readonly ChainEntry[] = Object.freeze([
     // frontend/src/lib/contracts.ts::REGISTRY_PROXIES[84532].
     registryAddress: '0x5278dD25e8551Cc98f2dC89791f5C89a9C83F695',
   },
-  // Optimism: temporarily removed while the registry redeploys with the
-  // new purge-admin governance role. Re-add when the canonical whitelist
-  // ships.
+  {
+    chainId: 10,
+    slug: 'optimism',
+    name: 'Optimism',
+    prefix: 'Optimism_',
+    endpoint:
+      process.env.GRAPHQL_OPTIMISM_URL ?? 'http://graphql-optimism:4355/graphql',
+    // Optimism mainnet — v1.1.0 deploy 2026-05-02. Same INITIAL_WHITELISTERS
+    // + role config as Base mainnet, so CREATE2 lands the proxy at the
+    // identical cross-chain canonical address.
+    registryAddress: '0x585192Be5805Dc6D2F326369E6D0F8B7E11a7974',
+  },
 ])
 
 export const ENABLED_CHAINS = new Set(

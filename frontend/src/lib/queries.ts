@@ -183,6 +183,7 @@ const SLUG_TO_PREFIX: Record<string, string> = {
   sepolia: 'Sepolia',
   base: 'Base',
   'base-sepolia': 'BaseSepolia',
+  optimism: 'Optimism',
 }
 
 const buildPostDetailQuery = (prefix: string): string => /* GraphQL */ `

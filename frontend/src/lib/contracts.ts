@@ -24,6 +24,10 @@ export const REGISTRY_PROXIES = {
   // Base Sepolia — v1.1.0 dev deploy 2026-05-02. Block 40987178.
   // Same role geometry as Base mainnet.
   84532: '0x5278dD25e8551Cc98f2dC89791f5C89a9C83F695',
+  // Optimism mainnet — v1.1.0 deploy 2026-05-02. Same role geometry +
+  // identical INITIAL_WHITELISTERS as Base mainnet, so CREATE2 lands
+  // the proxy at the cross-chain canonical address.
+  10: '0x585192Be5805Dc6D2F326369E6D0F8B7E11a7974',
 } as const satisfies Record<number, `0x${string}`>
 
 /** Chain IDs that have a deployed registry. Literal-narrowed for wagmi. */
