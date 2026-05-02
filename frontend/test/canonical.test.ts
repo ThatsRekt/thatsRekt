@@ -26,8 +26,9 @@ import {
 } from '../src/lib/comments'
 
 // Fixed fixtures — must match the mesh test fixtures byte-for-byte.
-// `base-1` → chainId 8453, registry proxy `0x390f7b…865936` (legacy
-// pre-purge proxy on Base mainnet — see `frontend/src/lib/contracts.ts`).
+// `base-1` → chainId 8453, registry proxy is the v1.1.0 Base mainnet
+// canonical address (also the same address on Optimism mainnet —
+// cross-chain CREATE2). See `frontend/src/lib/contracts.ts`.
 const FIX_POST_ID = 'base-1'
 const FIX_BODY = 'gm'
 // Must match the mesh fixture in `mesh/test/comments.test.ts`
@@ -40,7 +41,7 @@ const EXPECTED_DOMAIN = {
   name: 'thatsRekt',
   version: '1',
   chainId: 8453,
-  verifyingContract: '0x390f7b37545CaD278dD3DADC92a20b9f45865936',
+  verifyingContract: '0x585192Be5805Dc6D2F326369E6D0F8B7E11a7974',
 } as const
 
 describe('canonical typed-data builders', () => {
@@ -90,7 +91,7 @@ describe('canonical typed-data fingerprints', () => {
   test('CreateComment fixture hash is stable', () => {
     const td = buildCreateTypedData(FIX_POST_ID, FIX_BODY, FIX_SIGNED_AT)
     expect(hashTypedData(td)).toBe(
-      '0xce3901586bb4ad38ee92f8f57d3edb9867017294fc9ec87563d5737de01a56e0',
+      '0x4cc2ac84dc2533f16551dd25cd366739df9a5c5fe21248e0b3143e1bf4601a5e',
     )
   })
 
@@ -102,14 +103,14 @@ describe('canonical typed-data fingerprints', () => {
       FIX_SIGNED_AT,
     )
     expect(hashTypedData(td)).toBe(
-      '0x34b6ed63c0008147dc66280b75eb69446cbce31fbcc9bfe5d0a56aa48b25d3a5',
+      '0xa4252bd7819558df94b7226cc0b345b774cd30cc003ce0293de9d8f869fff1fa',
     )
   })
 
   test('DeleteComment fixture hash is stable', () => {
     const td = buildDeleteTypedData(FIX_COMMENT_ID, FIX_POST_ID, FIX_SIGNED_AT)
     expect(hashTypedData(td)).toBe(
-      '0x3a2ce2e3ba164f0611ee766434ed1cbc0664ad94c58b0d987e3632ae066136be',
+      '0xe056613511a58b7f627565644c2a99c13776f1e238ff74b2d57cd612bbeaa3d1',
     )
   })
 })
@@ -128,7 +129,7 @@ describe('chain slug derivation', () => {
     const td = buildCreateTypedData('base-sepolia-7', FIX_BODY, FIX_SIGNED_AT)
     expect(td.domain.chainId).toBe(84532)
     expect(td.domain.verifyingContract).toBe(
-      '0xcd289C9e99D1B8EA6dc0B3fFDED7FEBe26Da0E23',
+      '0x5278dD25e8551Cc98f2dC89791f5C89a9C83F695',
     )
   })
 })

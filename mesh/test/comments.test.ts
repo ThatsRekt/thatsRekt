@@ -65,8 +65,8 @@ import type { ExecutionResult } from 'graphql'
 
 // --- Fixtures -------------------------------------------------------------
 
-const BASE_REGISTRY = '0x390f7b37545CaD278dD3DADC92a20b9f45865936' as const
-const BASE_SEPOLIA_REGISTRY = '0xcd289C9e99D1B8EA6dc0B3fFDED7FEBe26Da0E23' as const
+const BASE_REGISTRY = '0x585192Be5805Dc6D2F326369E6D0F8B7E11a7974' as const
+const BASE_SEPOLIA_REGISTRY = '0x5278dD25e8551Cc98f2dC89791f5C89a9C83F695' as const
 
 const TEST_CHAINS: readonly ChainEntry[] = Object.freeze([
   {
@@ -252,7 +252,7 @@ describe('canonical typed-data fingerprint', () => {
         primaryType: 'CreateComment',
         message: td.message,
       }),
-    ).toBe('0xce3901586bb4ad38ee92f8f57d3edb9867017294fc9ec87563d5737de01a56e0')
+    ).toBe('0x4cc2ac84dc2533f16551dd25cd366739df9a5c5fe21248e0b3143e1bf4601a5e')
   })
 
   test('EditComment fingerprint is stable', () => {
@@ -277,7 +277,7 @@ describe('canonical typed-data fingerprint', () => {
         primaryType: 'EditComment',
         message: td.message,
       }),
-    ).toBe('0x34b6ed63c0008147dc66280b75eb69446cbce31fbcc9bfe5d0a56aa48b25d3a5')
+    ).toBe('0xa4252bd7819558df94b7226cc0b345b774cd30cc003ce0293de9d8f869fff1fa')
   })
 
   test('DeleteComment fingerprint is stable', () => {
@@ -300,7 +300,7 @@ describe('canonical typed-data fingerprint', () => {
         primaryType: 'DeleteComment',
         message: td.message,
       }),
-    ).toBe('0x3a2ce2e3ba164f0611ee766434ed1cbc0664ad94c58b0d987e3632ae066136be')
+    ).toBe('0xe056613511a58b7f627565644c2a99c13776f1e238ff74b2d57cd612bbeaa3d1')
   })
 })
 
