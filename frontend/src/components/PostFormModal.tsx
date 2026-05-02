@@ -3,6 +3,7 @@ import { getAddress, isAddress } from 'viem'
 import { useAccount, useSwitchChain } from 'wagmi'
 import { CHAINS, explorerTxUrl, type FrontendChain } from '../lib/chains'
 import { usePost } from '../hooks/usePost'
+import { usePeekNextPostId } from '../hooks/usePeekNextPostId'
 import type { SupportedChainId } from '../lib/contracts'
 
 /**
@@ -297,6 +298,23 @@ function PostFormBody({
       post.error.message)
     : null
 
+  // Detect PostIdMismatch specifically. viem encodes custom-error reverts
+  // with the error name in the message; matching by name is robust across
+  // wallet providers (some prepend "execution reverted: …", some don't).
+  const isPostIdMismatch =
+    !!post.error &&
+    /PostIdMismatch/.test(
+      (post.error as Error & { shortMessage?: string }).shortMessage ??
+        post.error.message,
+    )
+
+  // Live "your post will be #N" preview. Disabled while a tx is in flight
+  // so the displayed slot doesn't appear to bump under the user mid-sign.
+  const peek = usePeekNextPostId({
+    chainId,
+    enabled: !post.isBroadcasting && !post.isMining && !post.isSuccess,
+  })
+
   // datetime-local `max` — keep it pinned to "now (UTC)" so the picker
   // can't overshoot the present. Recomputing on every render is cheap
   // and avoids a stale ceiling if the modal stays open across midnight.
@@ -429,6 +447,15 @@ function PostFormBody({
       </div>
 
       {/* ------------------------------------------------------------ */}
+      {/* pending post-id preview                                       */}
+      {/*                                                                */}
+      {/* Live read of `peekNextPostId()` so the user sees the slot      */}
+      {/* their post will claim. Auto-refreshes every 8s; flashes when   */}
+      {/* the slot bumps (someone else posted while this form was open). */}
+      {/* ------------------------------------------------------------ */}
+      <PendingPostIdPreview chainId={chainId} peek={peek} />
+
+      {/* ------------------------------------------------------------ */}
       {/* submit OR switch-chain                                        */}
       {/* ------------------------------------------------------------ */}
       <div className="space-y-2 pt-2">
@@ -456,12 +483,101 @@ function PostFormBody({
           </p>
         )}
         {errorMessage && (
-          <p className="text-xs text-red-700 border-2 border-red-700 bg-red-50 px-3 py-2 break-words">
-            {errorMessage}
-          </p>
+          <div className="space-y-2">
+            <p className="text-xs text-red-700 border-2 border-red-700 bg-red-50 px-3 py-2 break-words">
+              {isPostIdMismatch ? (
+                <>
+                  <span className="font-black uppercase tracking-widest block mb-1">
+                    [post-id taken]
+                  </span>
+                  Someone else claimed that slot before your tx mined.
+                  Your content was NOT posted. Refresh to claim the next
+                  available id and try again.
+                </>
+              ) : (
+                errorMessage
+              )}
+            </p>
+            {isPostIdMismatch && (
+              <button
+                type="button"
+                onClick={() => {
+                  // Refetch the slot, clear the post error, and let the
+                  // user re-submit deliberately. We don't auto-resubmit
+                  // because the wallet popup can be confusing if it
+                  // re-opens unprompted.
+                  peek.refetch()
+                  post.reset()
+                }}
+                className="w-full border-2 border-black bg-yellow-100 px-3 py-2 text-xs uppercase tracking-widest font-black hover:bg-yellow-200 transition-colors"
+              >
+                [ retry with fresh slot ]
+              </button>
+            )}
+          </div>
         )}
       </div>
     </form>
+  )
+}
+
+/**
+ * "Your post will be #N on <chain>" preview. Brutalist card; flashes
+ * yellow when the slot bumps so a user mid-form notices that someone
+ * else just claimed a post (their pre-published share URL would now
+ * point at the wrong content if they don't refresh).
+ */
+function PendingPostIdPreview({
+  chainId,
+  peek,
+}: {
+  chainId: number
+  peek: ReturnType<typeof usePeekNextPostId>
+}) {
+  // CHAINS is keyed by slug, not an array — find by chainId.
+  const chain = (Object.values(CHAINS) as readonly FrontendChain[]).find(
+    (c) => c.chainId === chainId,
+  )
+  const chainLabel = chain?.badge ?? chain?.name ?? `chain ${chainId}`
+
+  if (peek.isLoading && peek.id === undefined) {
+    return (
+      <div className="border-2 border-black bg-[#f5f4ee] px-3 py-2 text-[10px] uppercase tracking-widest text-neutral-700">
+        [reading next post id…]
+      </div>
+    )
+  }
+
+  if (peek.error || peek.id === undefined) {
+    // Don't block submission — usePost will read peekNextPostId() again
+    // right before signing. This preview is informational only.
+    return null
+  }
+
+  return (
+    <div
+      className={
+        'border-2 px-3 py-2 transition-colors ' +
+        (peek.bumped
+          ? 'border-yellow-600 bg-yellow-100'
+          : 'border-black bg-[#f5f4ee]')
+      }
+      role="status"
+      aria-live="polite"
+    >
+      <p className="text-[10px] uppercase tracking-widest text-neutral-700">
+        [your post will be]
+      </p>
+      <p className="font-mono text-sm font-black text-black">
+        #{peek.id.toString()} on {chainLabel}
+      </p>
+      {peek.bumped && (
+        <p className="text-[10px] uppercase tracking-widest text-yellow-800 mt-1">
+          ↑ slot bumped — another guardian just posted. your tx will
+          claim the new slot.
+        </p>
+      )}
+    </div>
   )
 }
 
