@@ -133,7 +133,7 @@ function UseCases() {
         body={
           <>
             From a whitelisted EOA, call{' '}
-            <Code>post(title, attackers, victims, note, attackedAt)</Code>{' '}
+            <Code>post(expectedPostId, title, attackers, victims, note, attackedAt)</Code>{' '}
             the moment your fork-monitor / mempool-scanner / forensic
             heuristic fires. Other guardians see your report and race
             to confirm or refute. Confirmer karma builds reputation
@@ -344,7 +344,7 @@ function Architecture() {
         </p>
         <ul className="space-y-1 text-sm leading-relaxed text-neutral-800 list-disc list-inside marker:text-neutral-400">
           <li>
-            <Code>post(title, attackers, victims, note, attackedAt)</Code>{' '}
+            <Code>post(expectedPostId, title, attackers, victims, note, attackedAt)</Code>{' '}
             → submit a new alert. Returns the new post id.
           </li>
           <li>
