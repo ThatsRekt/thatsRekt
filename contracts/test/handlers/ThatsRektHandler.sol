@@ -11,6 +11,10 @@ contract ThatsRektHandler is Test {
     address[] public actors;
     uint256[] public livePostIds;
 
+    /// Count of successful posts the handler observed. Compared against
+    /// `reg.postCount()` in the invariant — they must always match.
+    uint256 public successfulPosts;
+
     constructor(ThatsRekt _reg, address[] memory _actors) {
         reg = _reg;
         actors = _actors;
@@ -35,6 +39,7 @@ contract ThatsRektHandler is Test {
         vm.prank(poster);
         try reg.post(_expectedPid, "test title", atk, vic, "", uint64(block.timestamp)) returns (uint256 id) {
             livePostIds.push(id);
+            unchecked { ++successfulPosts; }
         } catch { /* expected: NotWhitelisted, etc. */ }
     }
 

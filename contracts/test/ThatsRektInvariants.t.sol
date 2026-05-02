@@ -103,4 +103,11 @@ contract ThatsRektInvariants is Test {
             assertEq(reg.getDisconfirmerCount(id), uint256(down), "downConfirmr set length must equal post.downConfirms");
         }
     }
+
+    /// `postCount` must equal the number of successful `post()` calls across
+    /// the whole fuzz campaign. Catches any future regression where a revert
+    /// fails to roll back the increment, or a silent post path is added.
+    function invariant_postCountMatchesSuccessful() public view {
+        assertEq(reg.postCount(), handler.successfulPosts(), "postCount drifted from successful post count");
+    }
 }
