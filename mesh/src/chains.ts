@@ -41,6 +41,16 @@ export interface ChainEntry {
   readonly prefix: string
   /** Internal compose-network URL of this chain's squid GraphQL endpoint. */
   readonly endpoint: string
+  /**
+   * On-chain registry proxy address for this chain. Used as the EIP-712
+   * `verifyingContract` when verifying guardian comment signatures. Only
+   * defined for chains that have a deployed registry — must be kept in
+   * sync with `frontend/src/lib/contracts.ts::REGISTRY_PROXIES`.
+   *
+   * Chains without a deployed registry (anvil forks, sepolia, optimism
+   * while archived) leave this undefined and cannot accept comments.
+   */
+  readonly registryAddress?: `0x${string}`
 }
 
 export const CHAINS: readonly ChainEntry[] = Object.freeze([
@@ -73,6 +83,9 @@ export const CHAINS: readonly ChainEntry[] = Object.freeze([
     name: 'Base',
     prefix: 'Base_',
     endpoint: process.env.GRAPHQL_BASE_URL ?? 'http://graphql-base:4353/graphql',
+    // Base mainnet — legacy proxy without purgeAdmin. Mirrors
+    // frontend/src/lib/contracts.ts::REGISTRY_PROXIES[8453].
+    registryAddress: '0x390f7b37545CaD278dD3DADC92a20b9f45865936',
   },
   {
     chainId: 84532,
@@ -82,6 +95,9 @@ export const CHAINS: readonly ChainEntry[] = Object.freeze([
     endpoint:
       process.env.GRAPHQL_BASE_SEPOLIA_URL ??
       'http://graphql-base-sepolia:4361/graphql',
+    // Base Sepolia — purge-capable proxy. Mirrors
+    // frontend/src/lib/contracts.ts::REGISTRY_PROXIES[84532].
+    registryAddress: '0xcd289C9e99D1B8EA6dc0B3fFDED7FEBe26Da0E23',
   },
   // Optimism: temporarily removed while the registry redeploys with the
   // new purge-admin governance role. Re-add when the canonical whitelist

@@ -1,11 +1,18 @@
 /**
  * Off-chain guardian comments — full validation pipeline + resolvers.
  *
- * Comments are signed via EIP-191 `personal_sign` by the guardian's
- * wallet. The server reconstructs the canonical message string, recovers
- * the address with viem, and asserts it matches the claimed signer. Only
- * whitelisted (per the on-chain registry on the comment's chain)
- * guardians can post; only the original signer can edit or delete.
+ * Comments are signed via EIP-712 typed data by the guardian's wallet.
+ * The server reconstructs the canonical typed-data payload, recovers
+ * the address with viem's `recoverTypedDataAddress`, and asserts it
+ * matches the claimed signer. Only whitelisted (per the on-chain
+ * registry on the comment's chain) guardians can post; only the
+ * original signer can edit or delete.
+ *
+ * The EIP-712 domain binds each signature to a specific chain
+ * (`chainId` + `verifyingContract` = the registry proxy on that
+ * chain), so a signature collected for one chain can't be replayed on
+ * another. Wallets render parsed fields (postId/body/signedAt) instead
+ * of raw text, defending against cross-site `personal_sign` phishing.
  *
  * No version history. Edits overwrite. Deletes are hard. Per the
  * operator's call: "no need to overengineer this."
@@ -13,7 +20,11 @@
  * Storage: shared `thatsrekt_meta` Postgres database, single `comments`
  * table. See `db.ts` for the schema.
  */
-import { keccak256, recoverMessageAddress, toHex } from 'viem'
+import {
+  hashTypedData,
+  recoverTypedDataAddress,
+  type TypedDataDomain,
+} from 'viem'
 import type { Executor } from '@graphql-tools/utils'
 import type { ExecutionResult } from 'graphql'
 import { parse } from 'graphql'
@@ -101,9 +112,34 @@ const BODY_MIN = 1
 const BODY_MAX = 1000
 const TIME_WINDOW_MS = 5 * 60 * 1000 // ±5 minutes
 const RATE_LIMIT_MS = 5_000           // 1 create per signer per 5 seconds
-const DEDUPE_WINDOW_MS = 30_000       // duplicate creates inside 30s collapse
 const ADDRESS_RE = /^0x[a-fA-F0-9]{40}$/
 const SIGNATURE_RE = /^0x[a-fA-F0-9]{130}$/
+const COMMENT_ID_RE = /^\d+$/
+
+// EIP-712 typed-data spec. Frozen so neither this module nor a future
+// extension can mutate the field order; reordering would invalidate every
+// previously-issued signature.
+export const COMMENT_TYPES = Object.freeze({
+  CreateComment: [
+    { name: 'postId', type: 'string' },
+    { name: 'body', type: 'string' },
+    { name: 'signedAt', type: 'string' },
+  ],
+  EditComment: [
+    { name: 'commentId', type: 'uint256' },
+    { name: 'postId', type: 'string' },
+    { name: 'newBody', type: 'string' },
+    { name: 'signedAt', type: 'string' },
+  ],
+  DeleteComment: [
+    { name: 'commentId', type: 'uint256' },
+    { name: 'postId', type: 'string' },
+    { name: 'signedAt', type: 'string' },
+  ],
+}) satisfies Record<string, ReadonlyArray<{ name: string; type: string }>>
+
+const DOMAIN_NAME = 'thatsRekt'
+const DOMAIN_VERSION = '1'
 
 // ---------------------------------------------------------------------------
 // In-memory rate limiter
@@ -129,6 +165,11 @@ export function startRateLimitGc(): void {
     for (const [k, v] of rateLimitMap) {
       if (v < cutoff) rateLimitMap.delete(k)
     }
+    // Same TTL applies to the failed-whitelist cache.
+    const fwCutoff = Date.now() - FAILED_WHITELIST_TTL_GC_MS
+    for (const [k, v] of failedWhitelistMap) {
+      if (v < fwCutoff) failedWhitelistMap.delete(k)
+    }
   }, RATE_LIMIT_GC_INTERVAL_MS)
   // Don't keep the event loop alive just for the GC.
   if (typeof gcTimer.unref === 'function') gcTimer.unref()
@@ -148,50 +189,113 @@ export function resetRateLimit(): void {
 }
 
 // ---------------------------------------------------------------------------
-// Canonical message construction
+// Failed-whitelist short-circuit cache (audit M-3)
 // ---------------------------------------------------------------------------
 //
-// Three op variants — create / edit / delete. The exact string is
-// reconstructed server-side from input fields and recovered with
-// `recoverMessageAddress` (EIP-191 personal_sign). Any drift between the
-// client and server formatters is rejected as `InvalidSignature`.
+// An attacker can spam our gateway with fresh keypairs that will never
+// be whitelisted; each rejection still costs us a round-trip to the
+// upstream squid. We hold a tiny in-memory map of recently-failed
+// signers (lowercased address → ms ts of last failure) and short-circuit
+// to `NotWhitelisted` for repeat hits inside `FAILED_WHITELIST_WINDOW_MS`.
+// On a successful whitelist check we evict the entry (in case the
+// signer was JUST whitelisted). The map is GC'd alongside rateLimitMap.
+const failedWhitelistMap = new Map<string, number>()
+const FAILED_WHITELIST_WINDOW_MS = 60_000          // 1 minute short-circuit
+const FAILED_WHITELIST_TTL_GC_MS = 60 * 60 * 1000  // GC entries older than 1h
 
-export const buildCreateMessage = (postId: string, signedAt: string, body: string): string =>
-  [
-    'thatsRekt comment v1',
-    'op: create',
-    `post: ${postId}`,
-    `signed_at: ${signedAt}`,
-    `body: ${body}`,
-  ].join('\n')
+/** Test/debug: reset failed-whitelist state. */
+export function resetFailedWhitelist(): void {
+  failedWhitelistMap.clear()
+}
 
-export const buildEditMessage = (
-  commentId: string,
-  postId: string,
-  signedAt: string,
-  body: string,
-): string =>
-  [
-    'thatsRekt comment v1',
-    'op: edit',
-    `comment_id: ${commentId}`,
-    `post: ${postId}`,
-    `signed_at: ${signedAt}`,
-    `body: ${body}`,
-  ].join('\n')
+// ---------------------------------------------------------------------------
+// EIP-712 typed-data construction
+// ---------------------------------------------------------------------------
+//
+// Three op variants — create / edit / delete. The exact typed-data
+// payload is reconstructed server-side from input fields and recovered
+// with `recoverTypedDataAddress`. Any drift between client and server
+// builders (or a wrong domain) is rejected as `InvalidSignature`.
 
-export const buildDeleteMessage = (
-  commentId: string,
-  postId: string,
-  signedAt: string,
-): string =>
-  [
-    'thatsRekt comment v1',
-    'op: delete',
-    `comment_id: ${commentId}`,
-    `post: ${postId}`,
-    `signed_at: ${signedAt}`,
-  ].join('\n')
+/** EIP-712 domain for a chain. Fields are bound to the registry proxy
+ *  address on that chain so signatures can't be replayed cross-chain. */
+export const buildDomain = (chain: ChainEntry & { registryAddress: `0x${string}` }): TypedDataDomain => ({
+  name: DOMAIN_NAME,
+  version: DOMAIN_VERSION,
+  chainId: chain.chainId,
+  verifyingContract: chain.registryAddress,
+})
+
+export interface CreateTypedData {
+  domain: TypedDataDomain
+  types: typeof COMMENT_TYPES
+  primaryType: 'CreateComment'
+  message: { postId: string; body: string; signedAt: string }
+}
+
+export interface EditTypedData {
+  domain: TypedDataDomain
+  types: typeof COMMENT_TYPES
+  primaryType: 'EditComment'
+  message: { commentId: bigint; postId: string; newBody: string; signedAt: string }
+}
+
+export interface DeleteTypedData {
+  domain: TypedDataDomain
+  types: typeof COMMENT_TYPES
+  primaryType: 'DeleteComment'
+  message: { commentId: bigint; postId: string; signedAt: string }
+}
+
+export const buildCreateTypedData = (params: {
+  domain: TypedDataDomain
+  postId: string
+  body: string
+  signedAt: string
+}): CreateTypedData => ({
+  domain: params.domain,
+  types: COMMENT_TYPES,
+  primaryType: 'CreateComment',
+  message: {
+    postId: params.postId,
+    body: params.body,
+    signedAt: params.signedAt,
+  },
+})
+
+export const buildEditTypedData = (params: {
+  domain: TypedDataDomain
+  commentId: string
+  postId: string
+  newBody: string
+  signedAt: string
+}): EditTypedData => ({
+  domain: params.domain,
+  types: COMMENT_TYPES,
+  primaryType: 'EditComment',
+  message: {
+    commentId: BigInt(params.commentId),
+    postId: params.postId,
+    newBody: params.newBody,
+    signedAt: params.signedAt,
+  },
+})
+
+export const buildDeleteTypedData = (params: {
+  domain: TypedDataDomain
+  commentId: string
+  postId: string
+  signedAt: string
+}): DeleteTypedData => ({
+  domain: params.domain,
+  types: COMMENT_TYPES,
+  primaryType: 'DeleteComment',
+  message: {
+    commentId: BigInt(params.commentId),
+    postId: params.postId,
+    signedAt: params.signedAt,
+  },
+})
 
 // ---------------------------------------------------------------------------
 // Pure helpers
@@ -224,6 +328,21 @@ export const parsePostId = (
 }
 
 /**
+ * Look up the chain entry for a given slug, narrowing the type when the
+ * chain has a deployed registry. Returns null otherwise — a chain
+ * without a registry can't accept comments because we have no
+ * `verifyingContract` to bind the EIP-712 domain to.
+ */
+export const chainWithRegistry = (
+  chains: readonly ChainEntry[],
+  slug: string,
+): (ChainEntry & { registryAddress: `0x${string}` }) | null => {
+  const entry = chains.find((c) => c.slug === slug)
+  if (!entry || !entry.registryAddress) return null
+  return entry as ChainEntry & { registryAddress: `0x${string}` }
+}
+
+/**
  * Shared error variant. Lives in both SubmitCommentResult and
  * DeleteCommentResult unions, so the helper returns the narrow shape
  * directly — callers widen at the return site.
@@ -243,6 +362,7 @@ const successOf = (comment: CommentRow): SubmitCommentResult => ({
 
 const isAddressString = (s: string): boolean => ADDRESS_RE.test(s)
 const isSignatureString = (s: string): boolean => SIGNATURE_RE.test(s)
+const isCommentIdString = (s: string): boolean => COMMENT_ID_RE.test(s)
 
 /** Normalize an address to lowercase 0x-prefixed hex. */
 const normalizeAddress = (s: string): string => s.toLowerCase()
@@ -250,12 +370,6 @@ const normalizeAddress = (s: string): string => s.toLowerCase()
 /** Equality on EVM addresses, case-insensitive. */
 const addressesEqual = (a: string, b: string): boolean =>
   normalizeAddress(a) === normalizeAddress(b)
-
-/** Hash the canonical message — stored alongside the row for audit. */
-const messageHashOf = (msg: string): string => keccak256(toHex(msg))
-
-/** Body hash — used for the create-side dedupe predicate. */
-const bodyHashOf = (body: string): string => keccak256(toHex(body))
 
 // ---------------------------------------------------------------------------
 // Validation primitives — pure
@@ -297,19 +411,28 @@ const validateBody = (body: string): ErrorVariant | null => {
 }
 
 /**
- * Recover the signing address from a canonical message + signature, and
+ * Recover the signing address from EIP-712 typed data + signature, and
  * assert it matches the claimed signer. Returns the recovered address on
  * success or a result-shaped error on mismatch / recovery failure.
  */
-export const verifySignature = async (params: {
-  message: string
+export const verifyTypedDataSignature = async <
+  TD extends CreateTypedData | EditTypedData | DeleteTypedData,
+>(params: {
+  typedData: TD
   signature: string
   signer: string
 }): Promise<{ ok: true; recovered: string } | ErrorVariant> => {
   let recovered: string
   try {
-    recovered = await recoverMessageAddress({
-      message: params.message,
+    recovered = await recoverTypedDataAddress({
+      domain: params.typedData.domain,
+      // viem types are tightly coupled to the const-asserted shape; the
+      // generic relaxation here is safe because COMMENT_TYPES + the
+      // discriminated union of typed-data builders enforce well-typed
+      // inputs at every call site.
+      types: params.typedData.types as Record<string, ReadonlyArray<{ name: string; type: string }>>,
+      primaryType: params.typedData.primaryType,
+      message: params.typedData.message as Record<string, unknown>,
       signature: params.signature as `0x${string}`,
     })
   } catch (err) {
@@ -323,6 +446,17 @@ export const verifySignature = async (params: {
   }
   return { ok: true, recovered: normalizeAddress(recovered) }
 }
+
+/** Hash an EIP-712 typed-data payload. Stored alongside the row for audit. */
+const typedDataHash = (
+  td: CreateTypedData | EditTypedData | DeleteTypedData,
+): `0x${string}` =>
+  hashTypedData({
+    domain: td.domain,
+    types: td.types as Record<string, ReadonlyArray<{ name: string; type: string }>>,
+    primaryType: td.primaryType,
+    message: td.message as Record<string, unknown>,
+  })
 
 // ---------------------------------------------------------------------------
 // Per-chain whitelist + post-existence checks (Subsquid GraphQL)
@@ -341,6 +475,7 @@ const POST_QUERY = /* GraphQL */ `
   query CheckPost($id: String!) {
     postById(id: $id) {
       id
+      purged
     }
   }
 `
@@ -369,7 +504,40 @@ export const isWhitelisted = async (
   return w.isCurrentlyWhitelisted === true
 }
 
-/** Returns true iff the on-chain post exists on the chain's indexer. */
+/**
+ * Whitelist gate with the failed-whitelist short-circuit cache (audit
+ * M-3). On a sub-FAILED_WHITELIST_WINDOW_MS rejection we skip the
+ * upstream round-trip entirely.
+ *
+ * - Returns true: signer is whitelisted; cache entry (if any) is evicted.
+ * - Returns false: signer is not whitelisted; cache entry is recorded
+ *   with the current timestamp so future hits short-circuit.
+ */
+const isWhitelistedCached = async (
+  executor: Executor,
+  signer: string,
+): Promise<boolean> => {
+  const key = normalizeAddress(signer)
+  const lastFail = failedWhitelistMap.get(key)
+  if (lastFail !== undefined && Date.now() - lastFail < FAILED_WHITELIST_WINDOW_MS) {
+    return false
+  }
+  const ok = await isWhitelisted(executor, signer)
+  if (ok) {
+    failedWhitelistMap.delete(key)
+  } else {
+    failedWhitelistMap.set(key, Date.now())
+  }
+  return ok
+}
+
+/**
+ * Returns true iff the on-chain post exists AND has not been purged by
+ * governance. Treating purged posts as not-found blocks every
+ * downstream mutation (create / edit / delete) and lets us return the
+ * same `[]` for the read path so we don't reintroduce content
+ * governance just scrubbed. (audit M-1)
+ */
 export const postExists = async (
   executor: Executor,
   onchainId: string,
@@ -386,7 +554,12 @@ export const postExists = async (
   const data = result.data
   if (!isPlainObject(data)) return false
   const p = data.postById
-  return isPlainObject(p) && typeof p.id === 'string'
+  if (!isPlainObject(p) || typeof p.id !== 'string') return false
+  // Coalesce undefined → false: tolerates upstreams that haven't applied
+  // the purge migration yet. Block iff the upstream explicitly says
+  // purged===true.
+  if (p.purged === true) return false
+  return true
 }
 
 // ---------------------------------------------------------------------------
@@ -420,41 +593,40 @@ const rowToComment = (row: CommentDbRow): CommentRow => ({
 })
 
 /**
- * Look for a row matching `(signer, post_id, body_hash, signed_at within
- * 30s)`. We don't have a stored body_hash column (would bloat the row);
- * recompute it on the candidate set instead. The candidate set is
- * scoped to the same signer + post + 30s window, which is tiny.
+ * Type-narrowing predicate for the pg unique-violation error. The pg
+ * driver attaches a `code` field to the thrown Error; SQLSTATE
+ * 23505 == unique_violation. We use this in the create path to convert
+ * the race-induced unique constraint hit into `DuplicateSubmission`.
  */
-const findDuplicateCreate = async (params: {
-  signer: string
-  postId: string
-  bodyHash: string
-  signedAt: Date
-}): Promise<boolean> => {
-  const lo = new Date(params.signedAt.getTime() - DEDUPE_WINDOW_MS)
-  const hi = new Date(params.signedAt.getTime() + DEDUPE_WINDOW_MS)
-  const { rows } = await metaPool.query<{ body: string }>(
-    `SELECT body FROM comments
-       WHERE signer_address = $1
-         AND post_id = $2
-         AND signed_at BETWEEN $3 AND $4`,
-    [params.signer, params.postId, lo.toISOString(), hi.toISOString()],
-  )
-  for (const r of rows) {
-    if (bodyHashOf(r.body) === params.bodyHash) return true
-  }
-  return false
-}
+const isUniqueViolation = (err: unknown): boolean =>
+  typeof err === 'object' && err !== null && (err as { code?: unknown }).code === '23505'
 
 // ---------------------------------------------------------------------------
 // Public read resolvers
 // ---------------------------------------------------------------------------
 
+/**
+ * List comments for a post. Returns `[]` when the post has been purged
+ * by governance (audit M-1) — same policy as create/edit/delete: the
+ * gateway does not surface comments tied to scrubbed content.
+ *
+ * If the post's chain is unknown, or the chain has no registered
+ * executor, we also return `[]`. We don't surface a partial answer
+ * for content we can't authoritatively decide on.
+ */
 export const listComments = async (
   postId: string,
   limit: number,
   offset: number,
+  deps: ResolverDeps,
 ): Promise<CommentRow[]> => {
+  const parsed = parsePostId(postId, deps.chains)
+  if (!parsed) return []
+  const executor = deps.getExecutor(parsed.chainSlug)
+  if (!executor) return []
+  const visible = await postExists(executor, parsed.onchainId)
+  if (!visible) return []
+
   // Defensive: clamp pagination args. The schema sets defaults but the
   // resolver shouldn't trust them blindly.
   const safeLimit = Math.max(1, Math.min(200, limit))
@@ -471,7 +643,22 @@ export const listComments = async (
   return rows.map(rowToComment)
 }
 
-export const commentCount = async (postId: string): Promise<number> => {
+/**
+ * Comment count for a post. Mirrors `listComments` purge handling: a
+ * purged post reports 0 even if rows still exist in the DB. Keeps the
+ * UI's count chip consistent with what `comments(...)` actually returns.
+ */
+export const commentCount = async (
+  postId: string,
+  deps: ResolverDeps,
+): Promise<number> => {
+  const parsed = parsePostId(postId, deps.chains)
+  if (!parsed) return 0
+  const executor = deps.getExecutor(parsed.chainSlug)
+  if (!executor) return 0
+  const visible = await postExists(executor, parsed.onchainId)
+  if (!visible) return 0
+
   const { rows } = await metaPool.query<{ count: string }>(
     `SELECT COUNT(*)::text AS count FROM comments WHERE post_id = $1`,
     [postId],
@@ -501,33 +688,43 @@ export const createComment = async (
   const bodyErr = validateBody(input.body)
   if (bodyErr) return bodyErr
 
-  // 2. Resolve chain slug from composite postId
+  // 2. Resolve chain slug from composite postId + look up the registry
+  //    (we need the `verifyingContract` for the EIP-712 domain).
   const parsed = parsePostId(input.postId, deps.chains)
   if (!parsed) {
     return errorOf('PostNotFound', `Unknown chain in postId: ${input.postId}`)
+  }
+  const chain = chainWithRegistry(deps.chains, parsed.chainSlug)
+  if (!chain) {
+    return errorOf('PostNotFound', `Chain ${parsed.chainSlug} has no registered comment surface`)
   }
   const executor = deps.getExecutor(parsed.chainSlug)
   if (!executor) {
     return errorOf('PostNotFound', `Chain ${parsed.chainSlug} not enabled`)
   }
 
-  // 3. Signature recovery on the canonical message
-  const message = buildCreateMessage(input.postId, input.signedAt, input.body)
-  const sig = await verifySignature({
-    message,
+  // 3. EIP-712 signature recovery on the canonical typed data
+  const typedData = buildCreateTypedData({
+    domain: buildDomain(chain),
+    postId: input.postId,
+    body: input.body,
+    signedAt: input.signedAt,
+  })
+  const sig = await verifyTypedDataSignature({
+    typedData,
     signature: input.signature,
     signer: input.signer,
   })
   if (!('ok' in sig)) return sig
   const signer = sig.recovered // lowercased
 
-  // 4. Whitelist gate
-  const allowed = await isWhitelisted(executor, signer)
+  // 4. Whitelist gate (with failed-whitelist short-circuit)
+  const allowed = await isWhitelistedCached(executor, signer)
   if (!allowed) {
     return errorOf('NotWhitelisted', `${signer} is not a whitelisted guardian on ${parsed.chainSlug}`)
   }
 
-  // 5. Post existence
+  // 5. Post existence (also rejects purged posts — audit M-1)
   const exists = await postExists(executor, parsed.onchainId)
   if (!exists) {
     return errorOf('PostNotFound', `Post ${input.postId} not found on chain`)
@@ -540,22 +737,15 @@ export const createComment = async (
     return errorOf('RateLimited', 'You are submitting comments too quickly')
   }
 
-  // 7. Dedupe within 30s
+  // 7. Insert. Dedupe is enforced via the `comments_dedupe_idx`
+  //    UNIQUE(signer_address, post_id, signed_at) index (audit M-2):
+  //    a duplicate submission in flight loses the race and surfaces
+  //    here as a 23505 unique_violation. We translate to
+  //    DuplicateSubmission so the client renders correctly. The ±5min
+  //    signed_at window upstream prevents replay; the unique index
+  //    closes the read-then-insert race.
+  const mh = typedDataHash(typedData)
   const signedAtDate = new Date(input.signedAt)
-  const bh = bodyHashOf(input.body)
-  if (
-    await findDuplicateCreate({
-      signer,
-      postId: input.postId,
-      bodyHash: bh,
-      signedAt: signedAtDate,
-    })
-  ) {
-    return errorOf('DuplicateSubmission', 'A matching comment was just submitted')
-  }
-
-  // 8. Insert
-  const mh = messageHashOf(message)
   let row: CommentDbRow
   try {
     const result = await metaPool.query<CommentDbRow>(
@@ -571,6 +761,9 @@ export const createComment = async (
     }
     row = result.rows[0]!
   } catch (err) {
+    if (isUniqueViolation(err)) {
+      return errorOf('DuplicateSubmission', 'A matching comment was just submitted')
+    }
     console.error('[comments] insert failed:', err)
     return errorOf('InternalError', 'Failed to persist comment')
   }
@@ -590,14 +783,31 @@ export const editComment = async (
   const bodyErr = validateBody(input.newBody)
   if (bodyErr) return bodyErr
 
+  // L-3: validate commentId format upfront so we don't propagate a
+  // malformed string to pg (where it'd surface as a generic invalid_text
+  // error and get swallowed as InternalError).
+  if (!isCommentIdString(input.commentId)) {
+    return errorOf('CommentNotFound', `Comment ${input.commentId} not found`)
+  }
+
   const parsed = parsePostId(input.postId, deps.chains)
   if (!parsed) {
     return errorOf('PostNotFound', `Unknown chain in postId: ${input.postId}`)
   }
+  const chain = chainWithRegistry(deps.chains, parsed.chainSlug)
+  if (!chain) {
+    return errorOf('PostNotFound', `Chain ${parsed.chainSlug} has no registered comment surface`)
+  }
 
-  const message = buildEditMessage(input.commentId, input.postId, input.signedAt, input.newBody)
-  const sig = await verifySignature({
-    message,
+  const typedData = buildEditTypedData({
+    domain: buildDomain(chain),
+    commentId: input.commentId,
+    postId: input.postId,
+    newBody: input.newBody,
+    signedAt: input.signedAt,
+  })
+  const sig = await verifyTypedDataSignature({
+    typedData,
     signature: input.signature,
     signer: input.signer,
   })
@@ -632,12 +842,19 @@ export const editComment = async (
   if (!executor) {
     return errorOf('PostNotFound', `Chain ${parsed.chainSlug} not enabled`)
   }
-  const allowed = await isWhitelisted(executor, signer)
+
+  // M-1 (also blocks edits on purged posts).
+  const stillVisible = await postExists(executor, parsed.onchainId)
+  if (!stillVisible) {
+    return errorOf('PostNotFound', `Post ${input.postId} not found on chain`)
+  }
+
+  const allowed = await isWhitelistedCached(executor, signer)
   if (!allowed) {
     return errorOf('NotWhitelisted', `${signer} is not a whitelisted guardian on ${parsed.chainSlug}`)
   }
 
-  const mh = messageHashOf(message)
+  const mh = typedDataHash(typedData)
   const signedAtDate = new Date(input.signedAt)
   let row: CommentDbRow
   try {
@@ -672,14 +889,28 @@ export const deleteComment = async (
   const shapeErr = validateCommonShape(input)
   if (shapeErr) return shapeErr
 
+  // L-3: validate commentId format upfront.
+  if (!isCommentIdString(input.commentId)) {
+    return errorOf('CommentNotFound', `Comment ${input.commentId} not found`)
+  }
+
   const parsed = parsePostId(input.postId, deps.chains)
   if (!parsed) {
     return errorOf('PostNotFound', `Unknown chain in postId: ${input.postId}`)
   }
+  const chain = chainWithRegistry(deps.chains, parsed.chainSlug)
+  if (!chain) {
+    return errorOf('PostNotFound', `Chain ${parsed.chainSlug} has no registered comment surface`)
+  }
 
-  const message = buildDeleteMessage(input.commentId, input.postId, input.signedAt)
-  const sig = await verifySignature({
-    message,
+  const typedData = buildDeleteTypedData({
+    domain: buildDomain(chain),
+    commentId: input.commentId,
+    postId: input.postId,
+    signedAt: input.signedAt,
+  })
+  const sig = await verifyTypedDataSignature({
+    typedData,
     signature: input.signature,
     signer: input.signer,
   })
@@ -702,6 +933,20 @@ export const deleteComment = async (
   }
   if (!addressesEqual(existing.signer_address, signer)) {
     return errorOf('NotCommentOwner', 'You are not the author of this comment')
+  }
+
+  // M-1: block deletes on purged posts. A purged post means governance
+  // already scrubbed it — there's nothing left to delete from a user-
+  // visible perspective, and a successful delete would let an attacker
+  // who guessed/knew their own commentId before the purge confirm
+  // (out-of-band) which posts they had touched.
+  const executor = deps.getExecutor(parsed.chainSlug)
+  if (!executor) {
+    return errorOf('PostNotFound', `Chain ${parsed.chainSlug} not enabled`)
+  }
+  const stillVisible = await postExists(executor, parsed.onchainId)
+  if (!stillVisible) {
+    return errorOf('PostNotFound', `Post ${input.postId} not found on chain`)
   }
 
   // No whitelist re-check for deletes: a deplatformed guardian still
@@ -742,9 +987,9 @@ export const commentsTypeDefs = /* GraphQL */ `
     lastEditedAt: String
     """ISO8601 timestamp the signer claimed in the canonical message."""
     signedAt: String!
-    """Current EIP-191 signature. Surfaced so frontends can re-verify the comment client-side."""
+    """Current EIP-712 signature. Surfaced so frontends can re-verify the comment client-side."""
     signature: String!
-    """keccak256 of the canonical message string. Stored for audit; clients can recompute."""
+    """EIP-712 typed-data hash of the canonical message. Stored for audit; clients can recompute."""
     messageHash: String!
   }
 
@@ -797,9 +1042,9 @@ export const commentsTypeDefs = /* GraphQL */ `
   }
 
   extend type Query {
-    """Comments for a post, newest first. Composite postId, e.g. 'base-2'."""
+    """Comments for a post, newest first. Composite postId, e.g. 'base-2'. Returns [] for purged posts."""
     comments(postId: String!, limit: Int = 50, offset: Int = 0): [Comment!]!
-    """Total comment count for a post — drives the header count chip."""
+    """Total comment count for a post — drives the header count chip. Returns 0 for purged posts."""
     commentCount(postId: String!): Int!
   }
 
@@ -807,13 +1052,14 @@ export const commentsTypeDefs = /* GraphQL */ `
     """
     Create a new comment. Body must be 1-1000 chars. Signer must be a
     currently-whitelisted guardian on the post's chain. signedAt must be
-    within ±5 minutes of server clock.
+    within ±5 minutes of server clock. Signature is EIP-712 typed data
+    bound to the registry proxy on the post's chain.
     """
     submitComment(input: SubmitCommentInput!): SubmitCommentResult!
 
     """
     Edit an existing comment. Only the original signer can edit. Re-signs
-    the canonical edit message and overwrites body + signature + signedAt.
+    the canonical edit typed-data and overwrites body + signature + signedAt.
     """
     editComment(input: EditCommentInput!): SubmitCommentResult!
 
@@ -827,11 +1073,11 @@ export const buildCommentsResolvers = (deps: ResolverDeps) => ({
     comments: (
       _root: unknown,
       args: { postId: string; limit?: number; offset?: number },
-    ) => listComments(args.postId, args.limit ?? 50, args.offset ?? 0),
+    ) => listComments(args.postId, args.limit ?? 50, args.offset ?? 0, deps),
     commentCount: (
       _root: unknown,
       args: { postId: string },
-    ) => commentCount(args.postId),
+    ) => commentCount(args.postId, deps),
   },
   Mutation: {
     submitComment: (
