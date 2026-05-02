@@ -5,13 +5,12 @@
  * `mock.module`, drive the resolvers with synthesized signed payloads,
  * and verify the discriminated-union outputs.
  *
- * Pure helpers (parsePostId, buildCreateMessage, etc.) are exercised
+ * Pure helpers (parsePostId, buildCreateTypedData, etc.) are exercised
  * directly without mocks.
  */
 import { afterEach, beforeAll, describe, expect, mock, test } from 'bun:test'
 import { privateKeyToAccount } from 'viem/accounts'
-import { createWalletClient, http, keccak256, toHex } from 'viem'
-import { mainnet } from 'viem/chains'
+import { hashTypedData } from 'viem'
 
 // --- Test-time mocks ------------------------------------------------------
 //
@@ -45,16 +44,19 @@ await mock.module('../src/db.ts', () => ({
 
 // Importing AFTER mock.module so the comments module sees the mocked db.
 const {
-  buildCreateMessage,
-  buildEditMessage,
-  buildDeleteMessage,
+  buildCreateTypedData,
+  buildEditTypedData,
+  buildDeleteTypedData,
+  buildDomain,
   parsePostId,
-  verifySignature,
+  verifyTypedDataSignature,
   createComment,
   editComment,
   deleteComment,
   resetRateLimit,
+  resetFailedWhitelist,
   stopRateLimitGc,
+  COMMENT_TYPES,
 } = await import('../src/comments.ts')
 
 import type { ChainEntry } from '../src/chains.ts'
@@ -63,6 +65,9 @@ import type { ExecutionResult } from 'graphql'
 
 // --- Fixtures -------------------------------------------------------------
 
+const BASE_REGISTRY = '0x390f7b37545CaD278dD3DADC92a20b9f45865936' as const
+const BASE_SEPOLIA_REGISTRY = '0xcd289C9e99D1B8EA6dc0B3fFDED7FEBe26Da0E23' as const
+
 const TEST_CHAINS: readonly ChainEntry[] = Object.freeze([
   {
     chainId: 8453,
@@ -70,6 +75,7 @@ const TEST_CHAINS: readonly ChainEntry[] = Object.freeze([
     name: 'Base',
     prefix: 'Base_',
     endpoint: 'http://test/base',
+    registryAddress: BASE_REGISTRY,
   },
   {
     chainId: 84532,
@@ -77,23 +83,59 @@ const TEST_CHAINS: readonly ChainEntry[] = Object.freeze([
     name: 'Base Sepolia',
     prefix: 'BaseSepolia_',
     endpoint: 'http://test/base-sepolia',
+    registryAddress: BASE_SEPOLIA_REGISTRY,
   },
 ])
+
+const baseChainEntry = TEST_CHAINS[0] as ChainEntry & { registryAddress: `0x${string}` }
+const BASE_DOMAIN = buildDomain(baseChainEntry)
 
 // Build a per-test signed-comment payload.
 const TEST_PRIVKEY = '0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d' as const
 const TEST_ACCOUNT = privateKeyToAccount(TEST_PRIVKEY)
 const TEST_ADDRESS = TEST_ACCOUNT.address.toLowerCase()
 
-// Wallet client for signing.
-const wallet = createWalletClient({
-  account: TEST_ACCOUNT,
-  chain: mainnet,
-  transport: http('http://test'),
-})
+const signCreateTd = async (input: {
+  postId: string
+  body: string
+  signedAt: string
+}): Promise<`0x${string}`> => {
+  const td = buildCreateTypedData({ domain: BASE_DOMAIN, ...input })
+  return TEST_ACCOUNT.signTypedData({
+    domain: td.domain,
+    types: COMMENT_TYPES,
+    primaryType: 'CreateComment',
+    message: td.message,
+  })
+}
 
-const signMessage = async (message: string): Promise<`0x${string}`> => {
-  return wallet.signMessage({ message })
+const signEditTd = async (input: {
+  commentId: string
+  postId: string
+  newBody: string
+  signedAt: string
+}): Promise<`0x${string}`> => {
+  const td = buildEditTypedData({ domain: BASE_DOMAIN, ...input })
+  return TEST_ACCOUNT.signTypedData({
+    domain: td.domain,
+    types: COMMENT_TYPES,
+    primaryType: 'EditComment',
+    message: td.message,
+  })
+}
+
+const signDeleteTd = async (input: {
+  commentId: string
+  postId: string
+  signedAt: string
+}): Promise<`0x${string}`> => {
+  const td = buildDeleteTypedData({ domain: BASE_DOMAIN, ...input })
+  return TEST_ACCOUNT.signTypedData({
+    domain: td.domain,
+    types: COMMENT_TYPES,
+    primaryType: 'DeleteComment',
+    message: td.message,
+  })
 }
 
 // --- Executor helpers -----------------------------------------------------
@@ -126,7 +168,10 @@ const noWhitelist: ExecutorResponse = () => ({
   data: { whitelisterById: null },
 })
 const okPost: ExecutorResponse = (v) => ({
-  data: { postById: { id: String(v['id']) } },
+  data: { postById: { id: String(v['id']), purged: false } },
+})
+const purgedPost: ExecutorResponse = (v) => ({
+  data: { postById: { id: String(v['id']), purged: true } },
 })
 const noPost: ExecutorResponse = () => ({
   data: { postById: null },
@@ -140,6 +185,7 @@ const buildDeps = (executor: Executor) => ({
 afterEach(() => {
   resetPoolHandler()
   resetRateLimit()
+  resetFailedWhitelist()
 })
 
 beforeAll(() => {
@@ -171,24 +217,90 @@ describe('parsePostId', () => {
   })
 })
 
-describe('canonical message format', () => {
-  test('create message is stable', () => {
-    const msg = buildCreateMessage('base-1', '2026-05-01T00:00:00.000Z', 'gm')
-    expect(msg).toBe(
-      'thatsRekt comment v1\nop: create\npost: base-1\nsigned_at: 2026-05-01T00:00:00.000Z\nbody: gm',
-    )
+// ---------------------------------------------------------------------------
+// EIP-712 fingerprint tests (audit H-2)
+// ---------------------------------------------------------------------------
+//
+// Cross-repo contract: the frontend agent has the same assertions on
+// the same hash values. Any drift in field order, domain, or primary
+// type would break sigs in flight — these tests catch it before deploy.
+
+describe('canonical typed-data fingerprint', () => {
+  test('CreateComment fingerprint is stable', () => {
+    const td = buildCreateTypedData({
+      domain: BASE_DOMAIN,
+      postId: 'base-1',
+      body: 'gm',
+      signedAt: '2026-05-01T00:00:00.000Z',
+    })
+    expect(td.domain).toEqual({
+      name: 'thatsRekt',
+      version: '1',
+      chainId: 8453,
+      verifyingContract: BASE_REGISTRY,
+    })
+    expect(td.primaryType).toBe('CreateComment')
+    expect(td.message).toEqual({
+      postId: 'base-1',
+      body: 'gm',
+      signedAt: '2026-05-01T00:00:00.000Z',
+    })
+    expect(
+      hashTypedData({
+        domain: td.domain,
+        types: COMMENT_TYPES,
+        primaryType: 'CreateComment',
+        message: td.message,
+      }),
+    ).toBe('0xce3901586bb4ad38ee92f8f57d3edb9867017294fc9ec87563d5737de01a56e0')
   })
 
-  test('edit message includes comment id', () => {
-    const msg = buildEditMessage('42', 'base-1', '2026-05-01T00:00:00.000Z', 'gm')
-    expect(msg).toContain('comment_id: 42')
-    expect(msg).toContain('op: edit')
+  test('EditComment fingerprint is stable', () => {
+    const td = buildEditTypedData({
+      domain: BASE_DOMAIN,
+      commentId: '42',
+      postId: 'base-1',
+      newBody: 'gm edited',
+      signedAt: '2026-05-01T00:00:00.000Z',
+    })
+    expect(td.primaryType).toBe('EditComment')
+    expect(td.message).toEqual({
+      commentId: 42n,
+      postId: 'base-1',
+      newBody: 'gm edited',
+      signedAt: '2026-05-01T00:00:00.000Z',
+    })
+    expect(
+      hashTypedData({
+        domain: td.domain,
+        types: COMMENT_TYPES,
+        primaryType: 'EditComment',
+        message: td.message,
+      }),
+    ).toBe('0x34b6ed63c0008147dc66280b75eb69446cbce31fbcc9bfe5d0a56aa48b25d3a5')
   })
 
-  test('delete message has no body line', () => {
-    const msg = buildDeleteMessage('42', 'base-1', '2026-05-01T00:00:00.000Z')
-    expect(msg).not.toContain('body:')
-    expect(msg).toContain('op: delete')
+  test('DeleteComment fingerprint is stable', () => {
+    const td = buildDeleteTypedData({
+      domain: BASE_DOMAIN,
+      commentId: '42',
+      postId: 'base-1',
+      signedAt: '2026-05-01T00:00:00.000Z',
+    })
+    expect(td.primaryType).toBe('DeleteComment')
+    expect(td.message).toEqual({
+      commentId: 42n,
+      postId: 'base-1',
+      signedAt: '2026-05-01T00:00:00.000Z',
+    })
+    expect(
+      hashTypedData({
+        domain: td.domain,
+        types: COMMENT_TYPES,
+        primaryType: 'DeleteComment',
+        message: td.message,
+      }),
+    ).toBe('0x3a2ce2e3ba164f0611ee766434ed1cbc0664ad94c58b0d987e3632ae066136be')
   })
 })
 
@@ -196,12 +308,22 @@ describe('canonical message format', () => {
 // Signature verification
 // ---------------------------------------------------------------------------
 
-describe('verifySignature', () => {
+describe('verifyTypedDataSignature', () => {
   test('accepts a valid signature from the claimed signer', async () => {
-    const msg = 'hello world'
-    const sig = await signMessage(msg)
-    const out = await verifySignature({
-      message: msg,
+    const td = buildCreateTypedData({
+      domain: BASE_DOMAIN,
+      postId: 'base-1',
+      body: 'gm',
+      signedAt: '2026-05-01T00:00:00.000Z',
+    })
+    const sig = await TEST_ACCOUNT.signTypedData({
+      domain: td.domain,
+      types: COMMENT_TYPES,
+      primaryType: 'CreateComment',
+      message: td.message,
+    })
+    const out = await verifyTypedDataSignature({
+      typedData: td,
       signature: sig,
       signer: TEST_ADDRESS,
     })
@@ -212,11 +334,21 @@ describe('verifySignature', () => {
   })
 
   test('rejects when claimed signer is a different address', async () => {
-    const msg = 'hello world'
-    const sig = await signMessage(msg)
+    const td = buildCreateTypedData({
+      domain: BASE_DOMAIN,
+      postId: 'base-1',
+      body: 'gm',
+      signedAt: '2026-05-01T00:00:00.000Z',
+    })
+    const sig = await TEST_ACCOUNT.signTypedData({
+      domain: td.domain,
+      types: COMMENT_TYPES,
+      primaryType: 'CreateComment',
+      message: td.message,
+    })
     const wrong = '0x0000000000000000000000000000000000000001'
-    const out = await verifySignature({
-      message: msg,
+    const out = await verifyTypedDataSignature({
+      typedData: td,
       signature: sig,
       signer: wrong,
     })
@@ -228,14 +360,54 @@ describe('verifySignature', () => {
   })
 
   test('rejects malformed signatures', async () => {
-    const out = await verifySignature({
-      message: 'hi',
+    const td = buildCreateTypedData({
+      domain: BASE_DOMAIN,
+      postId: 'base-1',
+      body: 'gm',
+      signedAt: '2026-05-01T00:00:00.000Z',
+    })
+    const out = await verifyTypedDataSignature({
+      typedData: td,
       signature: '0xdeadbeef',
       signer: TEST_ADDRESS,
     })
     expect(out).toMatchObject({ code: 'InvalidSignature' })
   })
 })
+
+// ---------------------------------------------------------------------------
+// Helper to build a stub poolHandler that returns a fully-formed comment
+// row from INSERT and an empty list for everything else.
+// ---------------------------------------------------------------------------
+
+const buildInsertPoolHandler = (params: {
+  signer: string
+  postId: string
+  body: string
+  signature: string
+  signedAt: string
+  messageHash: string
+}) => (text: string) => {
+  if (text.startsWith('INSERT INTO comments')) {
+    return {
+      rows: [
+        {
+          id: '1',
+          post_id: params.postId,
+          chain_slug: 'base',
+          signer_address: params.signer,
+          body: params.body,
+          signature: params.signature,
+          signed_at: new Date(params.signedAt),
+          created_at: new Date(params.signedAt),
+          last_edited_at: null,
+          message_hash: params.messageHash,
+        },
+      ],
+    }
+  }
+  return { rows: [] }
+}
 
 // ---------------------------------------------------------------------------
 // createComment full pipeline
@@ -245,8 +417,7 @@ describe('createComment', () => {
   test('rejects when signedAt is outside the ±5min window', async () => {
     const stale = new Date(Date.now() - 10 * 60 * 1000).toISOString()
     const body = 'gm'
-    const msg = buildCreateMessage('base-1', stale, body)
-    const sig = await signMessage(msg)
+    const sig = await signCreateTd({ postId: 'base-1', body, signedAt: stale })
     const deps = buildDeps(buildExecutor(okWhitelist, okPost))
 
     const out = await createComment(
@@ -259,8 +430,9 @@ describe('createComment', () => {
   test('rejects when body is empty', async () => {
     const now = new Date().toISOString()
     const body = ''
-    const msg = buildCreateMessage('base-1', now, body)
-    const sig = await signMessage(msg)
+    // Sign anyway — body validation runs before signature recovery, but
+    // we still need a structurally-valid signature to pass shape checks.
+    const sig = await signCreateTd({ postId: 'base-1', body, signedAt: now })
     const deps = buildDeps(buildExecutor(okWhitelist, okPost))
 
     const out = await createComment(
@@ -273,8 +445,7 @@ describe('createComment', () => {
   test('rejects when body exceeds 1000 chars', async () => {
     const now = new Date().toISOString()
     const body = 'a'.repeat(1001)
-    const msg = buildCreateMessage('base-1', now, body)
-    const sig = await signMessage(msg)
+    const sig = await signCreateTd({ postId: 'base-1', body, signedAt: now })
     const deps = buildDeps(buildExecutor(okWhitelist, okPost))
 
     const out = await createComment(
@@ -287,8 +458,7 @@ describe('createComment', () => {
   test('rejects when signer is not whitelisted', async () => {
     const now = new Date().toISOString()
     const body = 'gm'
-    const msg = buildCreateMessage('base-1', now, body)
-    const sig = await signMessage(msg)
+    const sig = await signCreateTd({ postId: 'base-1', body, signedAt: now })
     const deps = buildDeps(buildExecutor(noWhitelist, okPost))
 
     const out = await createComment(
@@ -301,9 +471,21 @@ describe('createComment', () => {
   test('rejects when post does not exist on chain', async () => {
     const now = new Date().toISOString()
     const body = 'gm'
-    const msg = buildCreateMessage('base-1', now, body)
-    const sig = await signMessage(msg)
+    const sig = await signCreateTd({ postId: 'base-1', body, signedAt: now })
     const deps = buildDeps(buildExecutor(okWhitelist, noPost))
+
+    const out = await createComment(
+      { postId: 'base-1', body, signer: TEST_ADDRESS, signature: sig, signedAt: now },
+      deps,
+    )
+    expect(out).toMatchObject({ code: 'PostNotFound' })
+  })
+
+  test('rejects when post has been purged (audit M-1)', async () => {
+    const now = new Date().toISOString()
+    const body = 'gm'
+    const sig = await signCreateTd({ postId: 'base-1', body, signedAt: now })
+    const deps = buildDeps(buildExecutor(okWhitelist, purgedPost))
 
     const out = await createComment(
       { postId: 'base-1', body, signer: TEST_ADDRESS, signature: sig, signedAt: now },
@@ -315,33 +497,17 @@ describe('createComment', () => {
   test('rate-limits a second create from the same signer within 5s', async () => {
     const now = new Date().toISOString()
     const body = 'gm'
-    const msg = buildCreateMessage('base-1', now, body)
-    const sig = await signMessage(msg)
+    const sig = await signCreateTd({ postId: 'base-1', body, signedAt: now })
     const deps = buildDeps(buildExecutor(okWhitelist, okPost))
 
-    // Stub pool responses: dedupe lookup → empty; INSERT → returns one row.
-    poolHandler = (text: string) => {
-      if (text.startsWith('SELECT body FROM comments')) return { rows: [] }
-      if (text.startsWith('INSERT INTO comments')) {
-        return {
-          rows: [
-            {
-              id: '1',
-              post_id: 'base-1',
-              chain_slug: 'base',
-              signer_address: TEST_ADDRESS,
-              body,
-              signature: sig,
-              signed_at: new Date(now),
-              created_at: new Date(now),
-              last_edited_at: null,
-              message_hash: keccak256(toHex(msg)),
-            },
-          ],
-        }
-      }
-      return { rows: [] }
-    }
+    poolHandler = buildInsertPoolHandler({
+      signer: TEST_ADDRESS,
+      postId: 'base-1',
+      body,
+      signature: sig,
+      signedAt: now,
+      messageHash: '0x' + 'aa'.repeat(32),
+    })
 
     const first = await createComment(
       { postId: 'base-1', body, signer: TEST_ADDRESS, signature: sig, signedAt: now },
@@ -352,8 +518,7 @@ describe('createComment', () => {
     // Second create immediately after — same signer.
     const now2 = new Date().toISOString()
     const body2 = 'gm again'
-    const msg2 = buildCreateMessage('base-1', now2, body2)
-    const sig2 = await signMessage(msg2)
+    const sig2 = await signCreateTd({ postId: 'base-1', body: body2, signedAt: now2 })
 
     const second = await createComment(
       { postId: 'base-1', body: body2, signer: TEST_ADDRESS, signature: sig2, signedAt: now2 },
@@ -361,20 +526,94 @@ describe('createComment', () => {
     )
     expect(second).toMatchObject({ code: 'RateLimited' })
   })
+
+  // -------------------------------------------------------------------
+  // Audit M-5 happy paths
+  // -------------------------------------------------------------------
+
+  test('returns DuplicateSubmission when the unique constraint fires (audit M-5/1)', async () => {
+    const now = new Date().toISOString()
+    const body = 'gm'
+    const sig = await signCreateTd({ postId: 'base-1', body, signedAt: now })
+    const deps = buildDeps(buildExecutor(okWhitelist, okPost))
+
+    poolHandler = (text: string) => {
+      if (text.startsWith('INSERT INTO comments')) {
+        const err = new Error('duplicate key value violates unique constraint "comments_dedupe_idx"') as Error & { code: string }
+        err.code = '23505'
+        throw err
+      }
+      return { rows: [] }
+    }
+
+    const out = await createComment(
+      { postId: 'base-1', body, signer: TEST_ADDRESS, signature: sig, signedAt: now },
+      deps,
+    )
+    expect(out).toMatchObject({ code: 'DuplicateSubmission' })
+  })
+
+  test('a second create with a different signedAt (>5s later) succeeds (audit M-5/2)', async () => {
+    // First insert — passes through the rate limiter and lands.
+    const t1 = new Date().toISOString()
+    const sig1 = await signCreateTd({ postId: 'base-1', body: 'gm', signedAt: t1 })
+    const deps = buildDeps(buildExecutor(okWhitelist, okPost))
+
+    let inserted = 0
+    poolHandler = (text: string, _values: unknown[]) => {
+      if (text.startsWith('INSERT INTO comments')) {
+        inserted += 1
+        const id = inserted
+        return {
+          rows: [
+            {
+              id: String(id),
+              post_id: 'base-1',
+              chain_slug: 'base',
+              signer_address: TEST_ADDRESS,
+              body: id === 1 ? 'gm' : 'gm',
+              signature: id === 1 ? sig1 : '0x' + 'b'.repeat(130),
+              signed_at: new Date(),
+              created_at: new Date(),
+              last_edited_at: null,
+              message_hash: '0x' + (id === 1 ? 'aa' : 'bb').repeat(32),
+            },
+          ],
+        }
+      }
+      return { rows: [] }
+    }
+
+    const first = await createComment(
+      { postId: 'base-1', body: 'gm', signer: TEST_ADDRESS, signature: sig1, signedAt: t1 },
+      deps,
+    )
+    expect(first).toMatchObject({ __typename: 'SubmitCommentSuccess' })
+
+    // Second create — same body, but a different signedAt > 5s later
+    // and we manually clear the rate-limit because the test isn't here
+    // to re-exercise that path. (resetRateLimit() only runs in afterEach.)
+    resetRateLimit()
+    const t2 = new Date(Date.now() + 6_000).toISOString()
+    const sig2 = await signCreateTd({ postId: 'base-1', body: 'gm', signedAt: t2 })
+
+    const second = await createComment(
+      { postId: 'base-1', body: 'gm', signer: TEST_ADDRESS, signature: sig2, signedAt: t2 },
+      deps,
+    )
+    expect(second).toMatchObject({ __typename: 'SubmitCommentSuccess' })
+  })
 })
 
 // ---------------------------------------------------------------------------
-// editComment ownership
+// editComment ownership + happy path
 // ---------------------------------------------------------------------------
 
 describe('editComment', () => {
   test('rejects edits from a different owner', async () => {
-    // The existing comment was authored by some-other-address. We sign
-    // with TEST_ADDRESS — must be rejected as NotCommentOwner.
     const now = new Date().toISOString()
     const newBody = 'edited'
-    const msg = buildEditMessage('1', 'base-1', now, newBody)
-    const sig = await signMessage(msg)
+    const sig = await signEditTd({ commentId: '1', postId: 'base-1', newBody, signedAt: now })
     const deps = buildDeps(buildExecutor(okWhitelist, okPost))
 
     const otherOwner = '0x' + '11'.repeat(20)
@@ -417,8 +656,7 @@ describe('editComment', () => {
   test('returns CommentNotFound for missing rows', async () => {
     const now = new Date().toISOString()
     const newBody = 'edited'
-    const msg = buildEditMessage('999', 'base-1', now, newBody)
-    const sig = await signMessage(msg)
+    const sig = await signEditTd({ commentId: '999', postId: 'base-1', newBody, signedAt: now })
     const deps = buildDeps(buildExecutor(okWhitelist, okPost))
 
     poolHandler = () => ({ rows: [] })
@@ -436,17 +674,102 @@ describe('editComment', () => {
     )
     expect(out).toMatchObject({ code: 'CommentNotFound' })
   })
+
+  test('returns CommentNotFound for malformed commentId (audit L-3)', async () => {
+    const now = new Date().toISOString()
+    const sig = await signEditTd({ commentId: '1', postId: 'base-1', newBody: 'edited', signedAt: now })
+    const deps = buildDeps(buildExecutor(okWhitelist, okPost))
+
+    const out = await editComment(
+      {
+        commentId: 'not-a-number',
+        postId: 'base-1',
+        newBody: 'edited',
+        signer: TEST_ADDRESS,
+        signature: sig,
+        signedAt: now,
+      },
+      deps,
+    )
+    expect(out).toMatchObject({ code: 'CommentNotFound' })
+  })
+
+  test('successful edit returns updated row with last_edited_at set (audit M-5/3)', async () => {
+    const now = new Date().toISOString()
+    const newBody = 'gm edited'
+    const sig = await signEditTd({ commentId: '1', postId: 'base-1', newBody, signedAt: now })
+    const deps = buildDeps(buildExecutor(okWhitelist, okPost))
+
+    const editedAt = new Date()
+    poolHandler = (text: string) => {
+      // SELECT existing row.
+      if (text.startsWith('SELECT id::text, post_id, chain_slug, signer_address, body, signature,\n            signed_at, created_at, last_edited_at, message_hash\n       FROM comments\n       WHERE id = $1')) {
+        return {
+          rows: [
+            {
+              id: '1',
+              post_id: 'base-1',
+              chain_slug: 'base',
+              signer_address: TEST_ADDRESS,
+              body: 'gm',
+              signature: '0x' + 'a'.repeat(130),
+              signed_at: new Date(),
+              created_at: new Date(),
+              last_edited_at: null,
+              message_hash: '0x' + 'b'.repeat(64),
+            },
+          ],
+        }
+      }
+      // UPDATE returning new row.
+      if (text.startsWith('UPDATE comments')) {
+        return {
+          rows: [
+            {
+              id: '1',
+              post_id: 'base-1',
+              chain_slug: 'base',
+              signer_address: TEST_ADDRESS,
+              body: newBody,
+              signature: sig,
+              signed_at: new Date(now),
+              created_at: new Date(),
+              last_edited_at: editedAt,
+              message_hash: '0x' + 'c'.repeat(64),
+            },
+          ],
+        }
+      }
+      return { rows: [] }
+    }
+
+    const out = await editComment(
+      {
+        commentId: '1',
+        postId: 'base-1',
+        newBody,
+        signer: TEST_ADDRESS,
+        signature: sig,
+        signedAt: now,
+      },
+      deps,
+    )
+    expect(out).toMatchObject({ __typename: 'SubmitCommentSuccess' })
+    if (out.__typename === 'SubmitCommentSuccess') {
+      expect(out.comment.body).toBe(newBody)
+      expect(out.comment.lastEditedAt).toBe(editedAt.toISOString())
+    }
+  })
 })
 
 // ---------------------------------------------------------------------------
-// deleteComment ownership
+// deleteComment ownership + happy path
 // ---------------------------------------------------------------------------
 
 describe('deleteComment', () => {
   test('rejects deletes from a different owner', async () => {
     const now = new Date().toISOString()
-    const msg = buildDeleteMessage('1', 'base-1', now)
-    const sig = await signMessage(msg)
+    const sig = await signDeleteTd({ commentId: '1', postId: 'base-1', signedAt: now })
     const deps = buildDeps(buildExecutor(okWhitelist, okPost))
 
     const otherOwner = '0x' + '22'.repeat(20)
@@ -483,5 +806,69 @@ describe('deleteComment', () => {
       deps,
     )
     expect(out).toMatchObject({ code: 'NotCommentOwner' })
+  })
+
+  test('returns CommentNotFound for malformed commentId (audit L-3)', async () => {
+    const now = new Date().toISOString()
+    const sig = await signDeleteTd({ commentId: '1', postId: 'base-1', signedAt: now })
+    const deps = buildDeps(buildExecutor(okWhitelist, okPost))
+
+    const out = await deleteComment(
+      {
+        commentId: 'not-a-number',
+        postId: 'base-1',
+        signer: TEST_ADDRESS,
+        signature: sig,
+        signedAt: now,
+      },
+      deps,
+    )
+    expect(out).toMatchObject({ code: 'CommentNotFound' })
+  })
+
+  test('successful delete removes the row and returns the id (audit M-5/4)', async () => {
+    const now = new Date().toISOString()
+    const sig = await signDeleteTd({ commentId: '1', postId: 'base-1', signedAt: now })
+    const deps = buildDeps(buildExecutor(okWhitelist, okPost))
+
+    let deleteCalled = false
+    poolHandler = (text: string) => {
+      if (text.includes('FROM comments\n       WHERE id = $1')) {
+        return {
+          rows: [
+            {
+              id: '1',
+              post_id: 'base-1',
+              chain_slug: 'base',
+              signer_address: TEST_ADDRESS,
+              body: 'gm',
+              signature: '0x' + 'a'.repeat(130),
+              signed_at: new Date(),
+              created_at: new Date(),
+              last_edited_at: null,
+              message_hash: '0x' + 'b'.repeat(64),
+            },
+          ],
+        }
+      }
+      if (text.startsWith('DELETE FROM comments')) {
+        deleteCalled = true
+        return { rows: [], rowCount: 1 }
+      }
+      return { rows: [] }
+    }
+
+    const out = await deleteComment(
+      {
+        commentId: '1',
+        postId: 'base-1',
+        signer: TEST_ADDRESS,
+        signature: sig,
+        signedAt: now,
+      },
+      deps,
+    )
+    expect(out).toMatchObject({ __typename: 'DeleteCommentSuccess', commentId: '1' })
+    expect(deleteCalled).toBe(true)
   })
 })

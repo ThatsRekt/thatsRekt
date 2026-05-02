@@ -43,11 +43,17 @@ metaPool.on('error', (err) => {
  * - `comments_post_idx` — speeds up `WHERE post_id = $1 ORDER BY created_at DESC`.
  * - `comments_signer_idx` — speeds up rate-limit lookups + per-author
  *   audit queries.
+ * - `comments_dedupe_idx` — UNIQUE(signer_address, post_id, signed_at)
+ *   backstops the dedupe race in `createComment`. Two concurrent
+ *   submits with the same signature produce the same triple, so the
+ *   second insert hits a 23505 unique_violation and the resolver
+ *   translates it to `DuplicateSubmission`. Combined with the ±5min
+ *   `signed_at` window, this is the entire replay-protection story —
+ *   no read-then-insert window is needed (audit M-2).
  *
  * No `UNIQUE` on signature: edits re-sign the same comment, so the same
  * signature could in principle reappear (and equality comparisons on
- * 132-char hex strings are cheap regardless). Replay protection is
- * provided by the time-window check + the dedupe predicate at insert.
+ * 132-char hex strings are cheap regardless).
  */
 export async function ensureCommentsTable(): Promise<void> {
   await metaPool.query(`
@@ -69,5 +75,9 @@ export async function ensureCommentsTable(): Promise<void> {
   )
   await metaPool.query(
     `CREATE INDEX IF NOT EXISTS comments_signer_idx ON comments(signer_address);`,
+  )
+  await metaPool.query(
+    `CREATE UNIQUE INDEX IF NOT EXISTS comments_dedupe_idx
+       ON comments(signer_address, post_id, signed_at);`,
   )
 }
