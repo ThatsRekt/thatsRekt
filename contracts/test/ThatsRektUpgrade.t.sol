@@ -148,8 +148,9 @@ contract ThatsRektUpgradeTest is Test {
         address[] memory atks = new address[](1);
         atks[0] = attacker;
         address[] memory vics = new address[](0);
+        uint256 _expectedPid = reg.peekNextPostId();
         vm.prank(poster);
-        uint256 postId = reg.post("test title", atks, vics, "pre-upgrade", uint64(block.timestamp));
+        uint256 postId = reg.post(_expectedPid, "test title", atks, vics, "pre-upgrade", uint64(block.timestamp));
 
         vm.prank(voter);
         reg.confirm(postId, ThatsRekt.ConfirmDirection.Up);
@@ -287,8 +288,9 @@ contract ThatsRektUpgradeTest is Test {
         address[] memory atks = new address[](1);
         atks[0] = attackerAddr;
         address[] memory vics = new address[](0);
+        uint256 _expectedPid = reg.peekNextPostId();
         vm.prank(poster);
-        uint256 postId = reg.post("test title", atks, vics, "pre-v1.2-upgrade", uint64(block.timestamp));
+        uint256 postId = reg.post(_expectedPid, "test title", atks, vics, "pre-v1.2-upgrade", uint64(block.timestamp));
 
         vm.prank(voter);
         reg.confirm(postId, ThatsRekt.ConfirmDirection.Up);

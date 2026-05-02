@@ -85,8 +85,14 @@ contract ThatsRektTest is Test {
         address[] memory vic = new address[](vic0 == address(0) ? 0 : 1);
         if (atk0 != address(0)) atk[0] = atk0;
         if (vic0 != address(0)) vic[0] = vic0;
+        // Resolve peekNextPostId() BEFORE pranking — `vm.prank` only spans
+        // the next external call, and `peekNextPostId()` IS an external call.
+        // If we put the peek inside the post() args, the prank gets consumed
+        // by the view and the actual post() runs from the default test
+        // sender (which isn't whitelisted), reverting NotWhitelisted.
+        uint256 expected = reg.peekNextPostId();
         vm.prank(poster);
-        id = reg.post("test title", atk, vic, "", uint64(block.timestamp));
+        id = reg.post(expected, "test title", atk, vic, "", uint64(block.timestamp));
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -138,8 +144,9 @@ contract ThatsRektTest is Test {
         address[] memory atk = new address[](1); atk[0] = bob;
         address[] memory vic = new address[](0);
 
+        uint256 _expectedPid = reg.peekNextPostId();
         vm.prank(alice);
-        uint256 id = reg.post("test title", atk, vic, "exploit on bob's vault", uint64(block.timestamp));
+        uint256 id = reg.post(_expectedPid, "test title", atk, vic, "exploit on bob's vault", uint64(block.timestamp));
 
         assertEq(id, 1);
         assertEq(reg.postCount(), 1);
@@ -157,8 +164,9 @@ contract ThatsRektTest is Test {
         vm.expectEmit(true, true, false, true);
         emit ThatsRekt.PostCreated(1, alice, attacked, "test title", atk, vic, "rekt");
 
+        uint256 _expectedPid = reg.peekNextPostId();
         vm.prank(alice);
-        reg.post("test title", atk, vic, "rekt", attacked);
+        reg.post(_expectedPid, "test title", atk, vic, "rekt", attacked);
     }
 
     function test_post_storesFields() public {
@@ -171,8 +179,9 @@ contract ThatsRektTest is Test {
         // stored value is the poster-supplied one, not the block timestamp.
         uint64 attacked = uint64(123_456_700);
 
+        uint256 _expectedPid = reg.peekNextPostId();
         vm.prank(alice);
-        uint256 id = reg.post("test title", atk, vic, "", attacked);
+        uint256 id = reg.post(_expectedPid, "test title", atk, vic, "", attacked);
 
         (
             address poster,
@@ -201,9 +210,10 @@ contract ThatsRektTest is Test {
         address[] memory atk = new address[](1); atk[0] = bob;
         address[] memory vic = new address[](0);
 
+        uint256 _expectedPid = reg.peekNextPostId();
         vm.expectRevert(ThatsRekt.NotWhitelisted.selector);
         vm.prank(alice);
-        reg.post("test title", atk, vic, "no auth", uint64(block.timestamp));
+        reg.post(_expectedPid, "test title", atk, vic, "no auth", uint64(block.timestamp));
     }
 
     /// @dev v1.1 dropped the legacy `EmptyPost` check — title is now
@@ -216,8 +226,9 @@ contract ThatsRektTest is Test {
         address[] memory atk = new address[](0);
         address[] memory vic = new address[](0);
 
+        uint256 _expectedPid = reg.peekNextPostId();
         vm.prank(alice);
-        uint256 id = reg.post("Aave drainer detected", atk, vic, "", uint64(block.timestamp));
+        uint256 id = reg.post(_expectedPid, "Aave drainer detected", atk, vic, "", uint64(block.timestamp));
         assertEq(reg.postTitle(id), "Aave drainer detected");
     }
 
@@ -226,8 +237,9 @@ contract ThatsRektTest is Test {
         address[] memory atk = new address[](0);
         address[] memory vic = new address[](0);
 
+        uint256 _expectedPid = reg.peekNextPostId();
         vm.prank(alice);
-        uint256 id = reg.post("test title", atk, vic, "Twitter says protocol X is being drained", uint64(block.timestamp));
+        uint256 id = reg.post(_expectedPid, "test title", atk, vic, "Twitter says protocol X is being drained", uint64(block.timestamp));
         assertEq(id, 1);
     }
 
@@ -238,9 +250,10 @@ contract ThatsRektTest is Test {
         for (uint256 i; i < cap + 1; ++i) atk[i] = address(uint160(0x1000 + i));
         address[] memory vic = new address[](0);
 
+        uint256 _expectedPid = reg.peekNextPostId();
         vm.expectRevert(ThatsRekt.PostTooLarge.selector);
         vm.prank(alice);
-        reg.post("test title", atk, vic, "", uint64(block.timestamp));
+        reg.post(_expectedPid, "test title", atk, vic, "", uint64(block.timestamp));
     }
 
     function test_post_acceptsExactlyCap() public {
@@ -250,8 +263,9 @@ contract ThatsRektTest is Test {
         for (uint256 i; i < cap; ++i) atk[i] = address(uint160(0x1000 + i));
         address[] memory vic = new address[](0);
 
+        uint256 _expectedPid = reg.peekNextPostId();
         vm.prank(alice);
-        reg.post("test title", atk, vic, "", uint64(block.timestamp));
+        reg.post(_expectedPid, "test title", atk, vic, "", uint64(block.timestamp));
     }
 
     /// v1: cap bumped from 32 -> 100. Pin the new value explicitly so
@@ -267,9 +281,10 @@ contract ThatsRektTest is Test {
         for (uint256 i; i < 101; ++i) atk[i] = address(uint160(0x1000 + i));
         address[] memory vic = new address[](0);
 
+        uint256 _expectedPid = reg.peekNextPostId();
         vm.expectRevert(ThatsRekt.PostTooLarge.selector);
         vm.prank(alice);
-        reg.post("test title", atk, vic, "", uint64(block.timestamp));
+        reg.post(_expectedPid, "test title", atk, vic, "", uint64(block.timestamp));
     }
 
     function test_post_acceptsExactly100Attackers() public {
@@ -278,8 +293,9 @@ contract ThatsRektTest is Test {
         for (uint256 i; i < 100; ++i) atk[i] = address(uint160(0x1000 + i));
         address[] memory vic = new address[](0);
 
+        uint256 _expectedPid = reg.peekNextPostId();
         vm.prank(alice);
-        reg.post("test title", atk, vic, "", uint64(block.timestamp));
+        reg.post(_expectedPid, "test title", atk, vic, "", uint64(block.timestamp));
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -299,8 +315,9 @@ contract ThatsRektTest is Test {
         // distinct in the assertions below.
         uint64 attacked = uint64(1_699_999_000);
 
+        uint256 _expectedPid = reg.peekNextPostId();
         vm.prank(alice);
-        uint256 id = reg.post("test title", atk, vic, "", attacked);
+        uint256 id = reg.post(_expectedPid, "test title", atk, vic, "", attacked);
 
         (, , , , , , , uint64 lastUpdatedAt) = reg.getPost(id);
         assertEq(lastUpdatedAt, uint64(1_700_000_000));
@@ -315,9 +332,10 @@ contract ThatsRektTest is Test {
         address[] memory atk = new address[](1); atk[0] = bob;
         address[] memory vic = new address[](0);
 
+        uint256 _expectedPid = reg.peekNextPostId();
         vm.expectRevert(ThatsRekt.InvalidAttackedAt.selector);
         vm.prank(alice);
-        reg.post("test title", atk, vic, "", 0);
+        reg.post(_expectedPid, "test title", atk, vic, "", 0);
     }
 
     function test_post_revertsIfAttackedAtInFuture() public {
@@ -328,9 +346,10 @@ contract ThatsRektTest is Test {
         // any value strictly greater than block.timestamp is a future claim
         uint64 future = uint64(block.timestamp + 1);
 
+        uint256 _expectedPid = reg.peekNextPostId();
         vm.expectRevert(ThatsRekt.InvalidAttackedAt.selector);
         vm.prank(alice);
-        reg.post("test title", atk, vic, "", future);
+        reg.post(_expectedPid, "test title", atk, vic, "", future);
     }
 
     function test_post_acceptsAttackedAtEqualToBlockTimestamp() public {
@@ -338,8 +357,9 @@ contract ThatsRektTest is Test {
         address[] memory atk = new address[](1); atk[0] = bob;
         address[] memory vic = new address[](0);
 
+        uint256 _expectedPid = reg.peekNextPostId();
         vm.prank(alice);
-        uint256 id = reg.post("test title", atk, vic, "", uint64(block.timestamp));
+        uint256 id = reg.post(_expectedPid, "test title", atk, vic, "", uint64(block.timestamp));
         assertEq(id, 1);
     }
 
@@ -350,8 +370,9 @@ contract ThatsRektTest is Test {
         address[] memory vic = new address[](0);
 
         vm.warp(1_000_000);
+        uint256 _expectedPid = reg.peekNextPostId();
         vm.prank(alice);
-        uint256 id = reg.post("test title", atk, vic, "", 1);
+        uint256 id = reg.post(_expectedPid, "test title", atk, vic, "", 1);
         assertEq(id, 1);
 
         (, uint64 attackedAt, , , , , , ) = reg.getPost(id);
@@ -366,8 +387,9 @@ contract ThatsRektTest is Test {
         vm.warp(2_000_000);
         uint64 attacked = uint64(1_999_500);
 
+        uint256 _expectedPid = reg.peekNextPostId();
         vm.prank(alice);
-        uint256 id = reg.post("test title", atk, vic, "", attacked);
+        uint256 id = reg.post(_expectedPid, "test title", atk, vic, "", attacked);
 
         (, uint64 stored, , , , , , ) = reg.getPost(id);
         assertEq(stored, attacked);
@@ -382,8 +404,9 @@ contract ThatsRektTest is Test {
         address[] memory atk = new address[](2); atk[0] = bob; atk[1] = carol;
         address[] memory vic = new address[](0);
 
+        uint256 _expectedPid = reg.peekNextPostId();
         vm.prank(alice);
-        reg.post("test title", atk, vic, "", uint64(block.timestamp));
+        reg.post(_expectedPid, "test title", atk, vic, "", uint64(block.timestamp));
 
         assertEq(reg.attackerAppearances(bob), 1);
         assertEq(reg.attackerAppearances(carol), 1);
@@ -395,8 +418,9 @@ contract ThatsRektTest is Test {
         address[] memory atk = new address[](2); atk[0] = bob; atk[1] = bob;
         address[] memory vic = new address[](0);
 
+        uint256 _expectedPid = reg.peekNextPostId();
         vm.prank(alice);
-        reg.post("test title", atk, vic, "", uint64(block.timestamp));
+        reg.post(_expectedPid, "test title", atk, vic, "", uint64(block.timestamp));
 
         assertEq(reg.attackerAppearances(bob), 2);
     }
@@ -406,8 +430,9 @@ contract ThatsRektTest is Test {
         address[] memory atk = new address[](0);
         address[] memory vic = new address[](1); vic[0] = bob;
 
+        uint256 _expectedPid = reg.peekNextPostId();
         vm.prank(alice);
-        reg.post("test title", atk, vic, "", uint64(block.timestamp));
+        reg.post(_expectedPid, "test title", atk, vic, "", uint64(block.timestamp));
 
         assertTrue(reg.isVictim(bob));
     }
@@ -418,8 +443,8 @@ contract ThatsRektTest is Test {
         address[] memory vic = new address[](1); vic[0] = bob;
 
         vm.startPrank(alice);
-        reg.post("test title", atk, vic, "", uint64(block.timestamp));
-        reg.post("test title", atk, vic, "", uint64(block.timestamp));
+        reg.post(reg.peekNextPostId(), "test title", atk, vic, "", uint64(block.timestamp));
+        reg.post(reg.peekNextPostId(), "test title", atk, vic, "", uint64(block.timestamp));
         vm.stopPrank();
 
         assertTrue(reg.isVictim(bob));
@@ -2144,8 +2169,9 @@ contract ThatsRektTest is Test {
         address[] memory atk = new address[](99);
         for (uint256 i; i < 99; ++i) atk[i] = address(uint160(0xD000 + i));
         address[] memory vic = new address[](0);
+        uint256 _expectedPid = reg.peekNextPostId();
         vm.prank(alice);
-        uint256 id = reg.post("test title", atk, vic, "", uint64(block.timestamp));
+        uint256 id = reg.post(_expectedPid, "test title", atk, vic, "", uint64(block.timestamp));
 
         // add 2 more -> would push to 101 attackers -> reverts
         address[] memory adds = new address[](2);
@@ -2167,8 +2193,9 @@ contract ThatsRektTest is Test {
         address[] memory vic = new address[](50);
         for (uint256 i; i < 50; ++i) vic[i] = address(uint160(0xD300 + i));
 
+        uint256 _expectedPid = reg.peekNextPostId();
         vm.prank(alice);
-        uint256 id = reg.post("test title", atk, vic, "", uint64(block.timestamp));
+        uint256 id = reg.post(_expectedPid, "test title", atk, vic, "", uint64(block.timestamp));
 
         address[] memory adds = new address[](1);
         adds[0] = address(uint160(0xD3FF));
@@ -2300,8 +2327,9 @@ contract ThatsRektTest is Test {
         address[] memory atk = new address[](0);
         address[] memory vic = new address[](99);
         for (uint256 i; i < 99; ++i) vic[i] = address(uint160(0xD500 + i));
+        uint256 _expectedPid = reg.peekNextPostId();
         vm.prank(alice);
-        uint256 id = reg.post("test title", atk, vic, "", uint64(block.timestamp));
+        uint256 id = reg.post(_expectedPid, "test title", atk, vic, "", uint64(block.timestamp));
 
         address[] memory adds = new address[](2);
         adds[0] = address(uint160(0xD5FF));
@@ -2388,8 +2416,9 @@ contract ThatsRektTest is Test {
         address[] memory atk = new address[](0);
         address[] memory vic = new address[](0);
 
+        uint256 _expectedPid = reg.peekNextPostId();
         vm.prank(alice);
-        uint256 id = reg.post("Aave drainer detected", atk, vic, "details inline", uint64(block.timestamp));
+        uint256 id = reg.post(_expectedPid, "Aave drainer detected", atk, vic, "details inline", uint64(block.timestamp));
         assertEq(reg.postTitle(id), "Aave drainer detected");
     }
 
@@ -2398,9 +2427,10 @@ contract ThatsRektTest is Test {
         address[] memory atk = new address[](1); atk[0] = bob;
         address[] memory vic = new address[](0);
 
+        uint256 _expectedPid = reg.peekNextPostId();
         vm.expectRevert(ThatsRekt.TitleEmpty.selector);
         vm.prank(alice);
-        reg.post("", atk, vic, "n", uint64(block.timestamp));
+        reg.post(_expectedPid, "", atk, vic, "n", uint64(block.timestamp));
     }
 
     function test_post_revertsIfTitleAtCapPlusOne() public {
@@ -2413,9 +2443,10 @@ contract ThatsRektTest is Test {
         bytes memory tooLong = new bytes(cap + 1);
         for (uint256 i; i < cap + 1; ++i) tooLong[i] = "a";
 
+        uint256 _expectedPid = reg.peekNextPostId();
         vm.expectRevert(ThatsRekt.TitleTooLong.selector);
         vm.prank(alice);
-        reg.post(string(tooLong), atk, vic, "n", uint64(block.timestamp));
+        reg.post(_expectedPid, string(tooLong), atk, vic, "n", uint64(block.timestamp));
     }
 
     function test_post_acceptsTitleAtExactlyCap() public {
@@ -2427,8 +2458,9 @@ contract ThatsRektTest is Test {
         bytes memory atCap = new bytes(cap);
         for (uint256 i; i < cap; ++i) atCap[i] = "a";
 
+        uint256 _expectedPid = reg.peekNextPostId();
         vm.prank(alice);
-        uint256 id = reg.post(string(atCap), atk, vic, "", uint64(block.timestamp));
+        uint256 id = reg.post(_expectedPid, string(atCap), atk, vic, "", uint64(block.timestamp));
         assertEq(bytes(reg.postTitle(id)).length, cap);
     }
 
@@ -2542,8 +2574,9 @@ contract ThatsRektTest is Test {
         // Alice posts about bob.
         address[] memory atks = new address[](1); atks[0] = bob;
         address[] memory vics = new address[](0);
+        uint256 _expectedPid = fresh.peekNextPostId();
         vm.prank(alice);
-        uint256 id = fresh.post("hack", atks, vics, "", uint64(block.timestamp));
+        uint256 id = fresh.post(_expectedPid, "hack", atks, vics, "", uint64(block.timestamp));
         // Carol upConfirms so attackerScore[bob] = +1.
         vm.prank(governance); fresh.addWhitelisted(carol);
         vm.prank(carol); fresh.confirm(id, ThatsRekt.ConfirmDirection.Up);
@@ -2582,8 +2615,9 @@ contract ThatsRektTest is Test {
         vm.prank(governance); fresh.addWhitelisted(alice);
         address[] memory atks = new address[](1); atks[0] = bob;
         address[] memory vics = new address[](0);
+        uint256 _expectedPid = fresh.peekNextPostId();
         vm.prank(alice);
-        uint256 id = fresh.post("hack", atks, vics, "", uint64(block.timestamp));
+        uint256 id = fresh.post(_expectedPid, "hack", atks, vics, "", uint64(block.timestamp));
 
         // Alice retracts — aggregates reverse here.
         vm.prank(alice);
@@ -3198,7 +3232,9 @@ contract ThatsRektTest is Test {
     function _postAs(ThatsRekt c, address poster, address atk) internal returns (uint256 id) {
         address[] memory atks = new address[](1); atks[0] = atk;
         address[] memory vics = new address[](0);
+        // Resolve peek BEFORE pranking — see _post() for the rationale.
+        uint256 expected = c.peekNextPostId();
         vm.prank(poster);
-        id = c.post("hack", atks, vics, "", uint64(block.timestamp));
+        id = c.post(expected, "hack", atks, vics, "", uint64(block.timestamp));
     }
 }

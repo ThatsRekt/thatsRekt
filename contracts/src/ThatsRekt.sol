@@ -325,6 +325,11 @@ contract ThatsRekt is Initializable, Ownable2StepUpgradeable, UUPSUpgradeable {
     error ZeroAddress();
     error TitleEmpty();
     error TitleTooLong();
+    /// @notice Reverts when the caller's claimed `expectedPostId` doesn't match
+    ///         the next slot the contract is about to assign. Carries both
+    ///         values so a wallet's revert-decoder can show "you expected
+    ///         42, got 43".
+    error PostIdMismatch(uint256 expected, uint256 actual);
 
     /*//////////////////////////////////////////////////////////////
                           CONSTRUCTOR / INITIALIZER
@@ -659,7 +664,20 @@ contract ThatsRekt is Initializable, Ownable2StepUpgradeable, UUPSUpgradeable {
     ///                   block timestamp this still gives an attack-to-post
     ///                   latency useful for operator reputation tracking
     ///                   and integrator signals.
+    /// @notice Post a new alert with optimistic id commitment.
+    /// @param expectedPostId The caller's claimed next id. Must equal `postCount + 1`
+    ///                       or the call reverts. Lets posters commit to a stable
+    ///                       post URL ("thatsrekt.com/post/base/42") off-chain
+    ///                       before the tx mines: if the slot is taken, revert
+    ///                       cleanly so the off-chain reference can be retried
+    ///                       at the new slot rather than silently pointing to
+    ///                       someone else's content.
+    /// @dev   This is NOT content-front-run protection — a racer can still copy
+    ///        a guardian's content and target the same `expectedPostId`. What it
+    ///        guarantees is "you won't accidentally land at a different id than
+    ///        you committed to."
     function post(
+        uint256           expectedPostId,
         string   calldata title,
         address[] calldata attackers_,
         address[] calldata victims_,
@@ -682,6 +700,7 @@ contract ThatsRekt is Initializable, Ownable2StepUpgradeable, UUPSUpgradeable {
         // pure-headline alert, which is acceptable. Drop the legacy check.
 
         unchecked { id = ++postCount; }
+        if (id != expectedPostId) revert PostIdMismatch(expectedPostId, id);
 
         Post storage p = _posts[id];
         p.poster        = msg.sender;
@@ -707,6 +726,16 @@ contract ThatsRekt is Initializable, Ownable2StepUpgradeable, UUPSUpgradeable {
         _insertActiveTail(id);
 
         emit PostCreated(id, msg.sender, attackedAt, title, attackers_, victims_, note);
+    }
+
+    /// @notice Id the next successful `post()` will receive — i.e. `postCount + 1`.
+    /// @dev    Convenience view for clients building the `expectedPostId` arg.
+    ///         Equivalent to `postCount() + 1`. "Peek" prefix because the
+    ///         identifier `nextPostId` is already the doubly-linked-list
+    ///         next-pointer mapping; this view is about the slot that will
+    ///         be claimed next, not adjacency in the post list.
+    function peekNextPostId() external view returns (uint256) {
+        return postCount + 1;
     }
 
     function _insertActiveTail(uint256 id) internal {
