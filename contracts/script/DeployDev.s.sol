@@ -73,7 +73,7 @@ contract DeployDev is Script {
     //////////////////////////////////////////////////////////////*/
 
     /// @dev Versioned per impl deploy. Bump on every new impl version.
-    bytes32 public constant IMPL_SALT = keccak256("thatsRekt.impl.dev.v1.1.0");
+    bytes32 public constant IMPL_SALT = keccak256("thatsRekt.impl.dev.v1.2.0");
 
     /// @dev 7-day TimelockController (owner slot). Bump on bytecode/config change.
     bytes32 public constant UPGRADE_TIMELOCK_SALT = keccak256("thatsRekt.upgradeTimelock.dev.v2");
