@@ -83,9 +83,9 @@ export const CHAINS: readonly ChainEntry[] = Object.freeze([
     name: 'Base',
     prefix: 'Base_',
     endpoint: process.env.GRAPHQL_BASE_URL ?? 'http://graphql-base:4353/graphql',
-    // Base mainnet — legacy proxy without purgeAdmin. Mirrors
+    // Base mainnet — v1.1.0 fresh deploy 2026-05-02 (#106). Mirrors
     // frontend/src/lib/contracts.ts::REGISTRY_PROXIES[8453].
-    registryAddress: '0x390f7b37545CaD278dD3DADC92a20b9f45865936',
+    registryAddress: '0x585192Be5805Dc6D2F326369E6D0F8B7E11a7974',
   },
   {
     chainId: 84532,
@@ -95,9 +95,9 @@ export const CHAINS: readonly ChainEntry[] = Object.freeze([
     endpoint:
       process.env.GRAPHQL_BASE_SEPOLIA_URL ??
       'http://graphql-base-sepolia:4361/graphql',
-    // Base Sepolia — purge-capable proxy. Mirrors
+    // Base Sepolia — v1.1.0 dev deploy 2026-05-02. Mirrors
     // frontend/src/lib/contracts.ts::REGISTRY_PROXIES[84532].
-    registryAddress: '0xcd289C9e99D1B8EA6dc0B3fFDED7FEBe26Da0E23',
+    registryAddress: '0x5278dD25e8551Cc98f2dC89791f5C89a9C83F695',
   },
   // Optimism: temporarily removed while the registry redeploys with the
   // new purge-admin governance role. Re-add when the canonical whitelist
