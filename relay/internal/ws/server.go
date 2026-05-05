@@ -11,7 +11,7 @@ import (
 
 	"github.com/gorilla/websocket"
 
-	"github.com/JeronimoHoulin/thatsRekt/relay/internal/dedup"
+	"github.com/ThatsRekt/thatsRekt/relay/internal/dedup"
 )
 
 // Submitter is the abstraction the ws layer needs from a chain submitter.

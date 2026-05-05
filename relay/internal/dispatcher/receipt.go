@@ -9,7 +9,7 @@ import (
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/core/types"
 
-	"github.com/JeronimoHoulin/thatsRekt/relay/internal/chain"
+	"github.com/ThatsRekt/thatsRekt/relay/internal/chain"
 )
 
 // waitMined waits for tx to be mined. Thin wrapper over bind.WaitMined so

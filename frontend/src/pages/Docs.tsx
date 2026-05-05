@@ -390,7 +390,7 @@ function Architecture() {
         webhook-driven submission path. Single-tenant — bring your
         own EOA + bearer token. See{' '}
         <a
-          href="https://github.com/JeronimoHoulin/thatsRekt/blob/master/relay/README.md"
+          href="https://github.com/ThatsRekt/thatsRekt/blob/master/relay/README.md"
           target="_blank"
           rel="noopener noreferrer"
           className="rekt-link"
@@ -697,12 +697,12 @@ function Reference() {
         <p className="text-sm pt-2">
           <strong className="font-black">Source:</strong>{' '}
           <a
-            href="https://github.com/JeronimoHoulin/thatsRekt"
+            href="https://github.com/ThatsRekt/thatsRekt"
             target="_blank"
             rel="noopener noreferrer"
             className="rekt-link"
           >
-            github.com/JeronimoHoulin/thatsRekt ↗
+            github.com/ThatsRekt/thatsRekt ↗
           </a>
         </p>
       </SubSection>

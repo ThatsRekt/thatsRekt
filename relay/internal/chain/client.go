@@ -13,7 +13,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/ethclient"
 
-	"github.com/JeronimoHoulin/thatsRekt/relay/internal/thatsrekt"
+	"github.com/ThatsRekt/thatsRekt/relay/internal/thatsrekt"
 )
 
 // Client is the relay's per-chain handle: an ethclient + a typed binding

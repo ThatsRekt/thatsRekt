@@ -21,7 +21,7 @@ The registry is the canonical source. The web app and Telegram channel are conve
 - Public GraphQL endpoint: https://thatsrekt.com/graphql
 - Telegram alerts channel: https://t.me/thatsrekt_alerts
 - Project X / Twitter: https://x.com/ThatsRekt_
-- Source code: https://github.com/JeronimoHoulin/thatsRekt
+- Source code: https://github.com/ThatsRekt/thatsRekt
 
 ## On-chain registry contracts
 

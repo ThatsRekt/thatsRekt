@@ -1,4 +1,4 @@
-module github.com/JeronimoHoulin/thatsRekt/relay
+module github.com/ThatsRekt/thatsRekt/relay
 
 go 1.24.0
 

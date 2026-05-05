@@ -30,9 +30,9 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 
-	"github.com/JeronimoHoulin/thatsRekt/relay/internal/chain"
-	"github.com/JeronimoHoulin/thatsRekt/relay/internal/signer"
-	"github.com/JeronimoHoulin/thatsRekt/relay/internal/ws"
+	"github.com/ThatsRekt/thatsRekt/relay/internal/chain"
+	"github.com/ThatsRekt/thatsRekt/relay/internal/signer"
+	"github.com/ThatsRekt/thatsRekt/relay/internal/ws"
 )
 
 // Dispatcher submits post.create messages and returns the per-chain
