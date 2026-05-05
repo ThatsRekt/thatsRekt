@@ -1,4 +1,4 @@
-module github.com/JeronimoHoulin/thatsRekt/notifier
+module github.com/ThatsRekt/thatsRekt/notifier
 
 go 1.22
 

@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/JeronimoHoulin/thatsRekt/notifier/internal/graphql"
+	"github.com/ThatsRekt/thatsRekt/notifier/internal/graphql"
 )
 
 // FormatPostMessage builds the HTML body for a new-post Telegram message.

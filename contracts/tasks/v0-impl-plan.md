@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Replace the existing flat-set `ThatsRekt.sol` in `JeronimoHoulin/thatsRekt` with the v0 design (feed-of-posts + attacker karma + victim boolean + doubly-linked active list), under TDD with full Foundry test coverage, ready for cross-chain deterministic deploy.
+**Goal:** Replace the existing flat-set `ThatsRekt.sol` in `ThatsRekt/thatsRekt` with the v0 design (feed-of-posts + attacker karma + victim boolean + doubly-linked active list), under TDD with full Foundry test coverage, ready for cross-chain deterministic deploy.
 
 **Architecture:** Single immutable Solidity contract inheriting OpenZeppelin v5 `Ownable2Step`. Two-tier access: governance Safe (hardcoded constant, owner-only over whitelist) → whitelisted addresses (post + vote) → anyone (read). Aggregates updated incrementally. Notes in events only. Linked list of active posts for on-chain enumeration. Cross-chain identical address via the singleton CREATE2 factory at `0x4e59b44847b379578588920cA78FbF26c0B4956C`.
 
@@ -38,7 +38,7 @@
 
 ```bash
 cd /Users/bautista/Desktop/B
-git clone git@github.com:JeronimoHoulin/thatsRekt.git
+git clone git@github.com:ThatsRekt/thatsRekt.git
 ```
 
 - [ ] **Step 2: Verify clone**

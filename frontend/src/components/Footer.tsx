@@ -20,7 +20,7 @@ import { twitterUrl } from '../lib/format'
  * unicode glyphs.
  */
 
-const GITHUB_URL = 'https://github.com/JeronimoHoulin/thatsRekt'
+const GITHUB_URL = 'https://github.com/ThatsRekt/thatsRekt'
 const GITHUB_ISSUES_URL = `${GITHUB_URL}/issues`
 const APPLY_EMAIL = 'thatsrekt@protonmail.com'
 /** Project X (Twitter) account — distinct from any maintainer's

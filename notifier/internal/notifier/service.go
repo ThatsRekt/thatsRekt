@@ -23,9 +23,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/JeronimoHoulin/thatsRekt/notifier/internal/graphql"
-	"github.com/JeronimoHoulin/thatsRekt/notifier/internal/store"
-	"github.com/JeronimoHoulin/thatsRekt/notifier/internal/telegram"
+	"github.com/ThatsRekt/thatsRekt/notifier/internal/graphql"
+	"github.com/ThatsRekt/thatsRekt/notifier/internal/store"
+	"github.com/ThatsRekt/thatsRekt/notifier/internal/telegram"
 )
 
 type Service struct {

@@ -943,7 +943,7 @@ Replaced `post(title, attackers, victims, note, attackedAt)` with `post(expected
 
 Contract impl bumped prod `v1.0.0 → v1.1.0`, dev `v1.1.0 → v1.2.0`. Proxy address unchanged. Frontend + relay updated lockstep.
 
-Ref: spec at `tasks/122-expected-postid-spec.md` in `JeronimoHoulin/thatsRekt`.
+Ref: spec at `tasks/122-expected-postid-spec.md` in `ThatsRekt/thatsRekt`.
 ```
 
 - [ ] **Step 2: Commit the KB note**

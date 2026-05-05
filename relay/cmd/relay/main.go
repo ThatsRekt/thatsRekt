@@ -45,10 +45,10 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 
-	"github.com/JeronimoHoulin/thatsRekt/relay/internal/chain"
-	"github.com/JeronimoHoulin/thatsRekt/relay/internal/dispatcher"
-	"github.com/JeronimoHoulin/thatsRekt/relay/internal/signer"
-	"github.com/JeronimoHoulin/thatsRekt/relay/internal/ws"
+	"github.com/ThatsRekt/thatsRekt/relay/internal/chain"
+	"github.com/ThatsRekt/thatsRekt/relay/internal/dispatcher"
+	"github.com/ThatsRekt/thatsRekt/relay/internal/signer"
+	"github.com/ThatsRekt/thatsRekt/relay/internal/ws"
 )
 
 func main() {

@@ -22,11 +22,11 @@ import (
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 
-	"github.com/JeronimoHoulin/thatsRekt/notifier/internal/config"
-	"github.com/JeronimoHoulin/thatsRekt/notifier/internal/graphql"
-	"github.com/JeronimoHoulin/thatsRekt/notifier/internal/notifier"
-	"github.com/JeronimoHoulin/thatsRekt/notifier/internal/store"
-	"github.com/JeronimoHoulin/thatsRekt/notifier/internal/telegram"
+	"github.com/ThatsRekt/thatsRekt/notifier/internal/config"
+	"github.com/ThatsRekt/thatsRekt/notifier/internal/graphql"
+	"github.com/ThatsRekt/thatsRekt/notifier/internal/notifier"
+	"github.com/ThatsRekt/thatsRekt/notifier/internal/store"
+	"github.com/ThatsRekt/thatsRekt/notifier/internal/telegram"
 )
 
 func main() {
