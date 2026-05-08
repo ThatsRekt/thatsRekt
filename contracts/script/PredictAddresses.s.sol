@@ -35,11 +35,11 @@ contract PredictAddresses is Script {
         // ^ can't read `d.IMPL_SALT()` without a real instance; so we
         //   inline the salts here. They MUST match Deploy.s.sol
         //   exactly. Keep in sync.
-        bytes32 implSalt            = keccak256("thatsRekt.impl.v1.0.0");
-        bytes32 upgradeTimelockSalt = keccak256("thatsRekt.upgradeTimelock.v1");
-        bytes32 addTimelockSalt     = keccak256("thatsRekt.addTimelock.v1");
-        bytes32 purgeTimelockSalt   = keccak256("thatsRekt.purgeTimelock.v1");
-        bytes32 proxySalt           = keccak256("thatsRekt.proxy");
+        bytes32 implSalt            = keccak256("thatsRekt.impl.v1.2.0");
+        bytes32 upgradeTimelockSalt = keccak256("thatsRekt.upgradeTimelock.v3");
+        bytes32 addTimelockSalt     = keccak256("thatsRekt.addTimelock.v3");
+        bytes32 purgeTimelockSalt   = keccak256("thatsRekt.purgeTimelock.v3");
+        bytes32 proxySalt           = keccak256("thatsRekt.proxy.v3");
 
         address deployerAddr = vm.envAddress("DEPLOYER_ADDRESS");
         require(deployerAddr != address(0), "DEPLOYER_ADDRESS env var is zero");

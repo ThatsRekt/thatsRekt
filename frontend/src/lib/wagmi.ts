@@ -1,5 +1,5 @@
 import { http, createConfig, fallback } from 'wagmi'
-import { base, baseSepolia, mainnet, optimism } from 'wagmi/chains'
+import { arbitrum, base, baseSepolia, mainnet, optimism } from 'wagmi/chains'
 import { injected, coinbaseWallet, safe } from 'wagmi/connectors'
 
 /**
@@ -36,11 +36,10 @@ const optimismTransport = fallback([
 ])
 
 /**
- * Ethereum mainnet transport — *only* used for ENS reverse resolution.
+ * Ethereum mainnet transport — registry is deployed here (v1.2.0
+ * canonical proxy at 0xBfaEEE…b89A) AND used for ENS reverse resolution.
  * ENS primary names live on mainnet regardless of which chain the address
- * is active on, so even though our registry is on Base, ENS lookups for
- * any displayed address always hit Ethereum. wagmi's `useEnsName` picks
- * up this transport automatically when called with `chainId: mainnet.id`.
+ * is active on, so any displayed address's ENS lookup always hits Ethereum.
  */
 const mainnetTransport = fallback([
   http('https://lb.routeme.sh/rpc/1/3bd2e340-f97c-46b3-80ed-17975de5af89'),
@@ -48,14 +47,23 @@ const mainnetTransport = fallback([
 ])
 
 /**
+ * Arbitrum One transport — registry is deployed here at the same
+ * canonical cross-chain CREATE2 address as the other v1.2.0 chains.
+ */
+const arbitrumTransport = fallback([
+  http('https://lb.routeme.sh/rpc/42161/3bd2e340-f97c-46b3-80ed-17975de5af89'),
+  http('https://arb1.arbitrum.io/rpc'),
+])
+
+/**
  * wagmi v2 config.
  *
- * Chains:
- *   - `base`         — registry is deployed here; reads/writes for the contract.
- *   - `optimism`     — registry is deployed here at the same canonical
- *                      cross-chain CREATE2 address as Base mainnet.
- *   - `baseSepolia`  — testnet registry.
- *   - `mainnet`      — ENS reverse resolution only; we don't connect wallets here.
+ * Chains (v1.2.0 — registry deployed at canonical 0xBfaEEE…b89A on all 4 mainnets):
+ *   - `mainnet`      — registry deployed here; also used for ENS reverse resolution.
+ *   - `base`         — registry deployed here.
+ *   - `arbitrum`     — registry deployed here.
+ *   - `optimism`     — registry deployed here.
+ *   - `baseSepolia`  — testnet registry (separate dev-salt deploy).
  *
  * Connectors:
  *   - `injected()`     — covers MetaMask, Rabby, Brave Wallet, Frame, Trust browser extension, etc.
@@ -67,17 +75,18 @@ const mainnetTransport = fallback([
  * `walletConnect({ projectId })` into the connectors array and it just works.
  */
 export const wagmiConfig = createConfig({
-  chains: [base, optimism, baseSepolia, mainnet],
+  chains: [mainnet, base, arbitrum, optimism, baseSepolia],
   connectors: [
     injected({ shimDisconnect: true }),
     coinbaseWallet({ appName: 'thatsRekt', appLogoUrl: 'https://thatsrekt.com/favicon.svg' }),
     safe(),
   ],
   transports: {
+    [mainnet.id]: mainnetTransport,
     [base.id]: baseTransport,
+    [arbitrum.id]: arbitrumTransport,
     [optimism.id]: optimismTransport,
     [baseSepolia.id]: baseSepoliaTransport,
-    [mainnet.id]: mainnetTransport,
   },
   // SSR: false — this is a Vite SPA, no server-rendered hydration step.
   ssr: false,

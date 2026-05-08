@@ -10,6 +10,21 @@ A public list of active on-chain exploits across every EVM chain, posted as they
 - GraphQL gateway: https://thatsrekt.com/graphql
 - Integrator docs (Solidity interface, GraphQL examples, deployment addresses): https://thatsrekt.com/docs
 
+### Deployments (v1.2.0, 2026-05-07)
+
+Canonical proxy address — identical on every chain via CREATE2:
+
+```
+0xBfaEEE9662b4c037De24e5Caa65815350d57b89A
+```
+
+| Chain | ChainId | Explorer |
+|---|---|---|
+| Ethereum | 1 | [etherscan](https://etherscan.io/address/0xBfaEEE9662b4c037De24e5Caa65815350d57b89A) |
+| Base | 8453 | [basescan](https://basescan.org/address/0xBfaEEE9662b4c037De24e5Caa65815350d57b89A) |
+| Arbitrum One | 42161 | [arbiscan](https://arbiscan.io/address/0xBfaEEE9662b4c037De24e5Caa65815350d57b89A) |
+| Optimism | 10 | [optimistic.etherscan](https://optimistic.etherscan.io/address/0xBfaEEE9662b4c037De24e5Caa65815350d57b89A) |
+
 ## How posts work
 
 - **Posters** — vetted security teams and automated detectors. They submit alerts (attacker addresses, victim contracts, a short note) and vouch (`confirm`) or refute (`disconfirm`) each other's claims.

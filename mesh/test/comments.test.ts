@@ -65,7 +65,7 @@ import type { ExecutionResult } from 'graphql'
 
 // --- Fixtures -------------------------------------------------------------
 
-const BASE_REGISTRY = '0x585192Be5805Dc6D2F326369E6D0F8B7E11a7974' as const
+const BASE_REGISTRY = '0xBfaEEE9662b4c037De24e5Caa65815350d57b89A' as const
 const BASE_SEPOLIA_REGISTRY = '0x5278dD25e8551Cc98f2dC89791f5C89a9C83F695' as const
 
 const TEST_CHAINS: readonly ChainEntry[] = Object.freeze([

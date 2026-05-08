@@ -120,28 +120,28 @@ contract Deploy is Script {
     ///      version (e.g. `thatsRekt.impl.v1.1.0`) so the new impl can
     ///      coexist alongside the old one and the upgrade tx flips the
     ///      proxy from one to the other.
-    bytes32 public constant IMPL_SALT = keccak256("thatsRekt.impl.v1.1.0");
+    bytes32 public constant IMPL_SALT = keccak256("thatsRekt.impl.v1.2.0");
 
     /// @dev 7-day TimelockController. Holds the `owner` slot — controls
     ///      upgrades and the 7-day re-install path for whitelistAdmin.
     ///      Bump only if its bytecode/config changes (rare — delay
     ///      tweaks happen through this timelock itself, not via
     ///      redeploy).
-    bytes32 public constant UPGRADE_TIMELOCK_SALT = keccak256("thatsRekt.upgradeTimelock.v2");
+    bytes32 public constant UPGRADE_TIMELOCK_SALT = keccak256("thatsRekt.upgradeTimelock.v3");
 
     /// @dev 3-day TimelockController. Holds the `whitelistAdmin` slot —
     ///      adds posters and self-rotates. Bump only if its
     ///      bytecode/config changes.
-    bytes32 public constant ADD_TIMELOCK_SALT = keccak256("thatsRekt.addTimelock.v2");
+    bytes32 public constant ADD_TIMELOCK_SALT = keccak256("thatsRekt.addTimelock.v3");
 
     /// @dev 1-day TimelockController. Holds the `purgeAdmin` slot —
     ///      governance-driven content moderation (`purgePost`). Bump
     ///      only if its bytecode/config changes.
-    bytes32 public constant PURGE_TIMELOCK_SALT = keccak256("thatsRekt.purgeTimelock.v2");
+    bytes32 public constant PURGE_TIMELOCK_SALT = keccak256("thatsRekt.purgeTimelock.v3");
 
     /// @dev NOT versioned — the proxy is the canonical permanent address
     ///      that integrators bake in. Never change this salt.
-    bytes32 public constant PROXY_SALT = keccak256("thatsRekt.proxy.v2");
+    bytes32 public constant PROXY_SALT = keccak256("thatsRekt.proxy.v3");
 
     /*//////////////////////////////////////////////////////////////
                                 DELAYS

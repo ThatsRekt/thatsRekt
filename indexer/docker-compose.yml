@@ -336,7 +336,121 @@ services:
         condition: service_completed_successfully
 
   # ===========================================================================
-  # Mesh gateway — single public GraphQL surface stitching all 5 squid APIs.
+  # ethereum (chainId 1)
+  # ===========================================================================
+  migrate-ethereum:
+    <<: *indexer
+    command: ['npx', 'squid-typeorm-migration', 'apply']
+    environment:
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_NAME: thatsrekt_ethereum
+      DB_USER: ${DB_USER:-postgres}
+      DB_PASS: ${DB_PASS:-postgres}
+    restart: 'no'
+    depends_on:
+      db:
+        condition: service_healthy
+
+  processor-ethereum:
+    <<: *indexer
+    command: ['node', 'lib/main.js']
+    environment:
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_NAME: thatsrekt_ethereum
+      DB_USER: ${DB_USER:-postgres}
+      DB_PASS: ${DB_PASS:-postgres}
+      CHAIN: ethereum
+      RPC_ETHEREUM_HTTP: ${RPC_ETHEREUM_HTTP:-}
+      CONTRACT_ETHEREUM: ${CONTRACT_ETHEREUM:-}
+      START_BLOCK_ETHEREUM: ${START_BLOCK_ETHEREUM:-}
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate-ethereum:
+        condition: service_completed_successfully
+
+  graphql-ethereum:
+    <<: *indexer
+    command: ['npx', 'squid-graphql-server']
+    environment:
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_NAME: thatsrekt_ethereum
+      DB_USER: ${DB_USER:-postgres}
+      DB_PASS: ${DB_PASS:-postgres}
+      GQL_PORT: 4356
+      NODE_ENV: development
+    expose:
+      - '4356'
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate-ethereum:
+        condition: service_completed_successfully
+
+  # ===========================================================================
+  # arbitrum (chainId 42161)
+  # ===========================================================================
+  migrate-arbitrum:
+    <<: *indexer
+    command: ['npx', 'squid-typeorm-migration', 'apply']
+    environment:
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_NAME: thatsrekt_arbitrum
+      DB_USER: ${DB_USER:-postgres}
+      DB_PASS: ${DB_PASS:-postgres}
+    restart: 'no'
+    depends_on:
+      db:
+        condition: service_healthy
+
+  processor-arbitrum:
+    <<: *indexer
+    command: ['node', 'lib/main.js']
+    environment:
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_NAME: thatsrekt_arbitrum
+      DB_USER: ${DB_USER:-postgres}
+      DB_PASS: ${DB_PASS:-postgres}
+      CHAIN: arbitrum
+      RPC_ARBITRUM_HTTP: ${RPC_ARBITRUM_HTTP:-}
+      CONTRACT_ARBITRUM: ${CONTRACT_ARBITRUM:-}
+      START_BLOCK_ARBITRUM: ${START_BLOCK_ARBITRUM:-}
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate-arbitrum:
+        condition: service_completed_successfully
+
+  graphql-arbitrum:
+    <<: *indexer
+    command: ['npx', 'squid-graphql-server']
+    environment:
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_NAME: thatsrekt_arbitrum
+      DB_USER: ${DB_USER:-postgres}
+      DB_PASS: ${DB_PASS:-postgres}
+      GQL_PORT: 4357
+      NODE_ENV: development
+    expose:
+      - '4357'
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate-arbitrum:
+        condition: service_completed_successfully
+
+  # ===========================================================================
+  # Mesh gateway — single public GraphQL surface stitching all 7 squid APIs.
   # ===========================================================================
   mesh:
     build:
@@ -344,12 +458,14 @@ services:
       dockerfile: Dockerfile
     environment:
       PORT: ${MESH_PORT:-4350}
-      MESH_CHAINS: ${MESH_CHAINS:-anvil-eth,anvil-base,sepolia,base,optimism}
+      MESH_CHAINS: ${MESH_CHAINS:-anvil-eth,anvil-base,sepolia,ethereum,base,optimism,arbitrum}
       GRAPHQL_ANVIL_ETH_URL: http://graphql-anvil-eth:4351/graphql
       GRAPHQL_ANVIL_BASE_URL: http://graphql-anvil-base:4354/graphql
       GRAPHQL_SEPOLIA_URL: http://graphql-sepolia:4352/graphql
+      GRAPHQL_ETHEREUM_URL: http://graphql-ethereum:4356/graphql
       GRAPHQL_BASE_URL: http://graphql-base:4353/graphql
       GRAPHQL_OPTIMISM_URL: http://graphql-optimism:4355/graphql
+      GRAPHQL_ARBITRUM_URL: http://graphql-arbitrum:4357/graphql
     ports:
       - '127.0.0.1:${MESH_PORT:-4350}:${MESH_PORT:-4350}'
     restart: unless-stopped
@@ -360,9 +476,13 @@ services:
         condition: service_started
       graphql-sepolia:
         condition: service_started
+      graphql-ethereum:
+        condition: service_started
       graphql-base:
         condition: service_started
       graphql-optimism:
+        condition: service_started
+      graphql-arbitrum:
         condition: service_started
 
 volumes:

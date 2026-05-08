@@ -30,9 +30,11 @@ export type ChainSlug =
   | 'anvil-eth'
   | 'anvil-base'
   | 'sepolia'
+  | 'ethereum'
   | 'base'
   | 'base-sepolia'
   | 'optimism'
+  | 'arbitrum'
 
 export interface ChainConfig {
   /** EIP-155 chain id. */
@@ -125,6 +127,28 @@ export const CHAINS: Readonly<Record<ChainSlug, ChainConfig>> = Object.freeze({
     rpcEnvVar: 'RPC_OPTIMISM_HTTP',
     contractEnvVar: 'CONTRACT_OPTIMISM',
     startBlockEnvVar: 'START_BLOCK_OPTIMISM',
+    finalityConfirmation: 75,
+    rpcRateLimit: 10,
+  },
+  ethereum: {
+    chainId: 1,
+    slug: 'ethereum',
+    name: 'Ethereum',
+    gateway: 'https://v2.archive.subsquid.io/network/ethereum-mainnet',
+    rpcEnvVar: 'RPC_ETHEREUM_HTTP',
+    contractEnvVar: 'CONTRACT_ETHEREUM',
+    startBlockEnvVar: 'START_BLOCK_ETHEREUM',
+    finalityConfirmation: 75,
+    rpcRateLimit: 10,
+  },
+  arbitrum: {
+    chainId: 42161,
+    slug: 'arbitrum',
+    name: 'Arbitrum One',
+    gateway: 'https://v2.archive.subsquid.io/network/arbitrum-one',
+    rpcEnvVar: 'RPC_ARBITRUM_HTTP',
+    contractEnvVar: 'CONTRACT_ARBITRUM',
+    startBlockEnvVar: 'START_BLOCK_ARBITRUM',
     finalityConfirmation: 75,
     rpcRateLimit: 10,
   },

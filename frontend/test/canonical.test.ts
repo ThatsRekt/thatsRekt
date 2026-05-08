@@ -41,7 +41,7 @@ const EXPECTED_DOMAIN = {
   name: 'thatsRekt',
   version: '1',
   chainId: 8453,
-  verifyingContract: '0x585192Be5805Dc6D2F326369E6D0F8B7E11a7974',
+  verifyingContract: '0xBfaEEE9662b4c037De24e5Caa65815350d57b89A',
 } as const
 
 describe('canonical typed-data builders', () => {

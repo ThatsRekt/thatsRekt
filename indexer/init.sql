@@ -18,5 +18,7 @@
 CREATE DATABASE thatsrekt_anvil_eth;
 CREATE DATABASE thatsrekt_anvil_base;
 CREATE DATABASE thatsrekt_sepolia;
+CREATE DATABASE thatsrekt_ethereum;
 CREATE DATABASE thatsrekt_base;
 CREATE DATABASE thatsrekt_optimism;
+CREATE DATABASE thatsrekt_arbitrum;

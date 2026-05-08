@@ -15,9 +15,11 @@ export type ChainSlug =
   | 'anvil-eth'
   | 'anvil-base'
   | 'sepolia'
+  | 'ethereum'
   | 'base'
   | 'base-sepolia'
   | 'optimism'
+  | 'arbitrum'
 
 export interface ChainEntry {
   /** EIP-155 chain id. Distinct values across all entries (anvil forks
@@ -74,14 +76,23 @@ export const CHAINS: readonly ChainEntry[] = Object.freeze([
     endpoint: process.env.GRAPHQL_SEPOLIA_URL ?? 'http://graphql-sepolia:4352/graphql',
   },
   {
+    chainId: 1,
+    slug: 'ethereum',
+    name: 'Ethereum',
+    prefix: 'Ethereum_',
+    endpoint:
+      process.env.GRAPHQL_ETHEREUM_URL ?? 'http://graphql-ethereum:4356/graphql',
+    // Ethereum mainnet — v1.2.0 deploy 2026-05-07.
+    registryAddress: '0xBfaEEE9662b4c037De24e5Caa65815350d57b89A',
+  },
+  {
     chainId: 8453,
     slug: 'base',
     name: 'Base',
     prefix: 'Base_',
     endpoint: process.env.GRAPHQL_BASE_URL ?? 'http://graphql-base:4353/graphql',
-    // Base mainnet — v1.1.0 fresh deploy 2026-05-02 (#106). Mirrors
-    // frontend/src/lib/contracts.ts::REGISTRY_PROXIES[8453].
-    registryAddress: '0x585192Be5805Dc6D2F326369E6D0F8B7E11a7974',
+    // Base mainnet — v1.2.0 deploy 2026-05-07.
+    registryAddress: '0xBfaEEE9662b4c037De24e5Caa65815350d57b89A',
   },
   {
     chainId: 84532,
@@ -91,8 +102,8 @@ export const CHAINS: readonly ChainEntry[] = Object.freeze([
     endpoint:
       process.env.GRAPHQL_BASE_SEPOLIA_URL ??
       'http://graphql-base-sepolia:4361/graphql',
-    // Base Sepolia — v1.1.0 dev deploy 2026-05-02. Mirrors
-    // frontend/src/lib/contracts.ts::REGISTRY_PROXIES[84532].
+    // Base Sepolia — v1.1.0 dev deploy 2026-05-02. Separate dev-salt
+    // deploy; not part of the v1.2.0 cross-chain set.
     registryAddress: '0x5278dD25e8551Cc98f2dC89791f5C89a9C83F695',
   },
   {
@@ -102,10 +113,19 @@ export const CHAINS: readonly ChainEntry[] = Object.freeze([
     prefix: 'Optimism_',
     endpoint:
       process.env.GRAPHQL_OPTIMISM_URL ?? 'http://graphql-optimism:4355/graphql',
-    // Optimism mainnet — v1.1.0 deploy 2026-05-02. Same INITIAL_WHITELISTERS
-    // + role config as Base mainnet, so CREATE2 lands the proxy at the
-    // identical cross-chain canonical address.
-    registryAddress: '0x585192Be5805Dc6D2F326369E6D0F8B7E11a7974',
+    // Optimism mainnet — v1.2.0 deploy 2026-05-07. Same canonical address
+    // as Mainnet/Base/Arbitrum (CREATE2 cross-chain identical-address).
+    registryAddress: '0xBfaEEE9662b4c037De24e5Caa65815350d57b89A',
+  },
+  {
+    chainId: 42161,
+    slug: 'arbitrum',
+    name: 'Arbitrum One',
+    prefix: 'Arbitrum_',
+    endpoint:
+      process.env.GRAPHQL_ARBITRUM_URL ?? 'http://graphql-arbitrum:4357/graphql',
+    // Arbitrum One — v1.2.0 deploy 2026-05-07.
+    registryAddress: '0xBfaEEE9662b4c037De24e5Caa65815350d57b89A',
   },
 ])
 

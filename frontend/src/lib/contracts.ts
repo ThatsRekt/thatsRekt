@@ -2,32 +2,35 @@
  * On-chain registry contract handles.
  *
  * Per-chain proxy registry. CREATE2-deterministic per (governance, whitelist,
- * purgeAdmin, initialWhitelisters) tuple. v1.1.0 fresh deploy: caller-
- * supplied `expectedPostId` on `post()`, EIP-712 comments off-chain,
- * cross-canceller TLC role split, full purge surface. Old v1.0.0 proxies
- * are abandoned (no migration, no integrators relied on them).
+ * purgeAdmin, initialWhitelisters) tuple. v1.2.0 fresh deploy 2026-05-07
+ * across mainnet + base + arbitrum + optimism, all four landing at the same
+ * canonical proxy address. Cross-canceller geometry tightened from v1.1.0:
+ *   - GOVERNANCE_OWNER   = thatsRekt Safe multisig 0x59E4DB...0679
+ *                          (proposes upgrade + add TLCs)
+ *   - WHITELIST_OPERATOR = bauti.eth (cancels upgrade + add TLCs; instant
+ *                          whitelist kill-switch)
+ *   - PURGE_REMOVER_EOA  = bauti.eth (proposes purge TLC; instant purge
+ *                          kill-switch)
+ * 6 initial whitelisters: cold wallet, bauti, jerry, aux, jerry-bot, DAMM hot.
+ * The v1.1.0 Base + OP proxies (0x585192Be...) are abandoned with no
+ * migration; no integrators relied on them.
  *
  * Typed as a literal-keyed record (not `Record<number, ...>`) so wagmi's
  * `chainId` field — which narrows to the configured chain literal union —
  * accepts the keys we pass back via `chainsWithRegistry()` without a cast.
  */
 export const REGISTRY_PROXIES = {
-  // Base mainnet — v1.1.0 deploy 2026-05-02. Block 45476762.
-  // Cross-canceller geometry:
-  //   - GOVERNANCE_OWNER  = bauti.eth EOA (proposes upgrade + add TLCs)
-  //   - WHITELIST_OPERATOR = cold wallet (cancels upgrade + add TLCs;
-  //                          instant whitelist kill-switch)
-  //   - PURGE_REMOVER_EOA  = cold wallet (proposes purge TLC; instant
-  //                          purge kill-switch)
-  // 6 initial whitelisters: cold, bauti, jerry, aux, jerry-bot, DAMM hot.
-  8453: '0x585192Be5805Dc6D2F326369E6D0F8B7E11a7974',
+  // Ethereum mainnet — v1.2.0 deploy 2026-05-07. Block 25046570.
+  1: '0xBfaEEE9662b4c037De24e5Caa65815350d57b89A',
+  // Base mainnet — v1.2.0 deploy 2026-05-07. Block 45703903.
+  8453: '0xBfaEEE9662b4c037De24e5Caa65815350d57b89A',
   // Base Sepolia — v1.1.0 dev deploy 2026-05-02. Block 40987178.
-  // Same role geometry as Base mainnet.
+  // Separate dev-salt deploy; not part of the v1.2.0 cross-chain set.
   84532: '0x5278dD25e8551Cc98f2dC89791f5C89a9C83F695',
-  // Optimism mainnet — v1.1.0 deploy 2026-05-02. Same role geometry +
-  // identical INITIAL_WHITELISTERS as Base mainnet, so CREATE2 lands
-  // the proxy at the cross-chain canonical address.
-  10: '0x585192Be5805Dc6D2F326369E6D0F8B7E11a7974',
+  // Optimism mainnet — v1.2.0 deploy 2026-05-07. Block 151299308.
+  10: '0xBfaEEE9662b4c037De24e5Caa65815350d57b89A',
+  // Arbitrum One — v1.2.0 deploy 2026-05-07. Block 460487986.
+  42161: '0xBfaEEE9662b4c037De24e5Caa65815350d57b89A',
 } as const satisfies Record<number, `0x${string}`>
 
 /** Chain IDs that have a deployed registry. Literal-narrowed for wagmi. */
@@ -40,7 +43,7 @@ export const registryAddress = (
 
 /** Chain IDs with a deployed registry, in display order. */
 export const chainsWithRegistry = (): readonly SupportedChainId[] =>
-  [8453, 84532] as const
+  [1, 8453, 42161, 10, 84532] as const
 
 /**
  * @deprecated Use `registryAddress(chainId)` instead. This still resolves to

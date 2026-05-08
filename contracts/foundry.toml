@@ -21,9 +21,18 @@ depth = 32
 fail_on_revert = false
 
 [rpc_endpoints]
-mainnet  = "${MAINNET_RPC_URL}"
-sepolia  = "${SEPOLIA_RPC_URL}"
+mainnet      = "${MAINNET_RPC_URL}"
+sepolia      = "${SEPOLIA_RPC_URL}"
+base         = "${BASE_RPC_URL}"
+arbitrum_one = "${ARBITRUM_RPC_URL}"
+optimism     = "${OPTIMISM_RPC_URL}"
 
+# Etherscan v2 multichain API: a single ETHERSCAN_API_KEY works across all
+# supported chains. The `chain` field tells forge which chainId to send to
+# the v2 endpoint; the URL is the universal v2 host.
 [etherscan]
-mainnet = { key = "${ETHERSCAN_API_KEY}" }
-sepolia = { key = "${ETHERSCAN_API_KEY}", url = "https://api-sepolia.etherscan.io/api" }
+mainnet      = { key = "${ETHERSCAN_API_KEY}", chain = 1 }
+sepolia      = { key = "${ETHERSCAN_API_KEY}", url = "https://api-sepolia.etherscan.io/api" }
+base         = { key = "${ETHERSCAN_API_KEY}", chain = 8453 }
+arbitrum_one = { key = "${ETHERSCAN_API_KEY}", chain = 42161 }
+optimism     = { key = "${ETHERSCAN_API_KEY}", chain = 10 }

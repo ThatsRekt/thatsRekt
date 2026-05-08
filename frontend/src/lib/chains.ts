@@ -88,10 +88,6 @@ export const CHAINS: Readonly<Record<ChainSlug, FrontendChain>> = Object.freeze(
     isLocalFork: false,
     liveIndexed: true,
   },
-  // Optimism is temporarily archive-only while the registry redeploys with
-  // the new purge-admin governance role. Slug stays in the registry so old
-  // archive entries that reference `chain: 'optimism'` still resolve their
-  // badge + explorer link — the live indexer just doesn't query OP anymore.
   optimism: {
     chainId: 10,
     slug: 'optimism',
@@ -99,14 +95,8 @@ export const CHAINS: Readonly<Record<ChainSlug, FrontendChain>> = Object.freeze(
     badge: 'optimism',
     explorer: 'https://optimistic.etherscan.io',
     isLocalFork: false,
-    liveIndexed: false,
+    liveIndexed: true,
   },
-  // ---------------------------------------------------------------------------
-  // Archive-only chains (`liveIndexed: false`) — exist purely so the archive
-  // feed can render pre-platform attacks with correct badges and explorer
-  // links. The live indexer doesn't read from these chains, so picking one
-  // in the chain filter will show an empty live section. That's intended.
-  // ---------------------------------------------------------------------------
   ethereum: {
     chainId: 1,
     slug: 'ethereum',
@@ -114,7 +104,7 @@ export const CHAINS: Readonly<Record<ChainSlug, FrontendChain>> = Object.freeze(
     badge: 'ethereum',
     explorer: 'https://etherscan.io',
     isLocalFork: false,
-    liveIndexed: false,
+    liveIndexed: true,
   },
   arbitrum: {
     chainId: 42161,
@@ -123,8 +113,14 @@ export const CHAINS: Readonly<Record<ChainSlug, FrontendChain>> = Object.freeze(
     badge: 'arbitrum',
     explorer: 'https://arbiscan.io',
     isLocalFork: false,
-    liveIndexed: false,
+    liveIndexed: true,
   },
+  // ---------------------------------------------------------------------------
+  // Archive-only chains (`liveIndexed: false`) — exist purely so the archive
+  // feed can render pre-platform attacks with correct badges and explorer
+  // links. The live indexer doesn't read from these chains, so picking one
+  // in the chain filter will show an empty live section. That's intended.
+  // ---------------------------------------------------------------------------
   bsc: {
     chainId: 56,
     slug: 'bsc',

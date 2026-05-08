@@ -579,20 +579,30 @@ const PLANNED_DEPLOYMENTS: ReadonlyArray<{
   proxy: string | null
   status?: 'live' | 'redeploying'
 }> = [
-  { name: 'ethereum', chainId: 1, proxy: null },
+  {
+    name: 'ethereum',
+    chainId: 1,
+    proxy: '0xBfaEEE9662b4c037De24e5Caa65815350d57b89A',
+    status: 'live',
+  },
   {
     name: 'base',
     chainId: 8453,
-    proxy: '0x585192Be5805Dc6D2F326369E6D0F8B7E11a7974',
+    proxy: '0xBfaEEE9662b4c037De24e5Caa65815350d57b89A',
     status: 'live',
   },
   {
     name: 'optimism',
     chainId: 10,
-    proxy: '0x585192Be5805Dc6D2F326369E6D0F8B7E11a7974',
+    proxy: '0xBfaEEE9662b4c037De24e5Caa65815350d57b89A',
     status: 'live',
   },
-  { name: 'arbitrum', chainId: 42161, proxy: null },
+  {
+    name: 'arbitrum',
+    chainId: 42161,
+    proxy: '0xBfaEEE9662b4c037De24e5Caa65815350d57b89A',
+    status: 'live',
+  },
   { name: 'polygon', chainId: 137, proxy: null },
   { name: 'bsc', chainId: 56, proxy: null },
   { name: 'blast', chainId: 81457, proxy: null },

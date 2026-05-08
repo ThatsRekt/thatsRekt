@@ -8,12 +8,13 @@ Designed as a public good: no economic admin power. Cross-chain identical-addres
 
 ## Deployment Architecture
 
-Four contracts are deployed per chain, all via CREATE2 with constant salts so addresses are identical across chains:
+Five contracts are deployed per chain, all via CREATE2 with constant salts so addresses are identical across chains. **Canonical v1.2.0 proxy: `0xBfaEEE9662b4c037De24e5Caa65815350d57b89A`** — live on Ethereum, Base, Arbitrum One, Optimism since 2026-05-07.
 
-1. **Implementation** (`ThatsRekt.sol`) — the logic contract. Held privately behind the proxy; integrators never call it directly. Salt is versioned per impl release (`thatsRekt.impl.v1.0.0`), so a new implementation gets a new address while the proxy stays put.
-2. **Upgrade TimelockController** (OpenZeppelin) — owns the proxy and gates every upgrade and every owner-level role rotation. **7-day delay**; multisig as proposer + executor + canceller; `admin = address(0)` so role changes can only happen via a timelocked proposal. Salt: `thatsRekt.upgradeTimelock.v1`.
-3. **Add TimelockController** (OpenZeppelin) — holds the `whitelistAdmin` slot. **3-day delay**; same proposer/executor/admin config. Used to onboard new posters and to rotate the operator role itself. Salt: `thatsRekt.addTimelock.v1`.
-4. **ERC1967Proxy** — the canonical permanent address, what integrators bake in. Owned by the upgrade TimelockController; whitelistAdmin is the add TimelockController; whitelistRemover is the multisig directly. Salt is **not** versioned (`thatsRekt.proxy`) — this address must never change.
+1. **Implementation** (`ThatsRekt.sol`) — the logic contract. Held privately behind the proxy; integrators never call it directly. Salt is versioned per impl release. Current: `thatsRekt.impl.v1.2.0`. A new implementation gets a new address; the proxy `delegatecall`s into whichever impl is wired in via `upgradeToAndCall`.
+2. **Upgrade TimelockController** (OpenZeppelin) — owns the proxy and gates every upgrade and every owner-level role rotation. **7-day delay**. Multisig as proposer; bauti.eth as canceller (cross-canceller invariant — proposer ≠ canceller, so a compromise of one principal cannot push *and* hide an op). Executor list permissive (`[multisig, address(0)]`). Salt: `thatsRekt.upgradeTimelock.v3`.
+3. **Add TimelockController** (OpenZeppelin) — holds the `whitelistAdmin` slot. **3-day delay**; same role split as the upgrade TLC. Used to onboard new posters and to rotate the admin role itself. Salt: `thatsRekt.addTimelock.v3`.
+4. **Purge TimelockController** (OpenZeppelin) — holds the `purgeAdmin` slot. **1-day delay**. bauti.eth as proposer, multisig as canceller (cross-canceller, opposite role split from upgrade/add TLCs). Used for governance-driven content purges (`purgePost`). Salt: `thatsRekt.purgeTimelock.v3`.
+5. **ERC1967Proxy** — the canonical permanent address, what integrators bake in. Owned by the upgrade TimelockController; `whitelistAdmin` = add TLC; `whitelistRemover` = bauti.eth; `purgeAdmin` = purge TLC; `purgeRemover` = bauti.eth. Salt is versioned (current: `thatsRekt.proxy.v3`) — bumping it on a fresh deploy intentionally produces a NEW canonical address with no state carryover from prior versions.
 
 The multisig has no direct upgrade authority. Every upgrade follows the standard OZ TimelockController flow: propose with `schedule(...)`, wait 7 days, then `execute(...)` with the same args. Pseudocode:
 
