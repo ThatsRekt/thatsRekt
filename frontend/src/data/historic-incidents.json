@@ -476,27 +476,6 @@
     "amountUsd": 11600000
   },
   {
-    "id": "radiant-2024-oct",
-    "protocol": "Radiant Capital",
-    "chain": "arbitrum",
-    "attackedAt": "2024-10-16T17:09:18Z",
-    "title": "Radiant Capital — multisig blind-signing trick drains $50M cross-chain",
-    "attackers": [
-      "0x0629b1048298ae9deff0f4100a31967fb3f98962"
-    ],
-    "victims": [
-      "0x111ceeee040739fd91d29c34c33e6b3e112f2177",
-      "0xe4714d6bd9a6c0f6194c1aa8602850b0a1ce1416"
-    ],
-    "chainsAffected": [
-      "arbitrum",
-      "bsc"
-    ],
-    "note": "**3 of 11 multisig signers tricked** by malware that displayed legitimate Gnosis Safe data while routing a malicious upgrade to their hardware wallets.\n\n## attack vector\n\nDPRK-attributed (UNC4736 per Mandiant). Malware on signer machines presented the correct Safe transaction in the browser UI but signed a different transaction on the hardware wallet — a classic **blind-signing UI mismatch**. The malicious tx upgraded `LendingPoolAddressesProvider` to an attacker-controlled implementation.\n\n## impact\n\n- Arbitrum admin multisig ([`0x111CEEee...`](https://arbiscan.io/address/0x111ceeee040739fd91d29c34c33e6b3e112f2177)) executed the upgrade at 17:09:18 UTC\n- BSC admin multisig ([`0xE4714D6B...`](https://arbiscan.io/address/0xe4714d6bd9a6c0f6194c1aa8602850b0a1ce1416)) followed at 17:11 UTC\n- Funds drained: ~$50M across Arbitrum + BSC\n- Malicious contracts also deployed on ETH and Base but never executed\n\n## response\n\nRadiant paused. Attribution to DPRK by Mandiant. Drove industry-wide push for **clear-signing** support on hardware wallets and Safe Transaction Service.",
-    "sourceUrl": "https://rekt.news/radiant-capital-rekt2",
-    "amountUsd": 50000000
-  },
-  {
     "id": "penpie-2024-sep",
     "protocol": "Penpie",
     "chain": "ethereum",
@@ -543,6 +522,45 @@
     "note": "The **same Compound v2 fork bug** that hit Onyx for $2.1M in November 2023 — exploited again on a freshly listed market via Balancer flashloan.\n\n## attack vector\n\n**Empty-market exchange-rate bug** on low-decimal cTokens: a fresh cToken market with no supply lets the first depositor manipulate the exchange rate via integer-rounding. On the freshly listed `oVUSD` market, attacker flashloaned from Balancer, donated, minted 1 wei of cToken, and inflated the rate to borrow against phantom collateral.\n\n## impact\n\n- Funds drained: ~$3.8M\n  - 4.1M VUSD\n  - 7.35M XCN\n  - 5K DAI\n  - 0.23 WBTC\n  - 50K USDT\n- Attacker EOA labeled `OnyxDAO Exploiter 1` on Etherscan\n- Attack contract: [`0xAE7d68b1...`](https://etherscan.io/address/0xAE7d68b140Ed075E382e0A01d6c67ac675AFa223)\n\n## response\n\nOnyx paused new market listings. The Compound v2 fork class of bug remains a recurring theme — every fork shipping new low-decimal markets without a minimum-supply guard is at risk.",
     "sourceUrl": "https://rekt.news/onyx-protocol-rekt2",
     "amountUsd": 3800000
+  },
+  {
+    "id": "radiant-2024-oct",
+    "protocol": "Radiant Capital",
+    "chain": "arbitrum",
+    "attackedAt": "2024-10-16T17:09:18Z",
+    "title": "Radiant Capital — multisig blind-signing trick drains $50M cross-chain",
+    "attackers": [
+      "0x0629b1048298ae9deff0f4100a31967fb3f98962"
+    ],
+    "victims": [
+      "0x111ceeee040739fd91d29c34c33e6b3e112f2177",
+      "0xe4714d6bd9a6c0f6194c1aa8602850b0a1ce1416"
+    ],
+    "chainsAffected": [
+      "arbitrum",
+      "bsc"
+    ],
+    "note": "**3 of 11 multisig signers tricked** by malware that displayed legitimate Gnosis Safe data while routing a malicious upgrade to their hardware wallets.\n\n## attack vector\n\nDPRK-attributed (UNC4736 per Mandiant). Malware on signer machines presented the correct Safe transaction in the browser UI but signed a different transaction on the hardware wallet — a classic **blind-signing UI mismatch**. The malicious tx upgraded `LendingPoolAddressesProvider` to an attacker-controlled implementation.\n\n## impact\n\n- Arbitrum admin multisig ([`0x111CEEee...`](https://arbiscan.io/address/0x111ceeee040739fd91d29c34c33e6b3e112f2177)) executed the upgrade at 17:09:18 UTC\n- BSC admin multisig ([`0xE4714D6B...`](https://arbiscan.io/address/0xe4714d6bd9a6c0f6194c1aa8602850b0a1ce1416)) followed at 17:11 UTC\n- Funds drained: ~$50M across Arbitrum + BSC\n- Malicious contracts also deployed on ETH and Base but never executed\n\n## response\n\nRadiant paused. Attribution to DPRK by Mandiant. Drove industry-wide push for **clear-signing** support on hardware wallets and Safe Transaction Service.",
+    "sourceUrl": "https://rekt.news/radiant-capital-rekt2",
+    "amountUsd": 50000000
+  },
+  {
+    "id": "bybit-2025-feb",
+    "protocol": "Bybit",
+    "chain": "ethereum",
+    "attackedAt": "2025-02-21T14:16:11Z",
+    "title": "Bybit — Safe{Wallet} signing-UI compromise drains $1.43B in ETH/stETH/cmETH/mETH",
+    "attackers": [
+      "0x47666Fab8bd0Ac7003bce3f5C3585383F09486E2",
+      "0x96221423681A6d52E184D440a8eFCEbB105C7242",
+      "0xbDd077f651EBe7f7b3cE16fe5F2b025BE2969516"
+    ],
+    "victims": [
+      "0x1Db92e2EeBC8E0c075a02BeA49a2935BcD2dFCF4"
+    ],
+    "note": "## tl;dr\n\n**Largest crypto theft on record.** DPRK / TraderTraitor (Lazarus) compromised a Safe{Wallet} developer's macOS machine, rode active AWS session tokens past MFA, and pushed a malicious JavaScript payload to `safe.global`'s S3-hosted frontend — scoped to fire only when Bybit's ETH cold wallet signed. One `delegateCall` swapped the Safe's singleton implementation for attacker code; the wallet was drained inside the same transaction.\n\n## attack vector\n\n**Supply-chain attack on the signing UI**, not a smart contract bug. Per the Safe + Mandiant joint forensic, attackers compromised a Safe{Wallet} engineer's macOS development environment, hijacked active AWS session tokens to bypass MFA, and modified the JavaScript bundle in Safe's S3-hosted frontend two days before the attack. The payload was scoped to fire **only** when Bybit's ETH cold wallet (`0x1Db92e2E...`) was the signing context — every other Safe user saw a clean UI. Signers reviewed what looked like a routine transfer in their wallet UIs; the actual signed call was a `delegateCall` to an attacker-controlled contract (`0x96221423...`) that overwrote storage slot 0 of the Safe proxy, swapping the legitimate Safe singleton (`0x34CfAC64...`) for an attacker-deployed singleton (`0xbDd077f6...`) with a hidden `sweepERC20()` function. Full ownership of the cold wallet transferred in one transaction.\n\n## impact\n\n- Funds drained: ~$1.43B\n  - 401,346 ETH ($1.11B)\n  - 90,375 stETH ($250.8M)\n  - 15,000 cmETH ($44M)\n  - 8,000 mETH ($23.5M)\n- Attacker EOA: `0x47666Fab...` (`Bybit Exploiter` per Etherscan, Arkham, Chainalysis)\n- Victim Safe (Bybit ETH cold wallet): `0x1Db92e2E...`\n- Malicious `delegateCall` target: `0x96221423...`\n- Attacker-deployed singleton (new masterCopy): `0xbDd077f6...`\n- Attack tx: `0xb61413c4...` (block timestamp 2025-02-21 14:16:11 UTC)\n- Laundered via THORChain → BTC\n- FBI attribution: **TraderTraitor / Lazarus Group** (IC3 PSA 250226, Feb 26 2025)\n\n## response\n\nBybit absorbed the loss without halting customer withdrawals — closed the balance-sheet gap via bridge financing within ~72h. Safe{Wallet} **fully rebuilt its infrastructure, rotated all credentials**, and resumed Ethereum mainnet operations via phased rollout per the Mandiant-co-authored post-mortem. Industry-wide review of **multisig signing-UI assumptions** followed: \"what you sign\" vs. \"what you see\" cannot rely on a single web frontend rendering the call. Hardware-wallet display verification + parsed-call review on multiple independent UIs became the standard for high-value treasuries.",
+    "sourceUrl": "https://rekt.news/bybit-rekt/",
+    "amountUsd": 1430000000
   },
   {
     "id": "abracadabra-gmx-2025-mar",

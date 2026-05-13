@@ -476,27 +476,6 @@
     "amountUsd": 11600000
   },
   {
-    "id": "radiant-2024-oct",
-    "protocol": "Radiant Capital",
-    "chain": "arbitrum",
-    "attackedAt": "2024-10-16T17:09:18Z",
-    "title": "Radiant Capital — multisig compromise drains $50M cross-chain",
-    "attackers": [
-      "0x0629b1048298ae9deff0f4100a31967fb3f98962"
-    ],
-    "victims": [
-      "0x111ceeee040739fd91d29c34c33e6b3e112f2177",
-      "0xe4714d6bd9a6c0f6194c1aa8602850b0a1ce1416"
-    ],
-    "chainsAffected": [
-      "arbitrum",
-      "bsc"
-    ],
-    "note": "DPRK-attributed (UNC4736 per Mandiant): 3 of 11 multisig signers were tricked by malware that displayed legitimate Gnosis Safe transaction data while actually routing a malicious LendingPoolAddressesProvider upgrade to their hardware wallets. The compromised Arbitrum admin multisig (0x111CEEee...) executed the upgrade at 17:09:18 UTC; the BSC admin multisig (0xE4714D6B...) followed at 17:11 UTC. Malicious contracts were also deployed on ETH and Base but never executed.",
-    "sourceUrl": "https://rekt.news/radiant-capital-rekt2",
-    "amountUsd": 50000000
-  },
-  {
     "id": "penpie-2024-sep",
     "protocol": "Penpie",
     "chain": "ethereum",
@@ -543,6 +522,45 @@
     "note": "Same empty-market exchange-rate bug that bit Onyx for $2.1M in November 2023 — a known Compound v2 fork issue with low-decimal cTokens — exploited again on a freshly listed oVUSD market via a Balancer flashloan. Attacker EOA 0x680910cf... labeled 'OnyxDAO Exploiter 1' on Etherscan; attack contract 0xAE7d68b1... Loss: 4.1M VUSD, 7.35M XCN, 5K DAI, 0.23 WBTC, 50K USDT (~$3.8M total).",
     "sourceUrl": "https://rekt.news/onyx-protocol-rekt2",
     "amountUsd": 3800000
+  },
+  {
+    "id": "radiant-2024-oct",
+    "protocol": "Radiant Capital",
+    "chain": "arbitrum",
+    "attackedAt": "2024-10-16T17:09:18Z",
+    "title": "Radiant Capital — multisig compromise drains $50M cross-chain",
+    "attackers": [
+      "0x0629b1048298ae9deff0f4100a31967fb3f98962"
+    ],
+    "victims": [
+      "0x111ceeee040739fd91d29c34c33e6b3e112f2177",
+      "0xe4714d6bd9a6c0f6194c1aa8602850b0a1ce1416"
+    ],
+    "chainsAffected": [
+      "arbitrum",
+      "bsc"
+    ],
+    "note": "DPRK-attributed (UNC4736 per Mandiant): 3 of 11 multisig signers were tricked by malware that displayed legitimate Gnosis Safe transaction data while actually routing a malicious LendingPoolAddressesProvider upgrade to their hardware wallets. The compromised Arbitrum admin multisig (0x111CEEee...) executed the upgrade at 17:09:18 UTC; the BSC admin multisig (0xE4714D6B...) followed at 17:11 UTC. Malicious contracts were also deployed on ETH and Base but never executed.",
+    "sourceUrl": "https://rekt.news/radiant-capital-rekt2",
+    "amountUsd": 50000000
+  },
+  {
+    "id": "bybit-2025-feb",
+    "protocol": "Bybit",
+    "chain": "ethereum",
+    "attackedAt": "2025-02-21T14:16:11Z",
+    "title": "Bybit — Safe{Wallet} signing-UI compromise drains $1.43B in ETH/stETH/cmETH/mETH",
+    "attackers": [
+      "0x47666Fab8bd0Ac7003bce3f5C3585383F09486E2",
+      "0x96221423681A6d52E184D440a8eFCEbB105C7242",
+      "0xbDd077f651EBe7f7b3cE16fe5F2b025BE2969516"
+    ],
+    "victims": [
+      "0x1Db92e2EeBC8E0c075a02BeA49a2935BcD2dFCF4"
+    ],
+    "note": "Largest crypto theft on record. DPRK / TraderTraitor (Lazarus Group) attribution per FBI IC3 PSA 250226 (Feb 26 2025) + Chainalysis + the Safe + Mandiant joint forensic. Not a smart contract bug — attackers compromised a Safe{Wallet} developer's macOS machine, hijacked active AWS session tokens to bypass MFA, and modified the malicious JavaScript bundle in Safe{Wallet}'s S3-hosted frontend two days before the attack. The payload was scoped to fire only when Bybit's ETH cold wallet (0x1Db92e2E...) was the signing context — every other Safe user saw a clean UI. Signers reviewed what looked like a routine transfer in their wallet UIs; the actual signed call was a delegateCall to an attacker-controlled contract (0x96221423...) that overwrote storage slot 0 of the Safe proxy, swapping the legitimate Safe singleton (0x34CfAC64...) for an attacker-deployed singleton (0xbDd077f6...) with a hidden sweepERC20() function. Attacker then drained 401,346 ETH + 90,375 stETH + 15,000 cmETH + 8,000 mETH (~$1.43B at the time) and laundered through THORChain → BTC. Malicious approval tx 0xb61413c4... (block timestamp 2025-02-21 14:16:11 UTC). Attacker EOA 0x47666Fab... labeled 'Bybit Exploiter' on Etherscan. Bybit absorbed the loss without halting customer withdrawals, closing the balance-sheet gap via bridge financing within ~72h. Safe{Wallet} fully rebuilt infrastructure and rotated all credentials per the Mandiant-co-authored forensic. Triggered industry-wide review of multisig signing-UI assumptions.",
+    "sourceUrl": "https://rekt.news/bybit-rekt/",
+    "amountUsd": 1430000000
   },
   {
     "id": "abracadabra-gmx-2025-mar",
