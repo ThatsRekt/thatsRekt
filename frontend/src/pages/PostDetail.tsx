@@ -124,6 +124,19 @@ function LivePostDetail({ postId }: { postId: string }) {
         ← back to feed
       </Link>
 
+      {/* Retract banner — only renders when the poster has called
+          removePost() on this entry. Direct shared URLs still resolve
+          (the on-chain audit trail is intentionally preserved) and the
+          original content stays visible below for transparency, but
+          someone landing here from a stale link needs to know at a
+          glance that the alert is no longer endorsed by its poster.
+          Purged posts take an earlier `if (data.purged)` branch and
+          render PurgedTombstone instead — content is fully scrubbed
+          for those by Mesh anyway. */}
+      {data.removed && (
+        <RetractedBanner removedAt={data.removedAtTimestamp} />
+      )}
+
       <header className="space-y-4 border-b-2 border-black pb-6">
         <div className="flex items-center gap-3 text-[10px] uppercase tracking-widest">
           <span className="font-black">#{data.id}</span>
@@ -338,6 +351,50 @@ function Field({
     <div className="flex gap-2" title={tooltip}>
       <dt className="w-32 shrink-0">[{label}]</dt>
       <dd className="text-black normal-case tracking-normal">{children}</dd>
+    </div>
+  )
+}
+
+/**
+ * Banner shown above the original content when a post has been
+ * retracted by its poster (`removePost(id)`). Distinct from
+ * `PurgedTombstone`:
+ *
+ *   - Retract is a poster-initiated walk-back — the on-chain content
+ *     stays available, and the UI preserves it below the banner so
+ *     anyone landing on a stale shared link can still read what the
+ *     poster originally said. The unified feed hides retracted posts
+ *     (Mesh `removed_eq: false` filter), so reaching this banner means
+ *     the user navigated here directly.
+ *
+ *   - Purge is a governance scrub — content is intentionally hidden
+ *     UI-side (Mesh resolver also masks the payload). Renders a full
+ *     `PurgedTombstone` instead of the post body.
+ *
+ * Brutalist red callout matches the existing "retracted" inline badge
+ * but escalates the prominence so it can't be missed.
+ */
+function RetractedBanner({ removedAt }: { removedAt: string | null }) {
+  return (
+    <div className="border-2 border-red-600 bg-red-50 px-5 py-4 space-y-1">
+      <p className="font-black uppercase tracking-tighter text-xl sm:text-2xl leading-none text-red-700">
+        this post was retracted
+      </p>
+      <p className="font-black uppercase tracking-widest text-[11px] text-red-700/90">
+        by its poster
+        {removedAt && (
+          <>
+            {' · '}
+            <span title={formatTimestamp(removedAt)}>
+              {relativeTime(removedAt)}
+            </span>
+          </>
+        )}
+      </p>
+      <p className="text-[10px] uppercase tracking-widest text-red-700/80 pt-1">
+        the content below is preserved for transparency. it is no longer
+        endorsed by the original poster.
+      </p>
     </div>
   )
 }
