@@ -171,7 +171,16 @@ function ArchiveBanner() {
       <span className="normal-case tracking-normal">
         Pre-platform incident, compiled by the community. Not on the
         on-chain registry — no confirmations, no edits, no timeline.
-        See `data/historic-incidents.json` for the canonical source.
+        See{' '}
+        <a
+          href="https://github.com/ThatsRekt/thatsRekt/blob/master/data/historic-incidents.json"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="rekt-link font-mono"
+        >
+          data/historic-incidents.json
+        </a>{' '}
+        for the canonical source.
       </span>
     </aside>
   )
