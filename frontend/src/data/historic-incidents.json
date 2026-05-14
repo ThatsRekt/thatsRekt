@@ -697,5 +697,29 @@
     "note": "Not a smart-contract bug. Attackers compromised LayerZero's DVN RPC nodes and DDoS'd the public ones, forcing the verifier to trust a forged cross-chain message under a **1-of-1 DVN configuration**.\n\n## attack vector\n\nKelp's bridge relied on LayerZero with a 1-of-1 DVN — a single oracle vote was enough to attest a message. Attackers:\n\n1. Compromised internal RPC nodes feeding the DVN\n2. DDoS'd the public RPC backups\n3. Forced the verifier to consume only attacker-controlled chain state\n4. Submitted a forged cross-chain message that released 116,500 rsETH from Kelp's LayerZero bridge\n\n## impact\n\n- rsETH released: 116,500 (~$292M, ~18% of supply)\n- Attack tx: [`0x1ae232da...`](https://etherscan.io/tx/0x1ae232da212c45f35c1525f851e4c41d529bf18af862d9ce9fd40bf709db4222) at 17:35 UTC against LayerZero EndpointV2 ([`0x1a440760...`](https://etherscan.io/address/0x1a44076050125825900e736c501f859c50fE728c))\n- Affected chains: Ethereum, Arbitrum, Base, Optimism\n- Attribution: **DPRK TraderTraitor / Lazarus** (LayerZero + Chainalysis)\n\n## response\n\nKelp paused contracts, blocking a follow-up ~$95M theft. Arbitrum Security Council and law enforcement froze ~30K ETH downstream. Attacker laundered via THORChain → BTC. Triggered emergency rsETH freezes across Aave, SparkLend, Fluid, and Upshift.",
     "sourceUrl": "https://www.coindesk.com/tech/2026/04/19/2026-s-biggest-crypto-exploit-kelp-dao-hit-for-usd292-million-with-wrapped-ether-stranded-across-20-chains",
     "amountUsd": 292000000
+  },
+  {
+    "id": "trustedvolumes-2026-may",
+    "protocol": "Trusted Volumes",
+    "chain": "ethereum",
+    "attackedAt": "2026-05-06T00:00:00Z",
+    "title": "Trusted Volumes — RFQ swap proxy lacks access control, $6.7M drained",
+    "attackers": [],
+    "victims": [],
+    "note": "**Missing access control** on the RFQ swap proxy's `registerAllowedOrderSigner` function allowed anyone to register themselves as an authorized signer and execute arbitrary orders against the resolver's liquidity.\n\n## attack vector\n\nTrusted Volumes' custom RFQ (Request-for-Quote) swap proxy exposed `registerAllowedOrderSigner` as a public function without authentication checks. Attackers:\n\n1. Called `registerAllowedOrderSigner` to add themselves as an allowed signer\n2. Used this unauthorized permission to execute orders directly against the resolver\n3. Drained WETH, USDT, WBTC, and USDC from the resolver's liquidity pools\n\n## impact\n\n- Funds lost: $6.7M across WETH, USDT, WBTC, and USDC\n- Attacker attribution: Unknown\n- Scope: TrustedVolumes liquidity provider for 1inch and other DeFi platforms\n- Core systems: Unaffected — 1inch's core systems and user funds untouched\n\n## response\n\nTrusted Volumes confirmed the attack publicly and expressed willingness to negotiate a bug bounty. Attacker moved stolen funds through decentralized cross-chain swaps and privacy mixers to obscure the transaction trail.",
+    "sourceUrl": "https://x.com/exvulsec/status/2052208668809298114",
+    "amountUsd": 6700000
+  },
+  {
+    "id": "ekubo-2026-may",
+    "protocol": "Ekubo",
+    "chain": "ethereum",
+    "attackedAt": "2026-05-06T00:00:00Z",
+    "title": "Ekubo — IPayer.pay callback lacks parameter validation, $1.4M drained",
+    "attackers": [],
+    "victims": [],
+    "note": "**Unvalidated callback parameters** in the v2 extension contract's `IPayer.pay` function allowed attackers to set themselves as withdrawal recipients and drain funds from users with unlimited token approvals.\n\n## attack vector\n\nEkubo's custom EVM extension v2 contract exposed the `IPayer.pay` callback without validating where its parameters originated. Attackers:\n\n1. Manipulated `payer`, `token`, and `amount` parameters\n2. Set themselves as the withdrawal recipient\n3. Triggered arbitrary transfers from users who had granted unlimited token approvals to the contract\n4. Executed 85+ rapid transactions draining 17 WBTC from a single liquidity provider\n\n## impact\n\n- Funds lost: $1.4M WBTC and other assets\n- Largest victim: Single LP drained of 17 WBTC across 85 transactions\n- Stolen funds: Laundered through Tornado Cash\n- Core protocol: Starknet deployment and native pools unaffected\n\n## response\n\nEkubo deployed a white-hat flash-loan rescue operation, securing ~$284k and proactively mitigating further authorization risks. Users advised to revoke all outstanding token approvals for affected v2/v3 router contracts.",
+    "sourceUrl": "https://x.com/RevokeCash/status/2051908542479708338",
+    "amountUsd": 1400000
   }
 ]
