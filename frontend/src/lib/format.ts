@@ -30,6 +30,15 @@ export function formatTimestamp(iso: string): string {
   return d.toISOString().slice(0, 19).replace('T', ' ') + ' UTC'
 }
 
+/** Format a timestamp as dd/mm/yyyy. */
+export function formatDateOnly(iso: string): string {
+  const d = new Date(iso)
+  const day = String(d.getUTCDate()).padStart(2, '0')
+  const month = String(d.getUTCMonth() + 1).padStart(2, '0')
+  const year = d.getUTCFullYear()
+  return `${day}/${month}/${year}`
+}
+
 /** Score color: positive = green, negative = red, zero = gray. */
 export function scoreColor(score: number): string {
   if (score > 0) return 'text-emerald-400'

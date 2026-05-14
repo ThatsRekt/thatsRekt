@@ -5,7 +5,7 @@ import {
   formatAmountUsd,
   type ArchivePost,
 } from '../lib/archive'
-import { relativeTime } from '../lib/format'
+import { relativeTime, formatDateOnly } from '../lib/format'
 import {
   registryAddress,
   type SupportedChainId,
@@ -74,7 +74,7 @@ function LivePostCard({ post }: { post: FeedPost }) {
         {chainSlug && <ChainBadge slug={chainSlug} />}
         <span className="font-mono text-neutral-600">#{post.id}</span>
         <span className="text-neutral-400">·</span>
-        <span className="text-neutral-600 font-mono">attacked {relativeTime(post.attackedAt)}</span>
+        <span className="text-neutral-600 font-mono">attacked {relativeTime(post.attackedAt)} · {formatDateOnly(post.attackedAt)}</span>
       </div>
 
       <Link to={detailHref} className="block group">
@@ -173,7 +173,7 @@ function ArchivePostCard({ post }: { post: ArchivePost }) {
         <ChainBadge slug={post.chain} />
         <ArchiveChip />
         <span className="text-neutral-400">·</span>
-        <span className="text-neutral-600 font-mono">attacked {relativeTime(post.attackedAt)}</span>
+        <span className="text-neutral-600 font-mono">attacked {relativeTime(post.attackedAt)} · {formatDateOnly(post.attackedAt)}</span>
       </div>
 
       {/*

@@ -17,7 +17,7 @@ import {
   registryAddress,
   type SupportedChainId,
 } from '../lib/contracts'
-import { formatTimestamp, relativeTime } from '../lib/format'
+import { formatTimestamp, relativeTime, formatDateOnly } from '../lib/format'
 
 export function PostDetail() {
   // Two URL shapes hit this component:
@@ -141,7 +141,7 @@ function LivePostDetail({ postId }: { postId: string }) {
           )}
           <span className="text-neutral-700">·</span>
           <span title={formatTimestamp(data.attackedAt)}>
-            attacked {relativeTime(data.attackedAt)}
+            attacked {relativeTime(data.attackedAt)} · {formatDateOnly(data.attackedAt)}
           </span>
           {typeof commentCount === 'number' && commentCount > 0 && (
             <>

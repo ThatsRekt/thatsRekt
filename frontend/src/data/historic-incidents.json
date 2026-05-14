@@ -697,5 +697,45 @@
     "note": "Not a smart-contract bug. Attackers compromised LayerZero's DVN RPC nodes and DDoS'd the public ones, forcing the verifier to trust a forged cross-chain message under a **1-of-1 DVN configuration**.\n\n## attack vector\n\nKelp's bridge relied on LayerZero with a 1-of-1 DVN — a single oracle vote was enough to attest a message. Attackers:\n\n1. Compromised internal RPC nodes feeding the DVN\n2. DDoS'd the public RPC backups\n3. Forced the verifier to consume only attacker-controlled chain state\n4. Submitted a forged cross-chain message that released 116,500 rsETH from Kelp's LayerZero bridge\n\n## impact\n\n- rsETH released: 116,500 (~$292M, ~18% of supply)\n- Attack tx: [`0x1ae232da...`](https://etherscan.io/tx/0x1ae232da212c45f35c1525f851e4c41d529bf18af862d9ce9fd40bf709db4222) at 17:35 UTC against LayerZero EndpointV2 ([`0x1a440760...`](https://etherscan.io/address/0x1a44076050125825900e736c501f859c50fE728c))\n- Affected chains: Ethereum, Arbitrum, Base, Optimism\n- Attribution: **DPRK TraderTraitor / Lazarus** (LayerZero + Chainalysis)\n\n## response\n\nKelp paused contracts, blocking a follow-up ~$95M theft. Arbitrum Security Council and law enforcement froze ~30K ETH downstream. Attacker laundered via THORChain → BTC. Triggered emergency rsETH freezes across Aave, SparkLend, Fluid, and Upshift.",
     "sourceUrl": "https://www.coindesk.com/tech/2026/04/19/2026-s-biggest-crypto-exploit-kelp-dao-hit-for-usd292-million-with-wrapped-ether-stranded-across-20-chains",
     "amountUsd": 292000000
+  },
+  {
+    "id": "trustedvolumes-2026-may",
+    "protocol": "Trusted Volumes",
+    "chain": "ethereum",
+    "attackedAt": "2026-05-06T00:00:00Z",
+    "title": "Trusted Volumes — RFQ swap proxy exploited, $5.87M drained",
+    "attackers": [
+      "0xC3EBDdEa4f69df717a8f5c89e7cF20C1c0389100"
+    ],
+    "victims": [
+      "0x9bA0CF1588E1DFA905eC948F7FE5104dD40EDa31"
+    ],
+    "note": "**Missing access control** in TrustedVolumes' custom RFQ swap proxy ([`0xeEeEEe53...`](https://etherscan.io/address/0xeEeEEe53033F7227d488ae83a27Bc9A9D5051756)) allowed unauthorized order execution and vault drainage.\n\n## attack vector\n\nThe swap proxy lacked proper access controls on order signer registration. Attacker ([`0xC3EBDdEa...`](https://etherscan.io/address/0xC3EBDdEa4f69df717a8f5c89e7cF20C1c0389100)) exploited this to execute arbitrary orders and drain the resolver's liquidity pools of WETH, USDT, WBTC, and USDC.\n\n## impact\n\n- Funds lost: ~$5.87M across WETH, USDT, WBTC, USDC\n- Victim resolver: [`0x9bA0CF15...`](https://etherscan.io/address/0x9bA0CF1588E1DFA905eC948F7FE5104dD40EDa31)\n- Attack tx: [`0xc5c61b3a...`](https://etherscan.io/tx/0xc5c61b3ac39d854773b9dc34bd0cdbc8b5bbf75f18551802a0b5881fcb990513)\n- Scope: TrustedVolumes liquidity provider for 1inch and other DeFi platforms — 1inch core systems unaffected\n\n## response\n\nPublic attribution confirmed this as distinct from the March 2025 1inch Fusion V1 incident. TrustedVolumes expressed willingness to negotiate bug bounty settlement.",
+    "sourceUrl": "https://x.com/exvulsec/status/2052208668809298114",
+    "amountUsd": 5870000
+  },
+  {
+    "id": "ekubo-2026-may",
+    "protocol": "Ekubo",
+    "chain": "ethereum",
+    "attackedAt": "2026-05-06T00:00:00Z",
+    "title": "Ekubo — IPayer callback drained approved user funds, $1.4M lost",
+    "attackers": [],
+    "victims": [],
+    "note": "**Unvalidated callback parameters** in Ekubo's EVM extension v2 contract allowed attackers to drain funds from users with outstanding token approvals.\n\n## attack vector\n\nThe `IPayer.pay` callback in v2 extension contracts failed to validate parameter origin. Attackers manipulated `payer`, `token`, and `amount` parameters to set themselves as withdrawal recipients, triggering unauthorized transfers from users who had granted unlimited approvals to the contract.\n\n## impact\n\n- Funds lost: $1.4M\n- Largest victim: Single LP drained of ~17 WBTC across 85 rapid transactions\n- Stolen funds: Laundered through Tornado Cash\n- Core protocol: Starknet deployment and native pools unaffected\n\n## response\n\nEkubo deployed white-hat flash-loan rescue operations, securing ~$284k and proactively mitigating further authorization risks. Users advised to immediately revoke all outstanding token approvals for v2/v3 router contracts.",
+    "sourceUrl": "https://x.com/RevokeCash/status/2051908542479708338",
+    "amountUsd": 1400000
+  },
+  {
+    "id": "moonwell-2025-nov",
+    "protocol": "Moonwell",
+    "chain": "base",
+    "attackedAt": "2025-11-04T00:00:00Z",
+    "title": "Moonwell — wrsETH oracle malfunction prices token at 1.6M% premium, $3.7M bad debt",
+    "attackers": [],
+    "victims": [],
+    "note": "**Misconfigured oracle feed** — Moonwell's wrsETH market used market price instead of the actual exchange rate, pricing 1 wrsETH as 1,649,934.60732 ETH following Balancer's exploit the day prior.\n\n## attack vector\n\nMoonwell's wrsETH/ETH oracle was sourced from market prices rather than the official exchange rate. When Balancer suffered an exploit (2025-11-03), liquidity dried up and the market price feed output an absurd value — over 1.6 million ETH per wrsETH.\n\nAttackers (same party as the 2025-10-10 oracle incident) did not manipulate the oracle — they simply exploited the mispricing by borrowing real collateral at 1.6M% premium valuations.\n\n## impact\n\n- Bad debt accrued: $3.7M\n- Oracle misconfiguration: wrsETH priced at (market price) instead of (wrsETH/ETH exchange rate) × (ETH/USD)\n- Root cause: Day-prior Balancer exploit disrupted liquidity and feed confidence\n- Repeat offender: Same attacker from 2025-10-10, continuously scanning Moonwell for extractable value\n\n## response\n\nMoonwell corrected the oracle configuration post-incident. This was the second major oracle misconfiguration in under a month — pattern of systemic oracle design failures.",
+    "sourceUrl": "https://forum.moonwell.fi/t/wrseth-oracle-malfunction-11-4-25/2017",
+    "amountUsd": 3700000
   }
 ]
