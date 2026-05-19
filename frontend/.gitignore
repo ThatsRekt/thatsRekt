@@ -1,6 +1,11 @@
 # Dependencies
 node_modules/
 
+# This project uses pnpm (pnpm-lock.yaml — see Dockerfile) for builds and
+# bun (bun.lock) for `bun test`. npm is not used; block its lockfile so a
+# stray `npm install` doesn't recommit it.
+package-lock.json
+
 # Build output
 dist/
 dist-ssr/
