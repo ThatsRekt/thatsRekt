@@ -13,14 +13,14 @@
 export type ChainSlug =
   | 'anvil-eth'
   | 'anvil-base'
-  | 'sepolia'
-  | 'base'
-  | 'base-sepolia'
-  | 'optimism'
   | 'ethereum'
+  | 'base'
   | 'arbitrum'
+  | 'optimism'
   | 'bsc'
   | 'blast'
+  | 'sepolia'
+  | 'base-sepolia'
 
 export interface FrontendChain {
   readonly chainId: number
@@ -42,6 +42,16 @@ export interface FrontendChain {
   readonly liveIndexed: boolean
 }
 
+/**
+ * Registry order is significant. `visibleChains()` returns
+ * `Object.values(CHAINS)` as-is, so this is the order chains render in
+ * the chain selector and every other chain list in the app.
+ *
+ * Ordered by relevance: live mainnets first (Ethereum leading), then
+ * archive-only mainnets, then testnets last. Local anvil forks lead the
+ * list but are hidden outside dev. Keep `ChainSlug` above in the same
+ * order. Don't reorder for cosmetic reasons — it changes the UI.
+ */
 export const CHAINS: Readonly<Record<ChainSlug, FrontendChain>> = Object.freeze({
   'anvil-eth': {
     chainId: 31337,
@@ -61,12 +71,12 @@ export const CHAINS: Readonly<Record<ChainSlug, FrontendChain>> = Object.freeze(
     isLocalFork: true,
     liveIndexed: true,
   },
-  sepolia: {
-    chainId: 11155111,
-    slug: 'sepolia',
-    name: 'Ethereum Sepolia',
-    badge: 'sepolia',
-    explorer: 'https://sepolia.etherscan.io',
+  ethereum: {
+    chainId: 1,
+    slug: 'ethereum',
+    name: 'Ethereum',
+    badge: 'ethereum',
+    explorer: 'https://etherscan.io',
     isLocalFork: false,
     liveIndexed: true,
   },
@@ -79,12 +89,12 @@ export const CHAINS: Readonly<Record<ChainSlug, FrontendChain>> = Object.freeze(
     isLocalFork: false,
     liveIndexed: true,
   },
-  'base-sepolia': {
-    chainId: 84532,
-    slug: 'base-sepolia',
-    name: 'Base Sepolia',
-    badge: 'base-sepolia',
-    explorer: 'https://sepolia.basescan.org',
+  arbitrum: {
+    chainId: 42161,
+    slug: 'arbitrum',
+    name: 'Arbitrum',
+    badge: 'arbitrum',
+    explorer: 'https://arbiscan.io',
     isLocalFork: false,
     liveIndexed: true,
   },
@@ -94,24 +104,6 @@ export const CHAINS: Readonly<Record<ChainSlug, FrontendChain>> = Object.freeze(
     name: 'Optimism',
     badge: 'optimism',
     explorer: 'https://optimistic.etherscan.io',
-    isLocalFork: false,
-    liveIndexed: true,
-  },
-  ethereum: {
-    chainId: 1,
-    slug: 'ethereum',
-    name: 'Ethereum',
-    badge: 'ethereum',
-    explorer: 'https://etherscan.io',
-    isLocalFork: false,
-    liveIndexed: true,
-  },
-  arbitrum: {
-    chainId: 42161,
-    slug: 'arbitrum',
-    name: 'Arbitrum',
-    badge: 'arbitrum',
-    explorer: 'https://arbiscan.io',
     isLocalFork: false,
     liveIndexed: true,
   },
@@ -138,6 +130,27 @@ export const CHAINS: Readonly<Record<ChainSlug, FrontendChain>> = Object.freeze(
     explorer: 'https://blastscan.io',
     isLocalFork: false,
     liveIndexed: false,
+  },
+  // ---------------------------------------------------------------------------
+  // Testnets — sorted last; least relevant to a feed of real-world hacks.
+  // ---------------------------------------------------------------------------
+  sepolia: {
+    chainId: 11155111,
+    slug: 'sepolia',
+    name: 'Ethereum Sepolia',
+    badge: 'sepolia',
+    explorer: 'https://sepolia.etherscan.io',
+    isLocalFork: false,
+    liveIndexed: true,
+  },
+  'base-sepolia': {
+    chainId: 84532,
+    slug: 'base-sepolia',
+    name: 'Base Sepolia',
+    badge: 'base-sepolia',
+    explorer: 'https://sepolia.basescan.org',
+    isLocalFork: false,
+    liveIndexed: true,
   },
 })
 

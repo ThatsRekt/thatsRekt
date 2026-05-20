@@ -15,5 +15,9 @@
     "verbatimModuleSyntax": true,
     "allowImportingTsExtensions": false
   },
-  "include": ["src"]
+  "include": ["src"],
+  // Test files are excluded from the app build: they import `bun:test`
+  // (provided by the bun test runtime, not tsc) and are not part of the
+  // shipped bundle. They are type-checked and run via `bun test`.
+  "exclude": ["src/**/*.test.ts", "src/**/*.test.tsx"]
 }
