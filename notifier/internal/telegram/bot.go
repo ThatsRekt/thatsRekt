@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -95,6 +96,47 @@ func (b *Bot) SendMessage(ctx context.Context, chatID, text string, kb *InlineKe
 	return out.Result.MessageID, nil
 }
 
+type editMessageTextReq struct {
+	ChatID      string                `json:"chat_id"`
+	MessageID   int64                 `json:"message_id"`
+	Text        string                `json:"text"`
+	ParseMode   string                `json:"parse_mode,omitempty"`
+	ReplyMarkup *InlineKeyboardMarkup `json:"reply_markup,omitempty"`
+}
+
+// EditMessageText replaces the text of an existing message in place. Used
+// for amendment handling: when a post the notifier has already published is
+// amended on-chain, we call this instead of sending a new message so
+// channel subscribers see the update in place without duplicate noise.
+//
+// Telegram returns 400 "message is not modified" when the new text is
+// identical to the current one; we treat that as a no-op.
+func (b *Bot) EditMessageText(ctx context.Context, chatID string, messageID int64, text string, kb *InlineKeyboardMarkup) error {
+	body, _ := json.Marshal(editMessageTextReq{
+		ChatID:      chatID,
+		MessageID:   messageID,
+		Text:        text,
+		ParseMode:   "HTML",
+		ReplyMarkup: kb,
+	})
+	var out struct {
+		OK          bool   `json:"ok"`
+		Description string `json:"description"`
+	}
+	if err := b.call(ctx, "editMessageText", body, &out); err != nil {
+		return err
+	}
+	if !out.OK {
+		// Telegram historically returns this with and without the
+		// "Bad Request:" prefix — use substring match for robustness.
+		if strings.Contains(out.Description, "message is not modified") {
+			return nil
+		}
+		return fmt.Errorf("editMessageText: %s", out.Description)
+	}
+	return nil
+}
+
 type editReplyMarkupReq struct {
 	ChatID      string                `json:"chat_id"`
 	MessageID   int64                 `json:"message_id"`
@@ -120,7 +162,9 @@ func (b *Bot) EditReplyMarkup(ctx context.Context, chatID string, messageID int6
 	if !out.OK {
 		// 400 with "message is not modified" is benign — return nil so
 		// the caller doesn't spam logs on idempotent re-presses.
-		if out.Description == "Bad Request: message is not modified" {
+		// Telegram historically returns this with and without the
+		// "Bad Request:" prefix — use substring match for robustness.
+		if strings.Contains(out.Description, "message is not modified") {
 			return nil
 		}
 		return fmt.Errorf("editMessageReplyMarkup: %s", out.Description)

@@ -2,14 +2,16 @@
 //
 // Two goroutines, one event loop:
 //
-//   1. Poll loop: every PollInterval, fetch the latest N posts from the
-//      Mesh GraphQL endpoint. Filter for ones strictly newer than the
-//      per-chain high-water mark. For each, post to Telegram with vote
-//      buttons; record the message id + initial counts in state.
+//  1. Poll loop: every PollInterval, fetch the latest N posts from the
+//     Mesh GraphQL endpoint.
+//     - Posts strictly newer than the per-chain high-water mark → publish.
+//     - Posts already published that have changed (new ActionCount /
+//       LastUpdatedAt) → edit in place via the stored tg_message_id.
+//     - Posts already published and unchanged → skip.
 //
-//   2. Callback loop: long-poll Telegram getUpdates. Each callback_query
-//      is a button press — apply the vote via the store, edit the message
-//      to refresh the counts, ack the press.
+//  2. Callback loop: long-poll Telegram getUpdates. Each callback_query
+//     is a button press — apply the vote via the store, edit the message
+//     to refresh the counts, ack the press.
 //
 // Both write through the same Store. State is flushed to S3 on a debounced
 // timer so we don't hit S3 on every press.
@@ -28,9 +30,25 @@ import (
 	"github.com/ThatsRekt/thatsRekt/notifier/internal/telegram"
 )
 
+// GQLClient is the subset of graphql.Client used by the Service. Declared as
+// an interface so the service can be tested without a real HTTP connection.
+type GQLClient interface {
+	LatestPosts(ctx context.Context, limit int) ([]graphql.Post, error)
+}
+
+// TelegramBot is the subset of telegram.Bot used by the Service. Declared as
+// an interface so the service can be tested with a stub implementation.
+type TelegramBot interface {
+	SendMessage(ctx context.Context, chatID, text string, kb *telegram.InlineKeyboardMarkup) (int64, error)
+	EditMessageText(ctx context.Context, chatID string, messageID int64, text string, kb *telegram.InlineKeyboardMarkup) error
+	EditReplyMarkup(ctx context.Context, chatID string, messageID int64, kb *telegram.InlineKeyboardMarkup) error
+	GetUpdates(ctx context.Context, offset int64, timeout time.Duration) ([]telegram.Update, error)
+	AnswerCallback(ctx context.Context, queryID, text string) error
+}
+
 type Service struct {
-	GQL          *graphql.Client
-	Bot          *telegram.Bot
+	GQL          GQLClient
+	Bot          TelegramBot
 	Store        *store.Store
 	ChannelID    string
 	SiteURL      string
@@ -71,7 +89,7 @@ func (s *Service) Run(ctx context.Context) error {
 			return ctx.Err()
 
 		case <-pollTicker.C:
-			s.pollOnce(ctx)
+			s.PollOnce(ctx)
 
 		case <-flushTicker.C:
 			if err := s.Store.Save(ctx); err != nil {
@@ -91,10 +109,26 @@ func (s *Service) runPoll(ctx context.Context) {
 	case <-ctx.Done():
 		return
 	}
-	s.pollOnce(ctx)
+	s.PollOnce(ctx)
 }
 
-func (s *Service) pollOnce(ctx context.Context) {
+// PollOnce fetches the latest posts and routes each one through the full
+// post lifecycle. Every state is handled explicitly — no post is silently
+// dropped:
+//
+//  1. New (id > last-seen high-water mark) → publish fresh.
+//  2. Mapped (in Posts map) + no snapshot yet (pre-N2 post with zero-value
+//     LastActionCount/LastUpdatedAt) → back-fill the baseline snapshot using
+//     the current on-chain values; do NOT edit the Telegram message.
+//     The next poll that detects a real change will then edit correctly.
+//  3. Mapped + snapshot exists + unchanged → skip.
+//  4. Mapped + snapshot exists + changed → edit the existing Telegram message
+//     in place (amendment handling).
+//  5. Not new + not in Posts map (notifier never published it) →
+//     fall back to a fresh publish.
+//
+// PollOnce is exported so service_test.go can drive it directly.
+func (s *Service) PollOnce(ctx context.Context) {
 	posts, err := s.GQL.LatestPosts(ctx, s.FetchLimit)
 	if err != nil {
 		s.Logger.Warn("graphql poll failed", "err", err)
@@ -108,17 +142,59 @@ func (s *Service) pollOnce(ctx context.Context) {
 	})
 
 	for _, p := range posts {
-		if !s.isNew(p) {
+		// --- State 1: brand-new post ---
+		if s.isNew(p) {
+			if err := s.publish(ctx, p); err != nil {
+				s.Logger.Warn("publish failed", "post_id", p.ID, "err", err)
+				// Don't bump LastSeen — try again next cycle.
+				continue
+			}
+			s.Store.SetLastSeen(p.Chain.Slug, p.ID)
 			continue
 		}
-		if err := s.publish(ctx, p); err != nil {
-			s.Logger.Warn("publish failed", "post_id", p.ID, "err", err)
-			// Don't bump LastSeen — try again next cycle. (The wagmi
-			// gateway is occasionally flaky; nginx rate limit also
-			// possible.)
+
+		// Post is not new (id ≤ last-seen high-water mark). Look up the
+		// stored Telegram message id to determine which sub-state we're in.
+		msgID, known := s.Store.MessageIDFor(p.ID)
+		if !known {
+			// --- State 5: not-new + not mapped ---
+			// The notifier never published this post. Fall back to a fresh
+			// publish (acceptance criterion 4 of issue #128).
+			s.Logger.Info("not-new post absent from store — publishing fresh",
+				"post_id", p.ID,
+				"action_count", p.ActionCount,
+			)
+			if err := s.publish(ctx, p); err != nil {
+				s.Logger.Warn("fallback publish failed", "post_id", p.ID, "err", err)
+			}
 			continue
 		}
-		s.Store.SetLastSeen(p.Chain.Slug, p.ID)
+
+		// Post is mapped. Differentiate by snapshot state.
+		if !s.Store.HasSnapshot(p.ID) {
+			// --- State 2: mapped + no snapshot (pre-N2 post) ---
+			// Back-fill the baseline with the current on-chain values so the
+			// next genuine amendment is detected. Do NOT edit the message.
+			s.Store.UpdatePostSnapshot(p.ID, p.ActionCount, p.LastUpdatedAt)
+			s.Logger.Info("back-filled snapshot for pre-N2 post",
+				"post_id", p.ID,
+				"action_count", p.ActionCount,
+				"last_updated_at", p.LastUpdatedAt,
+			)
+			continue
+		}
+
+		// --- State 3: mapped + snapshot + unchanged ---
+		if !s.Store.HasChanged(p.ID, p.ActionCount, p.LastUpdatedAt) {
+			continue
+		}
+
+		// --- State 4: mapped + snapshot + changed → edit in place ---
+		if err := s.amendEdit(ctx, p, msgID); err != nil {
+			s.Logger.Warn("amendment edit failed", "post_id", p.ID, "err", err)
+			// Don't update snapshot — next poll will retry.
+			continue
+		}
 	}
 }
 
@@ -146,8 +222,8 @@ func onchainPart(id string) string {
 	return id[idx+1:]
 }
 
-// publish sends one post to Telegram + records its message id + initial
-// (zero) vote counts.
+// publish sends one post to Telegram + records its message id, initial vote
+// counts, and the current on-chain snapshot (ActionCount + LastUpdatedAt).
 func (s *Service) publish(ctx context.Context, p graphql.Post) error {
 	text := telegram.FormatPostMessage(p)
 	kb := telegram.VoteKeyboard(p.ID, 0, 0)
@@ -156,11 +232,44 @@ func (s *Service) publish(ctx context.Context, p graphql.Post) error {
 		return fmt.Errorf("send message: %w", err)
 	}
 	s.Store.RegisterPost(p.ID, msgID)
+	s.Store.UpdatePostSnapshot(p.ID, p.ActionCount, p.LastUpdatedAt)
 	s.Logger.Info("published",
 		"post_id", p.ID,
 		"chain", p.Chain.Slug,
 		"message_id", msgID,
 		"title", p.Title,
+		"action_count", p.ActionCount,
+	)
+	return nil
+}
+
+// amendEdit edits an existing Telegram message to reflect new post content.
+// Re-renders with the current on-chain data (bumped rev N), calls
+// editMessageText on the Bot API, and updates the stored snapshot so the
+// next poll won't re-trigger an edit for the same amendment.
+func (s *Service) amendEdit(ctx context.Context, p graphql.Post, msgID int64) error {
+	text := telegram.FormatPostMessage(p)
+
+	// Retrieve current vote counts so the keyboard edit preserves them.
+	// Guard the ok return: a missing PostState must not silently zero out
+	// the vote counts on the edited keyboard.
+	ps, ok := s.Store.PostState(p.ID)
+	if !ok {
+		return fmt.Errorf("amendEdit: PostState not found for post %s — cannot preserve vote counts; skipping edit", p.ID)
+	}
+	kb := telegram.VoteKeyboard(p.ID, ps.UpVotes, ps.DownVotes)
+
+	if err := s.Bot.EditMessageText(ctx, s.ChannelID, msgID, text, kb); err != nil {
+		return fmt.Errorf("edit message text: %w", err)
+	}
+
+	s.Store.UpdatePostSnapshot(p.ID, p.ActionCount, p.LastUpdatedAt)
+	s.Logger.Info("amended",
+		"post_id", p.ID,
+		"chain", p.Chain.Slug,
+		"message_id", msgID,
+		"action_count", p.ActionCount,
+		"last_updated_at", p.LastUpdatedAt,
 	)
 	return nil
 }

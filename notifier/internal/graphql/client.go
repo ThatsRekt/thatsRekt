@@ -45,13 +45,15 @@ type Post struct {
 	Attackers          []string `json:"attackers"`
 	Victims            []string `json:"victims"`
 
-	// v2: action count used to derive revision number (rev = ActionCount).
-	// Zero means the indexer has not yet been upgraded to expose this field;
-	// the notifier falls back to rev 1 in that case.
+	// v2: action count used to derive revision number (rev = ActionCount),
+	// and to detect amendments between polls (a change in ActionCount or
+	// LastUpdatedAt signals an on-chain amendment).
+	// Exposed by the Mesh since ThatsRekt/thatsRekt#132 / PR #133.
+	// Zero-value (0) is the safe fallback: the notifier renders "rev 1".
 	ActionCount int `json:"actionCount"`
 
 	// v2: ISO-8601 timestamp of the latest on-chain write for this post.
-	// Mirrors the existing `lastUpdatedAt` field on the mesh UnifiedPost type.
+	// Used alongside ActionCount for amendment change-detection.
 	LastUpdatedAt string `json:"lastUpdatedAt"`
 }
 
@@ -78,35 +80,16 @@ func NewClient(url string) *Client {
 }
 
 // LatestPosts fetches the most recent `limit` posts in DESC order. Caller
-// dedupes against last-seen state to find the newly-arrived ones.
+// dedupes against last-seen state to find the newly-arrived ones and detects
+// amendments via the ActionCount / lastUpdatedAt snapshot fields.
 //
-// GraphQL indexer dependency (v2):
-//
-//   - `lastUpdatedAt` — already present in the Mesh UnifiedPost type.
-//   - `actionCount` — NOT YET exposed by the indexer or mesh. The struct
-//     field Post.ActionCount is retained for forward-compatibility: once
-//     the indexer upgrade lands (tracked in ThatsRekt/thatsRekt#132),
-//     re-add `actionCount` to the query below and json.Unmarshal will
-//     populate the field automatically. Until then, ActionCount stays 0
-//     and FormatPostMessage renders rev 1 as the safe default.
-//
-// What the indexer/mesh must add to unblock full rev-N functionality:
-//
-//  1. The per-chain squid schema needs an `actionCount: Int!` field on
-//     the `Post` entity, maintained as `1 + len(post.edits)` by the
-//     processor (incremented on every AmendNote, AmendTitle, AddAttackers,
-//     AddVictims event).
-//  2. The Mesh `UnifiedPost` type and its `FETCH_POSTS_QUERY` must project
-//     `actionCount` so it reaches the notifier.
-//
-// Until that change lands, the notifier is correct at rev=1 for all posts.
+// `actionCount` is included in the query — ThatsRekt/thatsRekt#132 / PR #133
+// landed the `actionCount: Int!` field in both the per-chain squid schema and
+// the Mesh UnifiedPost type. The notifier uses it to:
+//   - Derive "rev N" in the message body.
+//   - Detect amendments: if the stored snapshot for a known post has a
+//     different actionCount or lastUpdatedAt, the post was amended on-chain.
 func (c *Client) LatestPosts(ctx context.Context, limit int) ([]Post, error) {
-	// NOTE: `actionCount` is intentionally absent from this query.
-	// GraphQL validates the full selection set against the schema before
-	// execution: an unknown field causes a hard validation error and the
-	// server returns zero data — there is no partial success. The field is
-	// not yet in the Mesh UnifiedPost schema; re-add it here once
-	// ThatsRekt/thatsRekt#132 has merged and the schema exposes it.
 	const query = `
 		query Notifier($limit: Int!) {
 			posts(limit: $limit, offset: 0) {
@@ -122,6 +105,7 @@ func (c *Client) LatestPosts(ctx context.Context, limit int) ([]Post, error) {
 					createdAtTimestamp
 					attackedAt
 					lastUpdatedAt
+					actionCount
 					attackers
 					victims
 				}

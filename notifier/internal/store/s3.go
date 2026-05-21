@@ -52,6 +52,14 @@ type PostState struct {
 	// which direction, so a single user can't tap ✓ ten times. Keyed
 	// by `tg_user_id` (string for JSON friendliness).
 	Voters map[string]string `json:"voters"` // direction: "up" | "down"
+
+	// Snapshot of the last on-chain state seen for this post. Used for
+	// amendment change-detection: if the current poll returns a different
+	// ActionCount or LastUpdatedAt, the post has been amended on-chain.
+	// Both fields are zero-value for posts published before N2 deployed;
+	// those are treated as "unchanged" (no spurious re-edit on first boot).
+	LastActionCount int    `json:"lastActionCount"`
+	LastUpdatedAt   string `json:"lastUpdatedAt"`
 }
 
 // Store is the S3-backed state holder. Methods are safe to call from
@@ -72,6 +80,17 @@ func New(client *s3.Client, bucket, key string) *Store {
 		bucket: bucket,
 		key:    key,
 		client: client,
+		state: State{
+			LastSeenByChain: map[string]string{},
+			Posts:           map[string]PostState{},
+		},
+	}
+}
+
+// NewInMemory returns a zero-dependency, S3-free Store for use in tests.
+// Save is a no-op. All other methods work identically to the production Store.
+func NewInMemory() *Store {
+	return &Store{
 		state: State{
 			LastSeenByChain: map[string]string{},
 			Posts:           map[string]PostState{},
@@ -121,10 +140,11 @@ func (s *Store) Load(ctx context.Context) error {
 }
 
 // Save flushes the in-memory state to S3. Idempotent — no-op if no
-// mutations have happened since the last save.
+// mutations have happened since the last save, or if the store was created
+// with NewInMemory (no S3 client).
 func (s *Store) Save(ctx context.Context) error {
 	s.mu.Lock()
-	if !s.dirty {
+	if !s.dirty || s.client == nil {
 		s.mu.Unlock()
 		return nil
 	}
@@ -173,11 +193,70 @@ func (s *Store) SetLastSeen(chainSlug, id string) {
 func (s *Store) RegisterPost(postID string, msgID int64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.state.Posts[postID] = PostState{
-		MessageID: msgID,
-		Voters:    map[string]string{},
+	ps := s.state.Posts[postID] // preserve existing snapshot if any
+	ps.MessageID = msgID
+	if ps.Voters == nil {
+		ps.Voters = map[string]string{}
 	}
+	s.state.Posts[postID] = ps
 	s.dirty = true
+}
+
+// UpdatePostSnapshot records the on-chain action count and lastUpdatedAt for
+// `postID` so the next poll can detect amendments (a change in either value
+// signals that the post has been amended on-chain).
+func (s *Store) UpdatePostSnapshot(postID string, actionCount int, lastUpdatedAt string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	ps := s.state.Posts[postID]
+	ps.LastActionCount = actionCount
+	ps.LastUpdatedAt = lastUpdatedAt
+	s.state.Posts[postID] = ps
+	s.dirty = true
+}
+
+// MessageIDFor returns the Telegram message id for a known post, and true if
+// the post is in the store. Returns 0, false for unknown posts.
+func (s *Store) MessageIDFor(postID string) (int64, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	ps, ok := s.state.Posts[postID]
+	if !ok {
+		return 0, false
+	}
+	return ps.MessageID, true
+}
+
+// HasSnapshot reports whether a post in the store has a non-zero-value
+// amendment snapshot (LastActionCount != 0 or LastUpdatedAt != ""). Returns
+// false for posts that are absent from the store or that have a zero-value
+// snapshot (e.g. posts published before N2 deployed — "pre-N2 posts").
+func (s *Store) HasSnapshot(postID string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	ps, ok := s.state.Posts[postID]
+	if !ok {
+		return false
+	}
+	return ps.LastActionCount != 0 || ps.LastUpdatedAt != ""
+}
+
+// HasChanged reports whether the given (actionCount, lastUpdatedAt) pair
+// differs from what was last recorded for postID.
+//
+// Callers must only invoke this after confirming a snapshot exists via
+// HasSnapshot (or equivalent logic in PollOnce). The function returns false
+// for posts absent from the store; the zero-value snapshot case is no longer
+// handled here — PollOnce distinguishes "no snapshot" from "unchanged"
+// explicitly using HasSnapshot.
+func (s *Store) HasChanged(postID string, actionCount int, lastUpdatedAt string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	ps, ok := s.state.Posts[postID]
+	if !ok {
+		return false
+	}
+	return ps.LastActionCount != actionCount || ps.LastUpdatedAt != lastUpdatedAt
 }
 
 // PostState returns the current vote-tracking state for a post. The second
