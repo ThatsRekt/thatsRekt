@@ -119,6 +119,7 @@ jobs:
               BUILD_ARGS+=(--build-arg "VITE_GRAPHQL_ENDPOINT=/graphql")
               BUILD_ARGS+=(--build-arg "VITE_USE_MOCK_DATA=false")
               BUILD_ARGS+=(--build-arg "VITE_SHOW_LOCAL_FORKS=false")
+              BUILD_ARGS+=(--build-arg "VITE_SHOW_TESTNETS=false")
           fi
 
           docker buildx build \
