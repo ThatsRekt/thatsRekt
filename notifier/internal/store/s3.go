@@ -246,6 +246,20 @@ func (s *Store) StoredPosts() []StoredPostEntry {
 	return out
 }
 
+// SetChainSlug writes the chain slug for a post that was published before N3
+// deployed (ChainSlug was not stored at publish time). It is idempotent: calling
+// it when ChainSlug is already set is a no-op with respect to the stored value,
+// though the dirty flag is still updated to keep flush semantics consistent.
+// After this call, StoredPosts will include the post in its result set.
+func (s *Store) SetChainSlug(postID, chainSlug string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	ps := s.state.Posts[postID]
+	ps.ChainSlug = chainSlug
+	s.state.Posts[postID] = ps
+	s.dirty = true
+}
+
 // UpdatePostSnapshot records the on-chain action count and lastUpdatedAt for
 // `postID` so the next poll can detect amendments (a change in either value
 // signals that the post has been amended on-chain).

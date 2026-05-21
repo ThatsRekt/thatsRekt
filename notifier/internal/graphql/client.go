@@ -132,15 +132,13 @@ func (c *Client) PostById(ctx context.Context, chainSlug, onchainID string) (*Po
 	}
 
 	// Build the query dynamically using the chain prefix. The field name is
-	// e.g. "Base_postById" for chain slug "base". We request only the fields
-	// needed by the retract-detection pass.
+	// e.g. "Base_postById" for chain slug "base". Request only the fields
+	// decoded by PostByIdResult: removed and title.
 	query := fmt.Sprintf(`
 		query NotifierPostById($id: String!) {
 			%spostById(id: $id) {
-				id
 				removed
 				title
-				attackerLinks { address { id } }
 			}
 		}
 	`, prefix)

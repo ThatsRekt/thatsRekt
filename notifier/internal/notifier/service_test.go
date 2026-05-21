@@ -668,6 +668,110 @@ func TestPollOnce_RetractIsIdempotent(t *testing.T) {
 	}
 }
 
+// TestPollOnce_PreN3BackfillChainSlug verifies that a mapped pre-N3 post whose
+// stored ChainSlug is "" (every post published before N3 deployed) gets its
+// ChainSlug back-filled from the feed on the next poll, making it visible to
+// StoredPosts and therefore to checkRetracts.
+//
+// Two-poll sequence:
+//   - Poll 1: post appears in the feed, is mapped but has ChainSlug=="".
+//     PollOnce must write the ChainSlug from p.Chain.Slug to the store.
+//     StoredPosts must return the post after this poll.
+//   - Poll 2: feed is empty (post retracted, filtered out by gateway); postById
+//     returns removed=true. checkRetracts must now detect the retract and edit
+//     the message to RETRACTED state.
+func TestPollOnce_PreN3BackfillChainSlug(t *testing.T) {
+	// Arrange: store has base-1 mapped with NO ChainSlug (pre-N3 state).
+	// We use NewInMemory + RegisterPost with an empty slug to simulate
+	// a post that was published before N3 deployed.
+	st := store.NewInMemory()
+	st.RegisterPost("base-1", 55, "") // empty slug — pre-N3 backlog
+	st.SetLastSeen("base", "base-1")
+	st.UpdatePostSnapshot("base-1", basePost().ActionCount, basePost().LastUpdatedAt)
+
+	// Verify precondition: StoredPosts skips the post because ChainSlug=="".
+	if got := st.StoredPosts(); len(got) != 0 {
+		t.Fatalf("precondition failed: expected StoredPosts to be empty before back-fill, got %d entries", len(got))
+	}
+
+	bot := &stubBot{}
+	// Poll 1 feed: post is still live (not yet retracted) — appears in feed.
+	gql := &stubGQL{
+		posts: []graphql.Post{basePost()},
+		// postById not called in poll 1 because StoredPosts is empty pre-back-fill.
+		postByIdFn: nil,
+	}
+
+	svc := &notifier.Service{
+		GQL:       gql,
+		Bot:       bot,
+		Store:     st,
+		ChannelID: "@testchan",
+		SiteURL:   "https://thatsrekt.com",
+		Logger:    makeTestLogger(),
+	}
+
+	// --- Poll 1: back-fill ChainSlug ---
+	svc.PollOnce(context.Background())
+
+	// After poll 1, StoredPosts must include base-1 (ChainSlug was back-filled).
+	stored := st.StoredPosts()
+	if len(stored) != 1 {
+		t.Fatalf("poll 1: expected StoredPosts to have 1 entry after back-fill, got %d", len(stored))
+	}
+	if stored[0].PostID != "base-1" {
+		t.Errorf("poll 1: expected stored post id 'base-1', got %q", stored[0].PostID)
+	}
+	if stored[0].ChainSlug != "base" {
+		t.Errorf("poll 1: expected stored ChainSlug 'base', got %q", stored[0].ChainSlug)
+	}
+
+	// No Telegram activity on poll 1 — back-fill is a store-only operation.
+	bot.mu.Lock()
+	sends1 := len(bot.sends)
+	edits1 := len(bot.edits)
+	bot.mu.Unlock()
+	if sends1 != 0 {
+		t.Errorf("poll 1: expected 0 sends (back-fill only), got %d", sends1)
+	}
+	if edits1 != 0 {
+		t.Errorf("poll 1: expected 0 edits (back-fill only), got %d", edits1)
+	}
+
+	// --- Poll 2: post retracted — checkRetracts must detect and edit ---
+	gql.mu.Lock()
+	gql.posts = []graphql.Post{} // post is gone from feed (filtered by gateway)
+	gql.postByIdFn = func(chainSlug, onchainID string) (*graphql.PostByIdResult, error) {
+		if chainSlug == "base" && onchainID == "1" {
+			return retractedPostByIdResult(), nil
+		}
+		return nil, nil
+	}
+	gql.mu.Unlock()
+
+	svc.PollOnce(context.Background())
+
+	bot.mu.Lock()
+	edits2 := len(bot.edits)
+	var editMsgID int64
+	var editText string
+	if edits2 > 0 {
+		editMsgID = bot.edits[0].messageID
+		editText = bot.edits[0].text
+	}
+	bot.mu.Unlock()
+
+	if edits2 != 1 {
+		t.Errorf("poll 2: expected 1 retract edit after back-fill, got %d", edits2)
+	}
+	if editMsgID != 55 {
+		t.Errorf("poll 2: expected edit on message_id=55, got %d", editMsgID)
+	}
+	if !strings.Contains(editText, "RETRACTED") {
+		t.Errorf("poll 2: edited message must contain RETRACTED, got:\n%s", editText)
+	}
+}
+
 // TestPollOnce_RetractRemovesVoteKeyboard verifies the yellow-2 fix: the
 // retract edit explicitly sends an empty InlineKeyboardMarkup rather than nil.
 // Passing nil to EditMessageText would omit reply_markup from the request body

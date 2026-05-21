@@ -184,6 +184,23 @@ func (s *Service) PollOnce(ctx context.Context) {
 			continue
 		}
 
+		// Back-fill ChainSlug for posts published before N3 deployed.
+		// Every pre-N3 post has ChainSlug=="" in the store because RegisterPost
+		// did not gain the chainSlug parameter until N3. Without a ChainSlug,
+		// StoredPosts() skips the post and checkRetracts can never probe it.
+		//
+		// The unified posts feed carries p.Chain.Slug for every non-retracted
+		// post. We use it here to populate the missing slug. The operation is
+		// idempotent: subsequent polls that find ChainSlug already set are
+		// no-ops (SetChainSlug writes the same value again, which is harmless).
+		if ps, ok := s.Store.PostState(p.ID); ok && ps.ChainSlug == "" {
+			s.Store.SetChainSlug(p.ID, p.Chain.Slug)
+			s.Logger.Info("back-filled ChainSlug for pre-N3 post",
+				"post_id", p.ID,
+				"chain", p.Chain.Slug,
+			)
+		}
+
 		// Post is mapped. Differentiate by snapshot state.
 		if !s.Store.HasSnapshot(p.ID) {
 			// --- State 2: mapped + no snapshot (pre-N2 post) ---
