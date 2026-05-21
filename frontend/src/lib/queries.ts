@@ -297,8 +297,12 @@ export async function fetchFeedPage(
 ): Promise<FeedPage> {
   if (USE_MOCK) {
     const all = await mockFetchFeed(1000, 'newest')
+    // Mock posts are chain-agnostic (the factory sets no `chain`). A
+    // post with no chain is unscoped — it passes every filter — so the
+    // mock feed stays populated now that the live feed always sends an
+    // explicit chain list rather than `undefined`.
     const filtered = chainSlugs?.length
-      ? all.filter((p) => p.chain && chainSlugs.includes(p.chain.slug))
+      ? all.filter((p) => !p.chain || chainSlugs.includes(p.chain.slug))
       : all
     // Mock posts default to !purged (mock factory sets it false); kept
     // here to match the live-path contract.

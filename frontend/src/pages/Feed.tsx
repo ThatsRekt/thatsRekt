@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useInfiniteQuery, useQueryClient } from '@tanstack/react-query'
 import { fetchFeedPage, type FeedPost, type SortOption } from '../lib/queries'
 import { selectArchive, formatAmountUsd, type ArchivePost } from '../lib/archive'
+import { liveIndexedChains } from '../lib/chains'
 import { PostCard } from '../components/PostCard'
 import { ChainSelector } from '../components/ChainSelector'
 import { ArchiveDivider } from '../components/ArchiveDivider'
@@ -29,9 +30,17 @@ export function Feed() {
   const { showArchive, setShowArchive } = useArchiveToggle()
 
   // Pass an array (single-element when scoped) — Mesh accepts a list.
+  // When no chain is picked we still send an explicit list — the
+  // visible live-indexed chains, which excludes testnets and local
+  // forks. Sending `undefined` would make Mesh fan out to every
+  // enabled chain and leak testnet hack alerts into the production
+  // feed (client-side post filtering isn't an option — it silently
+  // shrinks pages and breaks pagination).
   // queryKey includes the filter so TanStack discriminates per scope and
   // refetches cleanly on switch.
-  const chainSlugs = chainFilter ? [chainFilter] : undefined
+  const chainSlugs = chainFilter
+    ? [chainFilter]
+    : liveIndexedChains().map((c) => c.slug)
 
   const queryClient = useQueryClient()
 

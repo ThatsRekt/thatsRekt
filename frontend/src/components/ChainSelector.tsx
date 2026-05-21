@@ -45,7 +45,13 @@ export function ChainSelector({ value, onChange }: ChainSelectorProps) {
   const options: readonly Option[] = useMemo(() => {
     const chains = visibleChains().map<Option>((c) => ({
       value: c.slug,
-      label: c.isLocalFork ? `${c.badge} · local` : c.badge,
+      // `· local` / `· testnet` suffixes only ever render in dev —
+      // both categories are gated out of production `visibleChains()`.
+      label: c.isLocalFork
+        ? `${c.badge} · local`
+        : c.isTestnet
+          ? `${c.badge} · testnet`
+          : c.badge,
     }))
     return [{ value: null, label: 'all chains' }, ...chains]
   }, [])

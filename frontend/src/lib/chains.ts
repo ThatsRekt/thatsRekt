@@ -33,6 +33,14 @@ export interface FrontendChain {
   /** True for anvil forks — explorer links show forked-chain context, not local. */
   readonly isLocalFork: boolean
   /**
+   * True for public testnets (Sepolia, Base Sepolia). Hidden from the
+   * production UI — end users only care about real-money chains — but
+   * still indexed by Mesh so a dev build can surface them via the
+   * `VITE_SHOW_TESTNETS` gate. Distinct from `isLocalFork`: testnets
+   * are real, shared, persistent networks; local forks are not.
+   */
+  readonly isTestnet: boolean
+  /**
    * Whether the live indexer ingests this chain. `false` for chains
    * that exist only to render archive posts (pre-platform attacks);
    * the live feed will always be empty when these are picked, but the
@@ -60,6 +68,7 @@ export const CHAINS: Readonly<Record<ChainSlug, FrontendChain>> = Object.freeze(
     badge: 'anvil-eth',
     explorer: 'https://etherscan.io',
     isLocalFork: true,
+    isTestnet: false,
     liveIndexed: true,
   },
   'anvil-base': {
@@ -69,6 +78,7 @@ export const CHAINS: Readonly<Record<ChainSlug, FrontendChain>> = Object.freeze(
     badge: 'anvil-base',
     explorer: 'https://basescan.org',
     isLocalFork: true,
+    isTestnet: false,
     liveIndexed: true,
   },
   ethereum: {
@@ -78,6 +88,7 @@ export const CHAINS: Readonly<Record<ChainSlug, FrontendChain>> = Object.freeze(
     badge: 'ethereum',
     explorer: 'https://etherscan.io',
     isLocalFork: false,
+    isTestnet: false,
     liveIndexed: true,
   },
   base: {
@@ -87,6 +98,7 @@ export const CHAINS: Readonly<Record<ChainSlug, FrontendChain>> = Object.freeze(
     badge: 'base',
     explorer: 'https://basescan.org',
     isLocalFork: false,
+    isTestnet: false,
     liveIndexed: true,
   },
   arbitrum: {
@@ -96,6 +108,7 @@ export const CHAINS: Readonly<Record<ChainSlug, FrontendChain>> = Object.freeze(
     badge: 'arbitrum',
     explorer: 'https://arbiscan.io',
     isLocalFork: false,
+    isTestnet: false,
     liveIndexed: true,
   },
   optimism: {
@@ -105,6 +118,7 @@ export const CHAINS: Readonly<Record<ChainSlug, FrontendChain>> = Object.freeze(
     badge: 'optimism',
     explorer: 'https://optimistic.etherscan.io',
     isLocalFork: false,
+    isTestnet: false,
     liveIndexed: true,
   },
   // ---------------------------------------------------------------------------
@@ -120,6 +134,7 @@ export const CHAINS: Readonly<Record<ChainSlug, FrontendChain>> = Object.freeze(
     badge: 'bsc',
     explorer: 'https://bscscan.com',
     isLocalFork: false,
+    isTestnet: false,
     liveIndexed: false,
   },
   blast: {
@@ -129,10 +144,12 @@ export const CHAINS: Readonly<Record<ChainSlug, FrontendChain>> = Object.freeze(
     badge: 'blast',
     explorer: 'https://blastscan.io',
     isLocalFork: false,
+    isTestnet: false,
     liveIndexed: false,
   },
   // ---------------------------------------------------------------------------
   // Testnets — sorted last; least relevant to a feed of real-world hacks.
+  // Hidden from production via the `VITE_SHOW_TESTNETS` gate (see below).
   // ---------------------------------------------------------------------------
   sepolia: {
     chainId: 11155111,
@@ -141,6 +158,7 @@ export const CHAINS: Readonly<Record<ChainSlug, FrontendChain>> = Object.freeze(
     badge: 'sepolia',
     explorer: 'https://sepolia.etherscan.io',
     isLocalFork: false,
+    isTestnet: true,
     liveIndexed: true,
   },
   'base-sepolia': {
@@ -150,6 +168,7 @@ export const CHAINS: Readonly<Record<ChainSlug, FrontendChain>> = Object.freeze(
     badge: 'base-sepolia',
     explorer: 'https://sepolia.basescan.org',
     isLocalFork: false,
+    isTestnet: true,
     liveIndexed: true,
   },
 })
@@ -185,14 +204,29 @@ export const chainIdFromSlug = (slug: string): number | undefined =>
 const SHOW_LOCAL_FORKS = import.meta.env.VITE_SHOW_LOCAL_FORKS === 'true'
 
 /**
- * The chain set the UI exposes — filters out local forks when not in
- * dev mode. Use this for selectors, contributors lists, anywhere the
- * end user picks or sees a chain. The full `CHAINS` registry remains
- * available for resolving an arbitrary slug (e.g. a post id whose
- * chain is one we'd otherwise hide).
+ * Public testnets (Sepolia, Base Sepolia) are useful while developing
+ * and staging contract deploys, but production end users only care
+ * about real-money chains — a testnet hack alert is noise.
+ *
+ * Default behavior: hide testnets. Set `VITE_SHOW_TESTNETS=true` in
+ * `.env.local` (dev / staging only) to surface them in the chain
+ * selector, live feed, etc. The Mesh gateway still indexes them — this
+ * is purely a UI gate, mirroring `SHOW_LOCAL_FORKS`.
+ */
+const SHOW_TESTNETS = import.meta.env.VITE_SHOW_TESTNETS === 'true'
+
+/**
+ * The chain set the UI exposes — filters out local forks and public
+ * testnets when not in dev mode. Use this for selectors, contributors
+ * lists, anywhere the end user picks or sees a chain. The full
+ * `CHAINS` registry remains available for resolving an arbitrary slug
+ * (e.g. a post id whose chain is one we'd otherwise hide).
  */
 export const visibleChains = (): readonly FrontendChain[] =>
-  Object.values(CHAINS).filter((c) => SHOW_LOCAL_FORKS || !c.isLocalFork)
+  Object.values(CHAINS).filter(
+    (c) =>
+      (SHOW_LOCAL_FORKS || !c.isLocalFork) && (SHOW_TESTNETS || !c.isTestnet),
+  )
 
 /**
  * Subset of `visibleChains()` whose entries are ingested by the live
