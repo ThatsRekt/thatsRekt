@@ -60,6 +60,20 @@ type PostState struct {
 	// those are treated as "unchanged" (no spurious re-edit on first boot).
 	LastActionCount int    `json:"lastActionCount"`
 	LastUpdatedAt   string `json:"lastUpdatedAt"`
+
+	// ChainSlug is the chain this post lives on (e.g. "base", "ethereum").
+	// Stored at publish time so the retract-detection pass can call the
+	// correct per-chain <Prefix>_postById query without re-deriving the
+	// chain from the composite post id. Zero-value ("") for posts recorded
+	// before N3 deployed; those posts are skipped by the retract pass
+	// (they will be picked up as soon as they next appear in the posts feed
+	// and their chain slug is re-recorded via publish).
+	ChainSlug string `json:"chainSlug,omitempty"`
+
+	// Retracted records that this post has already been edited to the
+	// RETRACTED state in Telegram. Once true, subsequent polls that still
+	// see removed=true are no-ops — the retract edit is idempotent.
+	Retracted bool `json:"retracted,omitempty"`
 }
 
 // Store is the S3-backed state holder. Methods are safe to call from
@@ -189,15 +203,59 @@ func (s *Store) SetLastSeen(chainSlug, id string) {
 }
 
 // RegisterPost records that we just posted `postID` to Telegram with
-// message id `msgID`. Initialises empty vote state.
-func (s *Store) RegisterPost(postID string, msgID int64) {
+// message id `msgID` for the given `chainSlug`. Initialises empty vote state.
+func (s *Store) RegisterPost(postID string, msgID int64, chainSlug string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	ps := s.state.Posts[postID] // preserve existing snapshot if any
 	ps.MessageID = msgID
+	ps.ChainSlug = chainSlug
 	if ps.Voters == nil {
 		ps.Voters = map[string]string{}
 	}
+	s.state.Posts[postID] = ps
+	s.dirty = true
+}
+
+// StoredPostEntry is a minimal snapshot of a stored post, used by the
+// retract-detection pass to iterate posts without exposing the full PostState.
+type StoredPostEntry struct {
+	PostID    string
+	MessageID int64
+	ChainSlug string
+}
+
+// StoredPosts returns all posts currently tracked by the store that are not
+// yet marked retracted and have a known chain slug (set at publish time).
+// The retract-detection pass iterates this slice to decide which posts to
+// probe via the per-chain postById query.
+func (s *Store) StoredPosts() []StoredPostEntry {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]StoredPostEntry, 0, len(s.state.Posts))
+	for id, ps := range s.state.Posts {
+		if ps.Retracted || ps.ChainSlug == "" {
+			continue
+		}
+		out = append(out, StoredPostEntry{
+			PostID:    id,
+			MessageID: ps.MessageID,
+			ChainSlug: ps.ChainSlug,
+		})
+	}
+	return out
+}
+
+// SetChainSlug writes the chain slug for a post that was published before N3
+// deployed (ChainSlug was not stored at publish time). It is idempotent: calling
+// it when ChainSlug is already set is a no-op with respect to the stored value,
+// though the dirty flag is still updated to keep flush semantics consistent.
+// After this call, StoredPosts will include the post in its result set.
+func (s *Store) SetChainSlug(postID, chainSlug string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	ps := s.state.Posts[postID]
+	ps.ChainSlug = chainSlug
 	s.state.Posts[postID] = ps
 	s.dirty = true
 }
@@ -257,6 +315,31 @@ func (s *Store) HasChanged(postID string, actionCount int, lastUpdatedAt string)
 		return false
 	}
 	return ps.LastActionCount != actionCount || ps.LastUpdatedAt != lastUpdatedAt
+}
+
+// IsRetracted reports whether the RETRACTED edit has already been applied to
+// this post's Telegram message. Returns false for unknown posts, so the first
+// retract poll always triggers the edit.
+func (s *Store) IsRetracted(postID string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	ps, ok := s.state.Posts[postID]
+	if !ok {
+		return false
+	}
+	return ps.Retracted
+}
+
+// MarkRetracted records that the RETRACTED edit has been applied for postID.
+// Subsequent calls with the same postID are idempotent (setting true to true
+// is a no-op; the dirty flag is still set to ensure the state is persisted).
+func (s *Store) MarkRetracted(postID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	ps := s.state.Posts[postID]
+	ps.Retracted = true
+	s.state.Posts[postID] = ps
+	s.dirty = true
 }
 
 // PostState returns the current vote-tracking state for a post. The second

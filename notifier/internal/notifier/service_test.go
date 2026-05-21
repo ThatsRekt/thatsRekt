@@ -1,15 +1,27 @@
-// Package notifier_test — service-level tests for amendment handling (N2).
+// Package notifier_test — service-level tests for amendment handling (N2) and
+// retract handling (N3).
 //
-// These tests exercise the poll loop's amendment path through stub
-// implementations of the Telegram bot and GraphQL client. No network, no S3.
+// These tests exercise the poll loop through stub implementations of the
+// Telegram bot and GraphQL client. No network, no S3.
 //
-// Covered acceptance criteria (issue #128):
+// Covered acceptance criteria (issue #128, N2):
 //   - Amendment edits the existing Telegram message via the stored tg_message_id;
 //     no new message is posted.
 //   - The edited message reflects the new content and an incremented rev N.
 //   - A changed post with no stored message falls back to a fresh publish.
 //   - Pre-N2 posts (zero-value snapshot) are back-filled on first poll without
 //     triggering an edit; a subsequent amendment is then detected and edited.
+//
+// Covered acceptance criteria (issue #129, N3):
+//   - A retracted post (detected via postById) edits the existing Telegram
+//     message to RETRACTED state.
+//   - The message is never deleted (no DeleteMessage call).
+//   - A retracted post with no stored message_id is a no-op (postById returns
+//     removed=true, but the post is not in the store — nothing to edit).
+//   - Retract is idempotent: repeated polls on an already-retracted post do not
+//     trigger additional edits.
+//   - The retract edit sends an explicitly empty keyboard (not nil) to remove
+//     the vote buttons — passing nil would leave the existing keyboard intact.
 package notifier_test
 
 import (
@@ -29,10 +41,15 @@ import (
 
 // ---- stubs ---------------------------------------------------------------
 
-// stubGQL implements notifier.GQLClient. It serves a fixed slice of posts.
+// stubGQL implements notifier.GQLClient. It serves a fixed slice of posts via
+// LatestPosts and a configurable postById response via PostById.
 type stubGQL struct {
 	mu    sync.Mutex
 	posts []graphql.Post
+
+	// postByIdFn, when non-nil, is called by PostById. If nil, PostById
+	// returns (nil, nil) (post not found / not retracted).
+	postByIdFn func(chainSlug, onchainID string) (*graphql.PostByIdResult, error)
 }
 
 func (g *stubGQL) LatestPosts(_ context.Context, _ int) ([]graphql.Post, error) {
@@ -43,11 +60,24 @@ func (g *stubGQL) LatestPosts(_ context.Context, _ int) ([]graphql.Post, error) 
 	return out, nil
 }
 
-// stubBot implements notifier.TelegramBot. It records sends and edits.
+func (g *stubGQL) PostById(_ context.Context, chainSlug, onchainID string) (*graphql.PostByIdResult, error) {
+	g.mu.Lock()
+	fn := g.postByIdFn
+	g.mu.Unlock()
+	if fn == nil {
+		return nil, nil
+	}
+	return fn(chainSlug, onchainID)
+}
+
+// stubBot implements notifier.TelegramBot. It records sends, edits, and
+// keyboard arguments passed to EditMessageText so tests can assert the
+// keyboard-removal behaviour of retractEdit.
 type stubBot struct {
 	mu      sync.Mutex
 	sends   []sendCall
 	edits   []editCall
+	deletes int
 	nextID  int64
 }
 
@@ -60,6 +90,7 @@ type editCall struct {
 	chatID    string
 	messageID int64
 	text      string
+	keyboard  *telegram.InlineKeyboardMarkup // nil means not sent; non-nil means sent
 }
 
 func (b *stubBot) SendMessage(_ context.Context, chatID, text string, _ *telegram.InlineKeyboardMarkup) (int64, error) {
@@ -70,10 +101,10 @@ func (b *stubBot) SendMessage(_ context.Context, chatID, text string, _ *telegra
 	return b.nextID, nil
 }
 
-func (b *stubBot) EditMessageText(_ context.Context, chatID string, messageID int64, text string, _ *telegram.InlineKeyboardMarkup) error {
+func (b *stubBot) EditMessageText(_ context.Context, chatID string, messageID int64, text string, kb *telegram.InlineKeyboardMarkup) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	b.edits = append(b.edits, editCall{chatID: chatID, messageID: messageID, text: text})
+	b.edits = append(b.edits, editCall{chatID: chatID, messageID: messageID, text: text, keyboard: kb})
 	return nil
 }
 
@@ -122,13 +153,13 @@ func amendedPost() graphql.Post {
 // The store is initialised directly (not via S3) so tests need no AWS.
 func populatedStore(postID string, msgID int64, p graphql.Post) *store.Store {
 	st := store.NewInMemory()
-	st.RegisterPost(postID, msgID)
+	st.RegisterPost(postID, msgID, p.Chain.Slug)
 	st.SetLastSeen(p.Chain.Slug, postID)
 	st.UpdatePostSnapshot(postID, p.ActionCount, p.LastUpdatedAt)
 	return st
 }
 
-// ---- tests -----------------------------------------------------------------
+// ---- N2 tests -----------------------------------------------------------------
 
 // TestPollOnce_AmendmentEditsExistingMessage is the primary acceptance
 // criterion: an amended post (changed ActionCount/LastUpdatedAt) that is
@@ -307,7 +338,7 @@ func TestPollOnce_PreN2BackfillThenDetect(t *testing.T) {
 	// Arrange: base-1 is mapped (has a tg_message_id) but has a zero-value
 	// snapshot — exactly what every N1 post looks like right after N2 deploys.
 	st := store.NewInMemory()
-	st.RegisterPost("base-1", 42)
+	st.RegisterPost("base-1", 42, "base")
 	st.SetLastSeen("base", "base-1")
 	// Deliberately NOT calling UpdatePostSnapshot — snapshot stays {0, ""}.
 
@@ -398,4 +429,395 @@ func TestPollOnce_AmendEditMissingPostStateReturnsError(t *testing.T) {
 	// implementation target; its correctness is validated by code inspection
 	// and the guard returning fmt.Errorf rather than silently proceeding.
 	t.Skip("guard-clause test: validated by code inspection of amendEdit ok-check")
+}
+
+// ---- N3: retract handling tests --------------------------------------------
+//
+// N3 retract detection uses the per-chain postById query, NOT the unified
+// posts feed. The gateway's posts(...) feed permanently excludes retracted
+// posts (removed_eq: false filter). The checkRetracts pass in PollOnce calls
+// PostById for each stored, non-retracted post to detect the removed flag.
+//
+// Test strategy: populate the store with a known post, configure stubGQL's
+// postByIdFn to return removed=true for that post's (chain, onchainID), then
+// call PollOnce and assert that retractEdit fired exactly once on the correct
+// message id.
+
+// retractedPostByIdResult returns a PostByIdResult with Removed=true and the
+// title from basePost, matching what the real postById query would return.
+func retractedPostByIdResult() *graphql.PostByIdResult {
+	return &graphql.PostByIdResult{
+		Removed: true,
+		Title:   "Butter Bridge Hack",
+	}
+}
+
+// TestPollOnce_RetractEditsMessageToRetractedState is the primary N3 acceptance
+// criterion: a retracted post (detected via postById) that is in the store must
+// trigger an in-place edit of the existing Telegram message to the RETRACTED
+// state, not a new send.
+func TestPollOnce_RetractEditsMessageToRetractedState(t *testing.T) {
+	pub := basePost()
+	st := populatedStore("base-1", 55, pub)
+
+	bot := &stubBot{}
+	gql := &stubGQL{
+		posts: []graphql.Post{}, // feed is empty — retracted post is absent from feed
+		postByIdFn: func(chainSlug, onchainID string) (*graphql.PostByIdResult, error) {
+			if chainSlug == "base" && onchainID == "1" {
+				return retractedPostByIdResult(), nil
+			}
+			return nil, nil
+		},
+	}
+
+	svc := &notifier.Service{
+		GQL:       gql,
+		Bot:       bot,
+		Store:     st,
+		ChannelID: "@testchan",
+		SiteURL:   "https://thatsrekt.com",
+		Logger:    makeTestLogger(),
+	}
+
+	svc.PollOnce(context.Background())
+
+	bot.mu.Lock()
+	sends := len(bot.sends)
+	edits := len(bot.edits)
+	var editMsgID int64
+	var editText string
+	if edits > 0 {
+		editMsgID = bot.edits[0].messageID
+		editText = bot.edits[0].text
+	}
+	bot.mu.Unlock()
+
+	// No new message — must edit in place.
+	if sends != 0 {
+		t.Errorf("retract: expected 0 sends, got %d", sends)
+	}
+	if edits != 1 {
+		t.Errorf("retract: expected 1 edit, got %d", edits)
+	}
+	// Edit must target the stored message id.
+	if editMsgID != 55 {
+		t.Errorf("retract: expected edit on message_id=55, got %d", editMsgID)
+	}
+	// The edited text must contain "RETRACTED" with struck-through formatting.
+	if !strings.Contains(editText, "RETRACTED") {
+		t.Errorf("retract: edited message must contain RETRACTED, got:\n%s", editText)
+	}
+}
+
+// TestPollOnce_RetractNeverDeletesMessage verifies the auditable-channel
+// guarantee: the notifier never calls DeleteMessage for a retracted post.
+// The stubBot does not implement DeleteMessage; if the service calls it the
+// compiler would catch it (interface mismatch), so this test documents the
+// constraint in test form rather than catching a runtime panic.
+//
+// The real assertion here is: the edit count is 1 (message updated to RETRACTED)
+// and the send count is 0 (no new message posted as a "replacement").
+func TestPollOnce_RetractNeverDeletesMessage(t *testing.T) {
+	pub := basePost()
+	st := populatedStore("base-1", 77, pub)
+
+	bot := &stubBot{}
+	gql := &stubGQL{
+		posts: []graphql.Post{},
+		postByIdFn: func(chainSlug, onchainID string) (*graphql.PostByIdResult, error) {
+			if chainSlug == "base" && onchainID == "1" {
+				return retractedPostByIdResult(), nil
+			}
+			return nil, nil
+		},
+	}
+
+	svc := &notifier.Service{
+		GQL:       gql,
+		Bot:       bot,
+		Store:     st,
+		ChannelID: "@testchan",
+		SiteURL:   "https://thatsrekt.com",
+		Logger:    makeTestLogger(),
+	}
+
+	svc.PollOnce(context.Background())
+
+	bot.mu.Lock()
+	deletes := bot.deletes
+	sends := len(bot.sends)
+	edits := len(bot.edits)
+	bot.mu.Unlock()
+
+	// Channel must stay auditable: no deletes.
+	if deletes != 0 {
+		t.Errorf("retract: message must never be deleted, got %d delete calls", deletes)
+	}
+	// Edit happened, no fresh send.
+	if edits != 1 {
+		t.Errorf("retract: expected 1 edit (RETRACTED state), got %d", edits)
+	}
+	if sends != 0 {
+		t.Errorf("retract: expected 0 sends, got %d", sends)
+	}
+}
+
+// TestPollOnce_RetractUnmappedPostIsNoOp verifies that a retracted post with
+// no stored Telegram message_id is a no-op — no edit, no send, no delete.
+// postById may return removed=true, but without a stored message_id there is
+// nothing to edit; posting a fresh "retracted" message would be channel noise.
+func TestPollOnce_RetractUnmappedPostIsNoOp(t *testing.T) {
+	// The store knows about a different post ("base-2") so the high-water mark
+	// for the chain is above base-1's on-chain id, making base-1 not-new.
+	// base-1 is NOT in the Posts map — StoredPosts() will not return it.
+	st := store.NewInMemory()
+	st.SetLastSeen("base", "base-2")
+
+	bot := &stubBot{}
+	gql := &stubGQL{
+		posts: []graphql.Post{},
+		// Even if postById would return removed=true for base-1, the store
+		// doesn't have base-1 in its Posts map, so checkRetracts never calls
+		// PostById for it — StoredPosts only returns posts the notifier has
+		// already published. No postByIdFn needed.
+		postByIdFn: nil,
+	}
+
+	svc := &notifier.Service{
+		GQL:       gql,
+		Bot:       bot,
+		Store:     st,
+		ChannelID: "@testchan",
+		SiteURL:   "https://thatsrekt.com",
+		Logger:    makeTestLogger(),
+	}
+
+	svc.PollOnce(context.Background())
+
+	bot.mu.Lock()
+	sends := len(bot.sends)
+	edits := len(bot.edits)
+	deletes := bot.deletes
+	bot.mu.Unlock()
+
+	if sends != 0 {
+		t.Errorf("retract unmapped: expected 0 sends, got %d", sends)
+	}
+	if edits != 0 {
+		t.Errorf("retract unmapped: expected 0 edits, got %d", edits)
+	}
+	if deletes != 0 {
+		t.Errorf("retract unmapped: expected 0 deletes, got %d", deletes)
+	}
+}
+
+// TestPollOnce_RetractIsIdempotent verifies that repeated polls on an already-
+// retracted post do not trigger additional edits. The RETRACTED edit happens
+// exactly once; subsequent polls on the same post are no-ops because StoredPosts
+// excludes already-retracted posts.
+func TestPollOnce_RetractIsIdempotent(t *testing.T) {
+	pub := basePost()
+	st := populatedStore("base-1", 88, pub)
+
+	bot := &stubBot{}
+	gql := &stubGQL{
+		posts: []graphql.Post{},
+		postByIdFn: func(chainSlug, onchainID string) (*graphql.PostByIdResult, error) {
+			if chainSlug == "base" && onchainID == "1" {
+				return retractedPostByIdResult(), nil
+			}
+			return nil, nil
+		},
+	}
+
+	svc := &notifier.Service{
+		GQL:       gql,
+		Bot:       bot,
+		Store:     st,
+		ChannelID: "@testchan",
+		SiteURL:   "https://thatsrekt.com",
+		Logger:    makeTestLogger(),
+	}
+
+	// Poll 1 — retract is applied.
+	svc.PollOnce(context.Background())
+
+	bot.mu.Lock()
+	edits1 := len(bot.edits)
+	bot.mu.Unlock()
+
+	if edits1 != 1 {
+		t.Fatalf("retract idempotency: expected 1 edit on first poll, got %d", edits1)
+	}
+
+	// Poll 2 — same post is still retracted. StoredPosts excludes it (Retracted=true).
+	// PostById must NOT be called again; no additional edit.
+	svc.PollOnce(context.Background())
+
+	bot.mu.Lock()
+	edits2 := len(bot.edits)
+	sends2 := len(bot.sends)
+	bot.mu.Unlock()
+
+	if edits2 != 1 {
+		t.Errorf("retract idempotency: expected still 1 edit after second poll, got %d", edits2)
+	}
+	if sends2 != 0 {
+		t.Errorf("retract idempotency: expected 0 sends on second poll, got %d", sends2)
+	}
+}
+
+// TestPollOnce_PreN3BackfillChainSlug verifies that a mapped pre-N3 post whose
+// stored ChainSlug is "" (every post published before N3 deployed) gets its
+// ChainSlug back-filled from the feed on the next poll, making it visible to
+// StoredPosts and therefore to checkRetracts.
+//
+// Two-poll sequence:
+//   - Poll 1: post appears in the feed, is mapped but has ChainSlug=="".
+//     PollOnce must write the ChainSlug from p.Chain.Slug to the store.
+//     StoredPosts must return the post after this poll.
+//   - Poll 2: feed is empty (post retracted, filtered out by gateway); postById
+//     returns removed=true. checkRetracts must now detect the retract and edit
+//     the message to RETRACTED state.
+func TestPollOnce_PreN3BackfillChainSlug(t *testing.T) {
+	// Arrange: store has base-1 mapped with NO ChainSlug (pre-N3 state).
+	// We use NewInMemory + RegisterPost with an empty slug to simulate
+	// a post that was published before N3 deployed.
+	st := store.NewInMemory()
+	st.RegisterPost("base-1", 55, "") // empty slug — pre-N3 backlog
+	st.SetLastSeen("base", "base-1")
+	st.UpdatePostSnapshot("base-1", basePost().ActionCount, basePost().LastUpdatedAt)
+
+	// Verify precondition: StoredPosts skips the post because ChainSlug=="".
+	if got := st.StoredPosts(); len(got) != 0 {
+		t.Fatalf("precondition failed: expected StoredPosts to be empty before back-fill, got %d entries", len(got))
+	}
+
+	bot := &stubBot{}
+	// Poll 1 feed: post is still live (not yet retracted) — appears in feed.
+	gql := &stubGQL{
+		posts: []graphql.Post{basePost()},
+		// postById not called in poll 1 because StoredPosts is empty pre-back-fill.
+		postByIdFn: nil,
+	}
+
+	svc := &notifier.Service{
+		GQL:       gql,
+		Bot:       bot,
+		Store:     st,
+		ChannelID: "@testchan",
+		SiteURL:   "https://thatsrekt.com",
+		Logger:    makeTestLogger(),
+	}
+
+	// --- Poll 1: back-fill ChainSlug ---
+	svc.PollOnce(context.Background())
+
+	// After poll 1, StoredPosts must include base-1 (ChainSlug was back-filled).
+	stored := st.StoredPosts()
+	if len(stored) != 1 {
+		t.Fatalf("poll 1: expected StoredPosts to have 1 entry after back-fill, got %d", len(stored))
+	}
+	if stored[0].PostID != "base-1" {
+		t.Errorf("poll 1: expected stored post id 'base-1', got %q", stored[0].PostID)
+	}
+	if stored[0].ChainSlug != "base" {
+		t.Errorf("poll 1: expected stored ChainSlug 'base', got %q", stored[0].ChainSlug)
+	}
+
+	// No Telegram activity on poll 1 — back-fill is a store-only operation.
+	bot.mu.Lock()
+	sends1 := len(bot.sends)
+	edits1 := len(bot.edits)
+	bot.mu.Unlock()
+	if sends1 != 0 {
+		t.Errorf("poll 1: expected 0 sends (back-fill only), got %d", sends1)
+	}
+	if edits1 != 0 {
+		t.Errorf("poll 1: expected 0 edits (back-fill only), got %d", edits1)
+	}
+
+	// --- Poll 2: post retracted — checkRetracts must detect and edit ---
+	gql.mu.Lock()
+	gql.posts = []graphql.Post{} // post is gone from feed (filtered by gateway)
+	gql.postByIdFn = func(chainSlug, onchainID string) (*graphql.PostByIdResult, error) {
+		if chainSlug == "base" && onchainID == "1" {
+			return retractedPostByIdResult(), nil
+		}
+		return nil, nil
+	}
+	gql.mu.Unlock()
+
+	svc.PollOnce(context.Background())
+
+	bot.mu.Lock()
+	edits2 := len(bot.edits)
+	var editMsgID int64
+	var editText string
+	if edits2 > 0 {
+		editMsgID = bot.edits[0].messageID
+		editText = bot.edits[0].text
+	}
+	bot.mu.Unlock()
+
+	if edits2 != 1 {
+		t.Errorf("poll 2: expected 1 retract edit after back-fill, got %d", edits2)
+	}
+	if editMsgID != 55 {
+		t.Errorf("poll 2: expected edit on message_id=55, got %d", editMsgID)
+	}
+	if !strings.Contains(editText, "RETRACTED") {
+		t.Errorf("poll 2: edited message must contain RETRACTED, got:\n%s", editText)
+	}
+}
+
+// TestPollOnce_RetractRemovesVoteKeyboard verifies the yellow-2 fix: the
+// retract edit explicitly sends an empty InlineKeyboardMarkup rather than nil.
+// Passing nil to EditMessageText would omit reply_markup from the request body
+// (omitempty), causing Telegram to leave the existing vote keyboard intact on
+// the retracted message. An explicitly empty keyboard removes the buttons.
+func TestPollOnce_RetractRemovesVoteKeyboard(t *testing.T) {
+	pub := basePost()
+	st := populatedStore("base-1", 100, pub)
+
+	bot := &stubBot{}
+	gql := &stubGQL{
+		posts: []graphql.Post{},
+		postByIdFn: func(chainSlug, onchainID string) (*graphql.PostByIdResult, error) {
+			if chainSlug == "base" && onchainID == "1" {
+				return retractedPostByIdResult(), nil
+			}
+			return nil, nil
+		},
+	}
+
+	svc := &notifier.Service{
+		GQL:       gql,
+		Bot:       bot,
+		Store:     st,
+		ChannelID: "@testchan",
+		SiteURL:   "https://thatsrekt.com",
+		Logger:    makeTestLogger(),
+	}
+
+	svc.PollOnce(context.Background())
+
+	bot.mu.Lock()
+	edits := bot.edits
+	bot.mu.Unlock()
+
+	if len(edits) != 1 {
+		t.Fatalf("retract keyboard: expected 1 edit, got %d", len(edits))
+	}
+
+	kb := edits[0].keyboard
+	// keyboard must be non-nil — a nil keyboard would leave the existing buttons.
+	if kb == nil {
+		t.Fatalf("retract keyboard: EditMessageText must receive a non-nil keyboard to clear the vote buttons; got nil")
+	}
+	// The keyboard must have zero rows — an explicit empty InlineKeyboardMarkup.
+	if len(kb.InlineKeyboard) != 0 {
+		t.Errorf("retract keyboard: expected 0 keyboard rows (empty), got %d", len(kb.InlineKeyboard))
+	}
 }

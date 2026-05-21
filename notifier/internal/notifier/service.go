@@ -34,6 +34,13 @@ import (
 // an interface so the service can be tested without a real HTTP connection.
 type GQLClient interface {
 	LatestPosts(ctx context.Context, limit int) ([]graphql.Post, error)
+
+	// PostById calls the per-chain <Prefix>_postById query on the Mesh
+	// gateway to read the current removed flag for a stored post. This is
+	// the only data path that surfaces removed=true: the unified posts feed
+	// filters retracted posts out server-side (removed_eq: false).
+	// Returns nil, nil when the post id is not found on the chain's squid.
+	PostById(ctx context.Context, chainSlug, onchainID string) (*graphql.PostByIdResult, error)
 }
 
 // TelegramBot is the subset of telegram.Bot used by the Service. Declared as
@@ -127,6 +134,13 @@ func (s *Service) runPoll(ctx context.Context) {
 //  5. Not new + not in Posts map (notifier never published it) →
 //     fall back to a fresh publish.
 //
+// After the feed loop, a separate retract-detection pass (checkRetracts) calls
+// the per-chain <Prefix>_postById query for each stored, non-retracted post to
+// detect the removed flag. The unified posts feed never surfaces removed=true
+// because the Mesh gateway filters retracted posts out (removed_eq: false in
+// the upstream squid query). Per-chain postById deliberately exposes removed=true
+// so retract state is observable.
+//
 // PollOnce is exported so service_test.go can drive it directly.
 func (s *Service) PollOnce(ctx context.Context) {
 	posts, err := s.GQL.LatestPosts(ctx, s.FetchLimit)
@@ -170,6 +184,23 @@ func (s *Service) PollOnce(ctx context.Context) {
 			continue
 		}
 
+		// Back-fill ChainSlug for posts published before N3 deployed.
+		// Every pre-N3 post has ChainSlug=="" in the store because RegisterPost
+		// did not gain the chainSlug parameter until N3. Without a ChainSlug,
+		// StoredPosts() skips the post and checkRetracts can never probe it.
+		//
+		// The unified posts feed carries p.Chain.Slug for every non-retracted
+		// post. We use it here to populate the missing slug. The operation is
+		// idempotent: subsequent polls that find ChainSlug already set are
+		// no-ops (SetChainSlug writes the same value again, which is harmless).
+		if ps, ok := s.Store.PostState(p.ID); ok && ps.ChainSlug == "" {
+			s.Store.SetChainSlug(p.ID, p.Chain.Slug)
+			s.Logger.Info("back-filled ChainSlug for pre-N3 post",
+				"post_id", p.ID,
+				"chain", p.Chain.Slug,
+			)
+		}
+
 		// Post is mapped. Differentiate by snapshot state.
 		if !s.Store.HasSnapshot(p.ID) {
 			// --- State 2: mapped + no snapshot (pre-N2 post) ---
@@ -194,6 +225,73 @@ func (s *Service) PollOnce(ctx context.Context) {
 			s.Logger.Warn("amendment edit failed", "post_id", p.ID, "err", err)
 			// Don't update snapshot — next poll will retry.
 			continue
+		}
+	}
+
+	// Retract-detection pass: for each stored, non-retracted post, query
+	// the per-chain postById endpoint to check whether it has been retracted.
+	// This runs after every feed poll so retract latency = poll interval.
+	s.checkRetracts(ctx)
+}
+
+// checkRetracts iterates all stored, non-retracted posts and calls the
+// per-chain <Prefix>_postById query for each. When a post has been retracted
+// on-chain (removed=true), the existing Telegram message is edited to the
+// RETRACTED state.
+//
+// Design rationale: the unified posts(...) feed permanently excludes retracted
+// posts (removed_eq: false in the upstream Mesh query, a deliberate product
+// decision from 2026-05-13). Per-chain postById exposes removed=true — this
+// is the gateway's intended path for surfacing retract state to callers that
+// need it (see mesh/src/server.ts, lines around the removed field comment).
+//
+// The pass is O(n) in the number of stored posts with one HTTP round-trip per
+// post. At thatsRekt's scale (tens to low-hundreds of posts lifetime) this is
+// cheap. Posts already marked retracted are excluded by StoredPosts() so the
+// set shrinks monotonically over time.
+func (s *Service) checkRetracts(ctx context.Context) {
+	entries := s.Store.StoredPosts()
+	for _, e := range entries {
+		// Derive the bare on-chain id from the composite post id.
+		// Composite format: "{chainSlug}-{onchainID}" (e.g. "base-42").
+		onchainID := onchainPart(e.PostID)
+		if onchainID == e.PostID {
+			// ID did not contain a separator — unexpected format; skip.
+			s.Logger.Warn("checkRetracts: unexpected post id format — skipping",
+				"post_id", e.PostID,
+			)
+			continue
+		}
+
+		result, err := s.GQL.PostById(ctx, e.ChainSlug, onchainID)
+		if err != nil {
+			s.Logger.Warn("checkRetracts: postById failed",
+				"post_id", e.PostID,
+				"chain", e.ChainSlug,
+				"err", err,
+			)
+			continue
+		}
+		if result == nil {
+			// Post not found on the chain's squid — index lag or wrong id.
+			s.Logger.Warn("checkRetracts: postById returned null",
+				"post_id", e.PostID,
+				"chain", e.ChainSlug,
+			)
+			continue
+		}
+		if !result.Removed {
+			continue
+		}
+
+		// Post is retracted on-chain. Edit the Telegram message.
+		if err := s.retractEdit(ctx, result, e.PostID, e.MessageID); err != nil {
+			s.Logger.Warn("checkRetracts: retract edit failed",
+				"post_id", e.PostID,
+				"chain", e.ChainSlug,
+				"err", err,
+			)
+			// Do NOT mark retracted — retry on next poll.
 		}
 	}
 }
@@ -231,7 +329,7 @@ func (s *Service) publish(ctx context.Context, p graphql.Post) error {
 	if err != nil {
 		return fmt.Errorf("send message: %w", err)
 	}
-	s.Store.RegisterPost(p.ID, msgID)
+	s.Store.RegisterPost(p.ID, msgID, p.Chain.Slug)
 	s.Store.UpdatePostSnapshot(p.ID, p.ActionCount, p.LastUpdatedAt)
 	s.Logger.Info("published",
 		"post_id", p.ID,
@@ -270,6 +368,37 @@ func (s *Service) amendEdit(ctx context.Context, p graphql.Post, msgID int64) er
 		"message_id", msgID,
 		"action_count", p.ActionCount,
 		"last_updated_at", p.LastUpdatedAt,
+	)
+	return nil
+}
+
+// retractEdit edits an existing Telegram message to the struck-through
+// RETRACTED state (N3). It is called by checkRetracts when postById confirms
+// a stored post has been retracted on-chain.
+//
+// The message is never deleted — the channel stays auditable.
+// On success the store is marked retracted so subsequent polls are no-ops.
+//
+// Keyboard removal: passing nil to EditMessageText results in the reply_markup
+// field being omitted from the request body (the Bot API's omitempty behaviour),
+// which causes Telegram to leave the existing keyboard intact. To genuinely
+// remove the vote keyboard from a retracted post, we explicitly send an empty
+// InlineKeyboardMarkup ({"inline_keyboard": []}).
+func (s *Service) retractEdit(ctx context.Context, p *graphql.PostByIdResult, postID string, msgID int64) error {
+	text := telegram.FormatRetractedMessage(p.Title)
+
+	// Explicitly empty keyboard to remove the vote buttons. Passing nil
+	// would omit reply_markup entirely, leaving the existing keyboard intact.
+	emptyKB := &telegram.InlineKeyboardMarkup{InlineKeyboard: [][]telegram.InlineKeyboardButton{}}
+
+	if err := s.Bot.EditMessageText(ctx, s.ChannelID, msgID, text, emptyKB); err != nil {
+		return fmt.Errorf("retract edit message text: %w", err)
+	}
+
+	s.Store.MarkRetracted(postID)
+	s.Logger.Info("retracted",
+		"post_id", postID,
+		"message_id", msgID,
 	)
 	return nil
 }

@@ -397,6 +397,74 @@ func TestFormatPostMessage_MultiLineSource(t *testing.T) {
 	assertAbsent(t, msg, "@rektreporter, https://", "tokens must not be comma-joined")
 }
 
+// TestFormatRetractedMessage verifies that the RETRACTED rendering contains
+// the struck-through RETRACTED marker and does NOT contain the live-post
+// header (N3 acceptance criterion: edit to a struck-through RETRACTED state).
+func TestFormatRetractedMessage(t *testing.T) {
+	note := v2Note(
+		"Butter Bridge V3.1 drained via reentrancy",
+		"base",
+		"0x31e5e5f2a8b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9",
+		"@rektreporter",
+	)
+	p := makePost(struct {
+		title       string
+		note        string
+		actionCount int
+		attackers   []string
+		victims     []string
+		chain       graphql.Chain
+		updatedAt   string
+	}{
+		title:       "Butter Bridge V3.1",
+		note:        note,
+		actionCount: 1,
+		attackers:   []string{"0x4059e47b062D9F959e2059b48cD6dB264EF5279F"},
+		chain:       baseChain,
+		updatedAt:   "2026-05-21T14:00:00Z",
+	})
+
+	msg := telegram.FormatRetractedMessage(p.Title)
+
+	// Must contain the RETRACTED marker.
+	assertContains(t, msg, "RETRACTED", "retracted marker")
+
+	// Telegram HTML struck-through uses <s>…</s>.
+	assertContains(t, msg, "<s>", "struck-through opening tag")
+	assertContains(t, msg, "</s>", "struck-through closing tag")
+
+	// Must NOT contain the live-post "🚨 HACK VERIFIED" header verbatim —
+	// the RETRACTED state replaces, not appends to, the live message.
+	assertAbsent(t, msg, "🚨 <b>HACK VERIFIED</b>", "live header must not appear in retracted message")
+}
+
+// TestFormatRetractedMessage_HTMLSafe verifies that HTML-sensitive characters
+// in the title are escaped even in the RETRACTED rendering.
+func TestFormatRetractedMessage_HTMLSafe(t *testing.T) {
+	note := v2Note("<injected>", "base", "0xaa", "@anon")
+	p := makePost(struct {
+		title       string
+		note        string
+		actionCount int
+		attackers   []string
+		victims     []string
+		chain       graphql.Chain
+		updatedAt   string
+	}{
+		title:       "<b>evil title</b>",
+		note:        note,
+		actionCount: 1,
+		attackers:   []string{"0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"},
+		chain:       baseChain,
+		updatedAt:   "2026-05-21T14:00:00Z",
+	})
+
+	msg := telegram.FormatRetractedMessage(p.Title)
+
+	assertAbsent(t, msg, "<b>evil title</b>", "raw HTML must be escaped in retracted message")
+	assertContains(t, msg, "RETRACTED", "retracted marker must still be present")
+}
+
 // --- helpers ---
 
 func assertContains(t *testing.T, haystack, needle, label string) {
