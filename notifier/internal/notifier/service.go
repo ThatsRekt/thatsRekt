@@ -149,7 +149,7 @@ func onchainPart(id string) string {
 // publish sends one post to Telegram + records its message id + initial
 // (zero) vote counts.
 func (s *Service) publish(ctx context.Context, p graphql.Post) error {
-	text := telegram.FormatPostMessage(p, s.SiteURL)
+	text := telegram.FormatPostMessage(p)
 	kb := telegram.VoteKeyboard(p.ID, 0, 0)
 	msgID, err := s.Bot.SendMessage(ctx, s.ChannelID, text, kb)
 	if err != nil {

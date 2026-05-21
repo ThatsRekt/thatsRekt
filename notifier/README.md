@@ -4,7 +4,9 @@ Long-running Go service that polls the public thatsRekt GraphQL gateway for new 
 
 ## Why
 
-The on-chain registry already supports `confirm` / `disconfirm` from any whitelisted poster. This service is a **read-side amplifier** — it pushes alerts out to a Telegram audience that may not be running browser tabs against the site. The vote buttons are purely Telegram-side engagement signals; canonical truth lives on-chain (and is shown in the Telegram message preview's OG card numbers).
+The on-chain registry already supports `confirm` / `disconfirm` from any whitelisted poster. This service is a **read-side amplifier** — it pushes alerts out to a Telegram audience that may not be running browser tabs against the site.
+
+Each message is a **self-contained v2 on-chain alert**: a header line (`🚨 HACK VERIFIED`), a relative-time + attacked-chain line, a revision counter, a one-line summary, attacker/victim addresses linked to block explorers, exploit tx hashes, and source attribution — all derived directly from the on-chain note. No reliance on Telegram link-preview OG cards. The vote buttons are purely Telegram-side engagement signals; canonical truth lives on-chain.
 
 ## Footprint
 
@@ -50,7 +52,6 @@ State is flushed to S3 on a 15-second timer + on clean shutdown.
 | `STATE_S3_BUCKET` | yes | — | bucket holding the state JSON |
 | `STATE_S3_KEY` | no | `thatsrekt-notifier/state.json` | object key inside the bucket |
 | `GRAPHQL_URL` | no | `https://thatsrekt.com/graphql` | thatsRekt Mesh endpoint |
-| `SITE_URL` | no | `https://thatsrekt.com` | base URL for `/post/:chain/:id` links |
 | `POLL_INTERVAL_SECONDS` | no | `10` | how often to poll for new posts |
 | `FETCH_LIMIT` | no | `25` | how many posts to ask for per cycle |
 
