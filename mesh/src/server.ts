@@ -242,6 +242,8 @@ const additionalTypeDefs = /* GraphQL */ `
     removed: Boolean!
     """True iff governance has purged this post. The gateway filters purged posts out of \`posts(...)\` server-side; surfaced here so detail-fetch paths can defensively render a tombstone."""
     purged: Boolean!
+    """Number of on-chain actions: 1 for the initial post, +1 for each amendment (note, title, attackers, victims)."""
+    actionCount: Int!
     createdAtBlock: Int!
     createdAtTimestamp: String!
     lastUpdatedAt: String!
@@ -317,6 +319,9 @@ const RawPost = z.object({
   // squids that haven't run the purge migration yet — they simply won't
   // project the column, and we coalesce `undefined` to `false` below.
   purged: z.boolean().optional(),
+  // `actionCount` is optional for the same reason — upstreams that haven't
+  // run the ActionCount migration will omit the field; coalesce to 1 below.
+  actionCount: z.number().int().optional(),
   createdAtBlock: z.number().int(),
   createdAtTimestamp: z.string(),
   lastUpdatedAt: z.string(),
@@ -356,6 +361,7 @@ const FETCH_POSTS_QUERY = /* GraphQL */ `
       disconfirmations
       removed
       purged
+      actionCount
       createdAtBlock
       createdAtTimestamp
       lastUpdatedAt
@@ -522,6 +528,9 @@ const buildAdditionalResolvers = (chains: readonly ChainEntry[]) => ({
         // Coalesce undefined → false: tolerates upstreams that haven't
         // applied the purge migration yet.
         purged: post.purged === true,
+        // Coalesce undefined → 1: tolerates upstreams that haven't applied
+        // the ActionCount migration yet (minimum valid value is 1).
+        actionCount: post.actionCount ?? 1,
         createdAtBlock: post.createdAtBlock,
         createdAtTimestamp: post.createdAtTimestamp,
         lastUpdatedAt: post.lastUpdatedAt,

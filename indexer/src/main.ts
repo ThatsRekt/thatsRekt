@@ -303,6 +303,7 @@ async function handlePostCreated(ctx: Ctx, caches: Caches, log: Log): Promise<vo
     poster,
     attackedAt: new Date(Number(e.attackedAt) * 1000),
     lastUpdatedAt: ts,
+    actionCount: 1,
     title: e.title,
     note: e.note,
     confirmations: 0,
@@ -529,6 +530,7 @@ async function handlePostNoteAmended(
   }
   post.note = e.newNote
   post.lastUpdatedAt = ts
+  post.actionCount += 1
 
   caches.edits.push(
     new Edit({
@@ -566,6 +568,7 @@ async function handlePostTitleAmended(
   }
   post.title = e.newTitle
   post.lastUpdatedAt = ts
+  post.actionCount += 1
 
   caches.edits.push(
     new Edit({
@@ -602,6 +605,7 @@ async function handleAttackersAdded(
     return
   }
   post.lastUpdatedAt = ts
+  post.actionCount += 1
 
   const currentNet = BigInt(post.netScore)
   for (const rawAttacker of e.newAttackers) {
@@ -646,6 +650,7 @@ async function handleVictimsAdded(
     return
   }
   post.lastUpdatedAt = ts
+  post.actionCount += 1
 
   for (const rawVictim of e.newVictims) {
     const addr = await getOrCreateAddress(ctx, caches, rawVictim)

@@ -80,6 +80,9 @@ type Post @entity {
   "updated on amendTitle / amendNote / addAttackers / addVictims; mirrors on-chain field"
   lastUpdatedAt: DateTime!
 
+  "1 on PostCreated; incremented by 1 on every amendment event (PostNoteAmended, PostTitleAmended, AttackersAdded, VictimsAdded)"
+  actionCount: Int!
+
   "current title — required at post(), updatable via amendTitle()"
   title: String!
 

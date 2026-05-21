@@ -34,6 +34,13 @@ export class Post {
     lastUpdatedAt!: Date
 
     /**
+     * 1 on PostCreated; incremented by 1 on every amendment event
+     * (PostNoteAmended, PostTitleAmended, AttackersAdded, VictimsAdded)
+     */
+    @IntColumn_({nullable: false})
+    actionCount!: number
+
+    /**
      * current title — required at post(), updatable via amendTitle()
      */
     @StringColumn_({nullable: false})
