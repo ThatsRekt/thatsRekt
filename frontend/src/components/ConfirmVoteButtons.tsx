@@ -82,7 +82,7 @@ export function ConfirmVoteButtons({
     isDown,
     refetch: refetchUserVote,
   } = useUserVote(chainId, postId, address)
-  const { submit, isBroadcasting, isMining, isSuccess, error, hash, reset } =
+  const { submit, isBroadcasting, isMining, isSwitching, isSuccess, error, hash, reset } =
     useConfirmPost(chainId)
 
   // Self-vote detection: connected + connected addr is the post author.
@@ -214,6 +214,10 @@ export function ConfirmVoteButtons({
   }, [error])
 
   const handleClick = async (clicked: 1 | 2) => {
+    // Clear any stale error from a previous attempt so the UI starts clean
+    // on each new click, regardless of what the prior attempt did.
+    reset()
+
     // Disconnected → open the connect picker. No tx submitted.
     if (!isConnected) {
       setModalOpen(true)
@@ -264,7 +268,7 @@ export function ConfirmVoteButtons({
     setOptimisticVote(isToggleOff ? ConfirmDirection.None : clicked)
   }
 
-  const isAnyPending = isBroadcasting || isMining
+  const isAnyPending = isBroadcasting || isMining || isSwitching
 
   // Effective values to render — optimistic overlay wins when set, props
   // are the fallback. The user-vote highlight follows the same pattern.

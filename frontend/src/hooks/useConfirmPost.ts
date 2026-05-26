@@ -45,7 +45,7 @@ export type ConfirmAction =
  */
 export function useConfirmPost(chainId: SupportedChainId) {
   const { chainId: connectedChainId } = useAccount()
-  const { switchChainAsync } = useSwitchChain()
+  const { switchChainAsync, isPending: isSwitching } = useSwitchChain()
 
   const {
     writeContract,
@@ -129,12 +129,14 @@ export function useConfirmPost(chainId: SupportedChainId) {
     hash,
     isBroadcasting,
     isMining,
+    /** True while the wallet's chain-switch prompt is open. */
+    isSwitching,
     isSuccess,
     // Surface whichever stage failed; receipt errors only fire post-broadcast,
     // so `broadcastError` (rejection / chain mismatch / sim failure) takes
     // precedence in the early flow.
     error: broadcastError ?? receiptError ?? null,
-    /** Convenience: any "in flight" state — wallet popup OR mining. */
-    isPending: isBroadcasting || isMining,
+    /** Convenience: any "in flight" state — chain switch, wallet popup, OR mining. */
+    isPending: isBroadcasting || isMining || isSwitching,
   }
 }
