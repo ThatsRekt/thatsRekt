@@ -1,0 +1,57 @@
+name: Frontend PR check
+
+# =============================================================================
+# Mirrors the production Dockerfile build (`frontend/Dockerfile`) on every PR
+# that touches `frontend/**`. Catches lockfile drift and tsc/build failures
+# that would otherwise only surface when the manual `build.yml` workflow is
+# dispatched to produce a deploy image.
+#
+# Specifically catches:
+#   - pnpm-lock.yaml out-of-sync with package.json (the Dockerfile runs
+#     `pnpm install --frozen-lockfile`). E.g. when a contributor adds deps
+#     via `bun add` and forgets to also run `pnpm install --lockfile-only`.
+#   - tsc errors in the production build (the Dockerfile runs `pnpm build`
+#     which is `tsc -b && vite build`).
+#
+# Reproduces the Dockerfile's first 6 RUN steps exactly:
+#   FROM node:20-alpine
+#   corepack enable && corepack prepare pnpm@10.33.2 --activate
+#   pnpm install --frozen-lockfile
+#   pnpm build
+# =============================================================================
+
+on:
+  pull_request:
+    paths:
+      - "frontend/**"
+      - ".github/workflows/frontend-pr-check.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Install + build (matches Dockerfile)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Activate pnpm 10.33.2 via corepack
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.33.2 --activate
+          pnpm --version
+
+      - name: pnpm install --frozen-lockfile
+        run: pnpm install --frozen-lockfile
+
+      - name: pnpm build (tsc -b && vite build)
+        run: pnpm build
