@@ -5,43 +5,26 @@
  * component renders an inline error string so the user can see what
  * went wrong (fixes the silent no-op regression described in #138).
  *
- * Wagmi hooks are mocked at the module level — we don't need a real
- * chain connection to verify the error display path.
+ * Wagmi hooks are mocked at module level — error state is injected via
+ * useWriteContract().error, which useConfirmPost surfaces as its own `error`
+ * field. The real useConfirmPost hook runs here (no hook-level mock) so that
+ * useConfirmPost.test.ts can import the real hook without interference
+ * regardless of test file execution order.
  */
-import { describe, expect, test, mock, beforeAll, afterAll } from 'bun:test'
+import { describe, expect, test, mock, afterEach } from 'bun:test'
 import { render, screen, cleanup } from '@testing-library/react'
 import React from 'react'
 
 // ---------------------------------------------------------------------------
-// Module-level mocks — must be set up before imports that transitively use
-// wagmi. Bun's mock.module applies synchronously before the module graph
-// resolves for this file.
+// Mutable wagmi mock state — error is injected via useWriteContract.
 // ---------------------------------------------------------------------------
 
-// Track calls to useConfirmPost so tests can assert on hook return values.
-let mockConfirmPostReturn: ReturnType<typeof defaultConfirmPostReturn>
+let mockBroadcastError: Error | null = null
 
-function defaultConfirmPostReturn() {
-  return {
-    submit: mock(() => Promise.resolve(true)),
-    reset: mock(() => undefined),
-    hash: undefined as `0x${string}` | undefined,
-    isBroadcasting: false,
-    isMining: false,
-    isSuccess: false,
-    error: null as Error | null,
-    isPending: false,
-  }
-}
-
-mock.module('../src/hooks/useConfirmPost', () => ({
-  useConfirmPost: (_chainId: number) => mockConfirmPostReturn,
-}))
-
-// Minimal wagmi mocks — the component also uses useAccount.
+// Minimal wagmi mocks. useWriteContract.error drives the error display path.
 mock.module('wagmi', () => ({
   useAccount: () => ({
-    address: '0xdeadbeef00000000000000000000000000000001',
+    address: '0xdeadbeef00000000000000000000000000000001' as `0x${string}`,
     isConnected: true,
     chainId: 1,
   }),
@@ -49,7 +32,7 @@ mock.module('wagmi', () => ({
     writeContract: mock(() => undefined),
     data: undefined,
     isPending: false,
-    error: null,
+    error: mockBroadcastError,
     reset: mock(() => undefined),
   }),
   useWaitForTransactionReceipt: () => ({
@@ -59,11 +42,11 @@ mock.module('wagmi', () => ({
   }),
   useSwitchChain: () => ({
     switchChainAsync: mock(() => Promise.resolve()),
+    isPending: false,
   }),
 }))
 
-// Mock hooks that touch chain / contract state — not needed for error display
-// test, return stable empty values.
+// Mock hooks that touch chain / contract state — not needed for error display.
 mock.module('../src/hooks/useIsWhitelisted', () => ({
   useIsWhitelisted: () => ({ isWhitelisted: true, isLoading: false }),
 }))
@@ -83,7 +66,6 @@ mock.module('@tanstack/react-query', () => ({
   }),
 }))
 
-// WhitelistGateModal — not relevant to error display tests.
 mock.module('../src/components/WhitelistGateModal', () => ({
   WhitelistGateModal: () => null,
 }))
@@ -111,11 +93,8 @@ function renderButtons(props: Partial<Parameters<typeof ConfirmVoteButtons>[0]> 
   )
 }
 
-beforeAll(() => {
-  mockConfirmPostReturn = defaultConfirmPostReturn()
-})
-
-afterAll(() => {
+afterEach(() => {
+  mockBroadcastError = null
   cleanup()
 })
 
@@ -125,59 +104,54 @@ afterAll(() => {
 
 describe('ConfirmVoteButtons — error display', () => {
   test('renders no error element when error is null', () => {
-    mockConfirmPostReturn = { ...defaultConfirmPostReturn(), error: null }
+    mockBroadcastError = null
     renderButtons()
     expect(screen.queryByTestId('vote-error')).toBeNull()
-    cleanup()
   })
 
-  test('renders inline error when useConfirmPost returns a non-null error', () => {
+  test('renders inline error when useWriteContract returns a non-null error', () => {
     const err = Object.assign(new Error('nonce too low'), {
       shortMessage: 'nonce too low',
     })
-    mockConfirmPostReturn = { ...defaultConfirmPostReturn(), error: err }
+    mockBroadcastError = err
 
     renderButtons()
 
     const errorEl = screen.getByTestId('vote-error')
     expect(errorEl).not.toBeNull()
     expect(errorEl.textContent).toContain('nonce too low')
-    cleanup()
   })
 
   test('prefers shortMessage over message when available', () => {
     const err = Object.assign(new Error('ContractFunctionExecutionError: long message here'), {
       shortMessage: 'chain mismatch',
     })
-    mockConfirmPostReturn = { ...defaultConfirmPostReturn(), error: err }
+    mockBroadcastError = err
 
     renderButtons()
 
     const errorEl = screen.getByTestId('vote-error')
     expect(errorEl.textContent).toContain('chain mismatch')
     expect(errorEl.textContent).not.toContain('ContractFunctionExecutionError')
-    cleanup()
   })
 
   test('falls back to error.message when shortMessage is absent', () => {
     const err = new Error('user rejected transaction')
-    mockConfirmPostReturn = { ...defaultConfirmPostReturn(), error: err }
+    mockBroadcastError = err
 
     renderButtons()
 
     const errorEl = screen.getByTestId('vote-error')
     expect(errorEl.textContent).toContain('user rejected transaction')
-    cleanup()
   })
 
   test('error element has role=alert for screen readers', () => {
     const err = new Error('tx failed')
-    mockConfirmPostReturn = { ...defaultConfirmPostReturn(), error: err }
+    mockBroadcastError = err
 
     renderButtons()
 
     const errorEl = screen.getByRole('alert')
     expect(errorEl).not.toBeNull()
-    cleanup()
   })
 })

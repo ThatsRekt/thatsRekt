@@ -1,212 +1,195 @@
 /**
- * Unit tests for the chain-switch logic inside useConfirmPost.submit.
+ * Tests for useConfirmPost — drives the real hook via renderHook.
  *
- * Because the hook is a React hook (can't be called outside a component),
- * we test the extracted decision logic by calling the hook's internal
- * paths directly via a controlled test harness that mocks wagmi.
+ * Wagmi is mocked at the module boundary so we never need a real chain
+ * connection. The real hook is exercised through renderHook; the test
+ * drives submit() and asserts on the mocked wagmi primitives
+ * (writeContract, switchChainAsync) to verify the chain-switch logic.
  *
- * Specifically we verify:
- *   1. `switchChainAsync` is called when connectedChainId !== chainId.
- *   2. `writeContract` is NOT called when the user rejects the switch.
- *   3. `writeContract` IS called when chains already match (no switch needed).
- *   4. `writeContract` IS called after a successful switch.
- *   5. `submit` returns `false` on rejected switch, `true` otherwise.
- *
- * We simulate the hook's logic by reconstructing the submit closure with
- * mocked wagmi primitives — this is the lightest approach that avoids
- * needing a full React rendering environment while still covering the
- * critical correctness invariants.
+ * Scenarios covered:
+ *   1. Happy path — chains match, vote action fires writeContract directly.
+ *   2. Chain mismatch — switchChainAsync called first, then writeContract.
+ *   3. User rejects chain switch — submit resolves false, no writeContract.
+ *   4. Rejection does not throw — resolves to false, not rejects.
+ *   5. Clear action — writeContract called with functionName 'unconfirm'.
+ *   6. No registry for chainId — submit rejects with a descriptive error.
  */
-import { describe, expect, test, mock } from 'bun:test'
+import { describe, expect, test, mock, beforeEach } from 'bun:test'
+import { renderHook, act } from '@testing-library/react'
 import type { ConfirmAction } from '../src/hooks/useConfirmPost'
-import { registryAddress } from '../src/lib/contracts'
 
 // ---------------------------------------------------------------------------
-// Minimal re-implementation of the submit closure (mirrors useConfirmPost.ts)
-// Used to test the chain-switch logic in isolation without a React host.
+// Mutable mock state — set per test before renderHook is called.
 // ---------------------------------------------------------------------------
 
-type MockWriteContract = ReturnType<typeof mock>
-type MockSwitchChainAsync = ReturnType<typeof mock>
+let mockConnectedChainId: number | undefined = 1
 
-/**
- * Build a submit function equivalent to the one inside useConfirmPost,
- * using the provided mock primitives. Allows testing the decision logic
- * without a React rendering environment.
- */
-function buildSubmit(opts: {
-  chainId: 1 | 8453 | 84532 | 10 | 42161
-  connectedChainId: number | undefined
-  writeContract: MockWriteContract
-  switchChainAsync: MockSwitchChainAsync
-}): (params: { postId: bigint; action: ConfirmAction }) => Promise<boolean> {
-  const { chainId, connectedChainId, writeContract, switchChainAsync } = opts
+// Per-test mock functions — replaced in beforeEach so call counts don't leak.
+let mockWriteContract = mock(() => undefined)
+let mockSwitchChainAsync = mock(() => Promise.resolve())
+let mockReset = mock(() => undefined)
 
-  return async (params: { postId: bigint; action: ConfirmAction }) => {
-    const { postId, action } = params
-    const address = registryAddress(chainId)
-    if (!address) {
-      throw new Error(`No registry deployed for chainId ${chainId}`)
-    }
+// ---------------------------------------------------------------------------
+// Module-level wagmi mock — registered before any other imports that touch
+// wagmi. The factory functions reference the mutable variables above so each
+// test can reconfigure without re-registering the mock.
+// ---------------------------------------------------------------------------
+mock.module('wagmi', () => ({
+  useAccount: () => ({ chainId: mockConnectedChainId }),
+  useWriteContract: () => ({
+    writeContract: mockWriteContract,
+    data: undefined,
+    isPending: false,
+    error: null,
+    reset: mockReset,
+  }),
+  useWaitForTransactionReceipt: () => ({
+    isLoading: false,
+    isSuccess: false,
+    error: null,
+  }),
+  useSwitchChain: () => ({
+    switchChainAsync: mockSwitchChainAsync,
+    isPending: false,
+  }),
+}))
 
-    if (connectedChainId !== chainId) {
-      try {
-        await (switchChainAsync as (a: unknown) => Promise<unknown>)({ chainId })
-      } catch {
-        return false
-      }
-    }
+// Import AFTER mocks are registered.
+import { useConfirmPost } from '../src/hooks/useConfirmPost'
 
-    if (action.kind === 'vote') {
-      ;(writeContract as (a: unknown) => void)({
-        address,
-        functionName: 'confirm',
-        args: [postId, action.direction],
-        chainId,
-      })
-      return true
-    }
-
-    ;(writeContract as (a: unknown) => void)({
-      address,
-      functionName: 'unconfirm',
-      args: [postId],
-      chainId,
-    })
-    return true
-  }
-}
+// ---------------------------------------------------------------------------
+// Fixtures
+// ---------------------------------------------------------------------------
 
 const POST_ID = 7n
 const VOTE_ACTION: ConfirmAction = { kind: 'vote', direction: 1 }
 const CLEAR_ACTION: ConfirmAction = { kind: 'clear' }
 
-describe('useConfirmPost submit — chain-switch logic', () => {
+beforeEach(() => {
+  // Fresh mocks for each test — prevents call-count bleed between scenarios.
+  mockWriteContract = mock(() => undefined)
+  mockSwitchChainAsync = mock(() => Promise.resolve())
+  mockReset = mock(() => undefined)
+  mockConnectedChainId = 1
+})
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+describe('useConfirmPost — real hook via renderHook', () => {
   test('calls writeContract directly when chains match (no switch needed)', async () => {
-    const writeContract = mock(() => undefined)
-    const switchChainAsync = mock(() => Promise.resolve())
-    const submit = buildSubmit({
-      chainId: 1,
-      connectedChainId: 1,
-      writeContract,
-      switchChainAsync,
+    mockConnectedChainId = 1
+
+    const { result } = renderHook(() => useConfirmPost(1))
+
+    let returned: boolean = false
+    await act(async () => {
+      returned = await result.current.submit({ postId: POST_ID, action: VOTE_ACTION })
     })
 
-    const result = await submit({ postId: POST_ID, action: VOTE_ACTION })
-
-    expect(result).toBe(true)
-    expect(writeContract).toHaveBeenCalledTimes(1)
-    expect(switchChainAsync).toHaveBeenCalledTimes(0)
+    expect(returned).toBe(true)
+    expect(mockWriteContract).toHaveBeenCalledTimes(1)
+    expect(mockSwitchChainAsync).toHaveBeenCalledTimes(0)
+    expect(mockWriteContract).toHaveBeenCalledWith(
+      expect.objectContaining({ functionName: 'confirm', args: [POST_ID, 1] }),
+    )
   })
 
   test('calls switchChainAsync before writeContract when chains differ', async () => {
-    const callOrder: string[] = []
-    const writeContract = mock(() => { callOrder.push('writeContract') })
-    const switchChainAsync = mock(() => { callOrder.push('switchChainAsync'); return Promise.resolve() })
+    mockConnectedChainId = 84532 // Base Sepolia — wrong chain
 
-    const submit = buildSubmit({
-      chainId: 1,
-      connectedChainId: 84532, // Base Sepolia — wrong chain
-      writeContract,
-      switchChainAsync,
+    const callOrder: string[] = []
+    mockWriteContract = mock(() => { callOrder.push('writeContract') })
+    mockSwitchChainAsync = mock(() => {
+      callOrder.push('switchChainAsync')
+      return Promise.resolve()
     })
 
-    const result = await submit({ postId: POST_ID, action: VOTE_ACTION })
+    const { result } = renderHook(() => useConfirmPost(1))
 
-    expect(result).toBe(true)
-    expect(switchChainAsync).toHaveBeenCalledTimes(1)
-    expect(switchChainAsync).toHaveBeenCalledWith({ chainId: 1 })
-    expect(writeContract).toHaveBeenCalledTimes(1)
-    // switchChainAsync must come before writeContract
+    let returned: boolean = false
+    await act(async () => {
+      returned = await result.current.submit({ postId: POST_ID, action: VOTE_ACTION })
+    })
+
+    expect(returned).toBe(true)
+    expect(mockSwitchChainAsync).toHaveBeenCalledTimes(1)
+    expect(mockSwitchChainAsync).toHaveBeenCalledWith({ chainId: 1 })
+    expect(mockWriteContract).toHaveBeenCalledTimes(1)
+    // Order matters: switch must precede write.
     expect(callOrder).toEqual(['switchChainAsync', 'writeContract'])
   })
 
   test('returns false and skips writeContract when user rejects chain switch', async () => {
-    const writeContract = mock(() => undefined)
-    const switchChainAsync = mock(() => Promise.reject(new Error('User rejected')))
+    mockConnectedChainId = 84532
+    mockSwitchChainAsync = mock(() => Promise.reject(new Error('User rejected')))
 
-    const submit = buildSubmit({
-      chainId: 1,
-      connectedChainId: 84532,
-      writeContract,
-      switchChainAsync,
+    const { result } = renderHook(() => useConfirmPost(1))
+
+    let returned: boolean = true
+    await act(async () => {
+      returned = await result.current.submit({ postId: POST_ID, action: VOTE_ACTION })
     })
 
-    const result = await submit({ postId: POST_ID, action: VOTE_ACTION })
-
-    expect(result).toBe(false)
-    expect(switchChainAsync).toHaveBeenCalledTimes(1)
-    expect(writeContract).toHaveBeenCalledTimes(0)
+    expect(returned).toBe(false)
+    expect(mockSwitchChainAsync).toHaveBeenCalledTimes(1)
+    expect(mockWriteContract).toHaveBeenCalledTimes(0)
   })
 
-  test('does not throw to caller when user rejects chain switch', async () => {
-    const writeContract = mock(() => undefined)
-    const switchChainAsync = mock(() => Promise.reject(new Error('User rejected')))
+  test('resolves (does not throw) when user rejects chain switch', async () => {
+    mockConnectedChainId = 84532
+    mockSwitchChainAsync = mock(() => Promise.reject(new Error('User rejected')))
 
-    const submit = buildSubmit({
-      chainId: 1,
-      connectedChainId: 84532,
-      writeContract,
-      switchChainAsync,
+    const { result } = renderHook(() => useConfirmPost(1))
+
+    // Must resolve to false — rejection is expected user input, not an error.
+    await act(async () => {
+      await expect(
+        result.current.submit({ postId: POST_ID, action: VOTE_ACTION }),
+      ).resolves.toBe(false)
     })
-
-    // Must resolve (not reject) — user rejection is expected input
-    await expect(submit({ postId: POST_ID, action: VOTE_ACTION })).resolves.toBe(false)
   })
 
   test('calls unconfirm writeContract for clear action', async () => {
-    const writeContract = mock(() => undefined)
-    const switchChainAsync = mock(() => Promise.resolve())
+    mockConnectedChainId = 8453
 
-    const submit = buildSubmit({
-      chainId: 8453,
-      connectedChainId: 8453,
-      writeContract,
-      switchChainAsync,
+    const { result } = renderHook(() => useConfirmPost(8453))
+
+    await act(async () => {
+      await result.current.submit({ postId: POST_ID, action: CLEAR_ACTION })
     })
 
-    const result = await submit({ postId: POST_ID, action: CLEAR_ACTION })
-
-    expect(result).toBe(true)
-    expect(writeContract).toHaveBeenCalledTimes(1)
-    expect(writeContract).toHaveBeenCalledWith(
-      expect.objectContaining({ functionName: 'unconfirm' }),
+    expect(mockWriteContract).toHaveBeenCalledTimes(1)
+    expect(mockWriteContract).toHaveBeenCalledWith(
+      expect.objectContaining({ functionName: 'unconfirm', args: [POST_ID] }),
     )
   })
 
-  test('calls confirm writeContract with correct direction for vote action', async () => {
-    const writeContract = mock(() => undefined)
-    const switchChainAsync = mock(() => Promise.resolve())
+  test('passes correct direction arg when voting down', async () => {
+    mockConnectedChainId = 8453
 
-    const submit = buildSubmit({
-      chainId: 8453,
-      connectedChainId: 8453,
-      writeContract,
-      switchChainAsync,
+    const { result } = renderHook(() => useConfirmPost(8453))
+
+    await act(async () => {
+      await result.current.submit({ postId: POST_ID, action: { kind: 'vote', direction: 2 } })
     })
 
-    const result = await submit({ postId: POST_ID, action: { kind: 'vote', direction: 2 } })
-
-    expect(result).toBe(true)
-    expect(writeContract).toHaveBeenCalledWith(
+    expect(mockWriteContract).toHaveBeenCalledWith(
       expect.objectContaining({ functionName: 'confirm', args: [POST_ID, 2] }),
     )
   })
 
   test('throws when chainId has no deployed registry', async () => {
-    const writeContract = mock(() => undefined)
-    const switchChainAsync = mock(() => Promise.resolve())
+    // 999 is not a supported chain — bypasses TypeScript via cast.
+    mockConnectedChainId = 999
 
-    // 999 is not a supported chain — bypasses TypeScript via cast
-    const submit = buildSubmit({
-      chainId: 999 as 1,
-      connectedChainId: 999,
-      writeContract,
-      switchChainAsync,
+    const { result } = renderHook(() => useConfirmPost(999 as 1))
+
+    await act(async () => {
+      await expect(
+        result.current.submit({ postId: POST_ID, action: VOTE_ACTION }),
+      ).rejects.toThrow(/No registry deployed for chainId 999/)
     })
-
-    await expect(submit({ postId: POST_ID, action: VOTE_ACTION })).rejects.toThrow(
-      /No registry deployed for chainId 999/,
-    )
   })
 })
