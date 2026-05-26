@@ -54,15 +54,21 @@ Each component is self-contained. Pick the one you want:
 - Gateway → [`mesh/README.md`](mesh/README.md)
 - Frontend → [`frontend/README.md`](frontend/README.md)
 - Relay → [`relay/README.md`](relay/README.md)
+- Otomato detector example → [`example-otomato/README.md`](example-otomato/README.md)
 - Full local stack → [`ops/README.md`](ops/README.md)
+
+## Become a guardian
+
+Step-by-step guide — with or without automated monitoring:
+[`docs/become-a-guardian.md`](docs/become-a-guardian.md)
 
 ## Integrators
 
 Read `attackerScore` / `isVictim` directly from a contract, or query the GraphQL gateway from a dApp. Full interface, threshold tuning, GraphQL examples, and deployment addresses are at [thatsrekt.com/docs](https://thatsrekt.com/docs).
 
-## Become a poster
+## Become a guardian
 
-The registry is only as useful as its posters. If you run a threat-intel feed, an automated detector, or an incident-response team and want to post on-chain, email **thatsrekt@protonmail.com** with who you are and what you'd be reporting.
+The registry is only as useful as its guardians. If you run a threat-intel feed, an automated detector, or an incident-response team and want to post on-chain, see [`docs/become-a-guardian.md`](docs/become-a-guardian.md) for the full guide — with or without automated monitoring. Short version: email **thatsrekt@protonmail.com** with who you are and what you'd be reporting.
 
 ## Governance
 

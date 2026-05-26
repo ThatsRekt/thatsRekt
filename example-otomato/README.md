@@ -10,6 +10,30 @@ Use this as a starting point. Swap out the accounts and protocols in
 
 ---
 
+## What you'll build
+
+After running `npm run create`, you get a live automated pipeline inside
+[builder.otomato.xyz](https://builder.otomato.xyz/). It looks like this:
+
+![Otomato workflow builder — thatsRekt detector pipeline](assets/otomato-workflow.png)
+
+Each column is one protocol branch. Every tweet from the monitored
+accounts flows through a keyword pre-filter, then an AI classification
+block (`"Return 'true' ONLY if this tweet describes a hack of <Protocol>"`),
+then a condition gate that routes positive hits to the relay webhook +
+email action nodes at the bottom.
+
+**Want more alert channels?** The workflow is fully editable in the
+Otomato builder after creation. Otomato supports Telegram bots, Slack
+webhooks, Discord, PagerDuty, and any HTTPS endpoint as action nodes.
+Open your workflow at [builder.otomato.xyz](https://builder.otomato.xyz/),
+then ask your LLM to add the node type you need — or follow the
+[Otomato action docs](https://docs.otomato.xyz/otomato-docs/) to wire
+them in manually. You don't need to touch this script again once the
+workflow exists; just edit it visually in the builder.
+
+---
+
 ## How it works
 
 ```
@@ -38,8 +62,14 @@ a snippet of the tweet body.
 ## Prerequisites
 
 - Node 20+
-- An Otomato account — API key from https://app.otomato.xyz/settings
-- A running relay with a public URL (Railway, fly.io, ngrok, etc.)
+- An **Otomato account and API key**
+  - Sign up at [app.otomato.xyz](https://app.otomato.xyz)
+  - Once logged in, go to **Settings → API Keys** (or directly:
+    [app.otomato.xyz/settings](https://app.otomato.xyz/settings)) and
+    generate a key. This is the value for `OTOMATO_API_KEY` in `.env`.
+- A **running relay** with a public URL — Railway, fly.io, ngrok, or
+  any HTTPS endpoint the Otomato cloud can reach. See
+  [`relay/README.md`](../relay/README.md) for setup.
 
 ---
 
