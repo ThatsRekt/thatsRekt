@@ -170,7 +170,7 @@ function LivePostDetail({ postId }: { postId: string }) {
             net={data.netScore}
             up={data.confirmations}
             down={data.disconfirmations}
-            size="mobile"
+            variant="mobile"
           />
         </div>
 
@@ -332,7 +332,7 @@ function ScoreLine({
   net,
   up,
   down,
-  size = 'desktop',
+  variant = 'desktop',
 }: {
   net: number
   up: number
@@ -340,9 +340,9 @@ function ScoreLine({
   /** `desktop` — inherits parent font-size (tiny inside the chip row).
    *  `mobile`  — explicit text-lg net score + text-xs breakdown for
    *              the mobile-only block rendered outside the chip row. */
-  size?: 'desktop' | 'mobile'
+  variant?: 'desktop' | 'mobile'
 }) {
-  if (size === 'mobile') {
+  if (variant === 'mobile') {
     return (
       <span className="font-mono">
         <span className={`text-lg font-black ${scoreTextColor(net)}`}>

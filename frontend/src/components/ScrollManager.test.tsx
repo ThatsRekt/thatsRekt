@@ -380,6 +380,144 @@ describe('ScrollManager', () => {
     })
   })
 
+  it('stops the rAF poll at the deadline when the target never becomes reachable', async () => {
+    // If the destination never grows tall enough to reach the saved position
+    // (short page, content that never loads, etc.), the poll must NOT spin
+    // forever — it stops once performance.now() exceeds POLL_DEADLINE_MS past
+    // the start. This exercises the deadline branch of the poll loop.
+
+    let navigateRef: ((delta: number) => void) | null = null
+    function BackNavigatorPage() {
+      const navigate = useNavigate()
+      navigateRef = (delta: number) => navigate(delta)
+      return <div>post page</div>
+    }
+
+    const { container } = render(
+      <MemoryRouter initialEntries={['/', '/post/base-1']} initialIndex={0}>
+        <ScrollManager />
+        <Routes>
+          <Route path="/" element={<NavigatorPage to="/post/base-1" label="go to post" />} />
+          <Route path="/post/base-1" element={<BackNavigatorPage />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    // Controllable rAF queue (window.rAF, not globalThis — see file header note).
+    type RafCallback = FrameRequestCallback
+    const rafQueue: Array<{ id: number; cb: RafCallback }> = []
+    let rafIdCounter = 0
+    const origWindowRaf = window.requestAnimationFrame
+    const origWindowCaf = window.cancelAnimationFrame
+    Object.defineProperty(window, 'requestAnimationFrame', {
+      value: (cb: RafCallback): number => {
+        rafIdCounter += 1
+        rafQueue.push({ id: rafIdCounter, cb })
+        return rafIdCounter
+      },
+      writable: true,
+      configurable: true,
+    })
+    Object.defineProperty(window, 'cancelAnimationFrame', {
+      value: (id: number): void => {
+        const idx = rafQueue.findIndex((entry) => entry.id === id)
+        if (idx !== -1) rafQueue.splice(idx, 1)
+      },
+      writable: true,
+      configurable: true,
+    })
+    function flushRafs(n?: number): void {
+      const count = n !== undefined ? Math.min(n, rafQueue.length) : rafQueue.length
+      for (let i = 0; i < count; i++) {
+        const entry = rafQueue.shift()
+        if (entry !== undefined) entry.cb(performance.now())
+      }
+    }
+
+    // Controllable clock so we can cross the deadline deterministically.
+    let fakeNow = 0
+    const nowSpy = spyOn(performance, 'now').mockImplementation(() => fakeNow)
+
+    // Clamping scrollTo + (eventually) a permanently SHORT document.
+    scrollToSpy.mockRestore()
+    let fakeScrollY = 700
+    let fakeScrollHeight = 10802 // tall during PUSH so the listener captures 700
+    Object.defineProperty(window, 'scrollY', { get: () => fakeScrollY, configurable: true })
+    Object.defineProperty(document.documentElement, 'scrollHeight', {
+      get: () => fakeScrollHeight,
+      configurable: true,
+    })
+    Object.defineProperty(window, 'innerHeight', { value: 768, writable: true, configurable: true })
+    scrollToSpy = spyOn(window, 'scrollTo').mockImplementation(
+      ((_x: number, y: number): void => {
+        const maxScroll = Math.max(0, fakeScrollHeight - (window.innerHeight ?? 768))
+        fakeScrollY = Math.min(Math.max(0, y), maxScroll)
+      }) as typeof window.scrollTo,
+    )
+
+    // Listener captures 700 for "/".
+    window.dispatchEvent(new Event('scroll'))
+    flushRafs(1)
+    rafQueue.length = 0
+
+    // PUSH to post.
+    await act(async () => {
+      within(container).getByText('go to post').click()
+    })
+
+    // Reset: SHORT document → maxScroll 0 → target 700 is NEVER reachable.
+    fakeScrollY = 0
+    fakeScrollHeight = 300
+    scrollToSpy.mockClear()
+    rafQueue.length = 0
+    fakeNow = 0
+
+    // POP — startTime = performance.now() = 0; first poll frame queued.
+    await act(async () => {
+      navigateRef!(-1)
+    })
+    expect(rafQueue.length).toBeGreaterThan(0)
+
+    // Before the deadline: keeps re-scheduling while the target is unreachable.
+    fakeNow = 200
+    flushRafs()
+    expect(fakeScrollY).not.toBe(700)
+    expect(rafQueue.length).toBeGreaterThan(0)
+
+    fakeNow = 800
+    flushRafs()
+    expect(rafQueue.length).toBeGreaterThan(0)
+
+    // Cross the 1000ms deadline → poll stops; no new frame scheduled.
+    fakeNow = 1200
+    flushRafs()
+    expect(fakeScrollY).not.toBe(700) // never reached
+    expect(rafQueue.length).toBe(0) // loop terminated — no infinite spin
+
+    // Further flushes are no-ops.
+    flushRafs()
+    expect(rafQueue.length).toBe(0)
+
+    // --- Restore ---------------------------------------------------------------
+    nowSpy.mockRestore()
+    Object.defineProperty(window, 'requestAnimationFrame', {
+      value: origWindowRaf,
+      writable: true,
+      configurable: true,
+    })
+    Object.defineProperty(window, 'cancelAnimationFrame', {
+      value: origWindowCaf,
+      writable: true,
+      configurable: true,
+    })
+    Object.defineProperty(window, 'scrollY', { value: 0, writable: true, configurable: true })
+    Object.defineProperty(document.documentElement, 'scrollHeight', {
+      value: 768,
+      writable: true,
+      configurable: true,
+    })
+  })
+
   it('captures pre-navigation scroll position via listener, not cleanup (save-timing regression)', async () => {
     // -------------------------------------------------------------------------
     // Reproduces the EXACT save-timing bug that caused both prior fixes to fail

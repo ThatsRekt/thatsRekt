@@ -44,11 +44,11 @@ export function AddressLabel({ addr, chainSlug, full = false, ens = true }: Addr
     /^0x[0-9a-fA-F]{40}$/.test(addr) ? (addr as `0x${string}`) : undefined,
   )
 
-  // Resolve contributor alias — normalize to lowercase so the lookup is
-  // case-insensitive regardless of how callers supply the address.
+  // Resolve contributor alias. The lookup helpers lowercase the address
+  // internally, so callers can pass any-case hex.
   const contributor = chainSlug
-    ? lookupContributor(chainSlug, addr.toLowerCase())
-    : lookupContributorGlobal(addr.toLowerCase())
+    ? lookupContributor(chainSlug, addr)
+    : lookupContributorGlobal(addr)
 
   // What text to display in the primary tappable button. Priority:
   //   1. Contributor name (human-readable alias) when registered.
