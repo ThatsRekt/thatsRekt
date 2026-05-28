@@ -52,6 +52,14 @@ const GLOBAL: GlobalLabels = {
     name: 'Dev EOA (Anvil account 0)',
     tagline: 'local-dev seeder — never authoritative on real chains',
   },
+  // JeronimoHoulin's automated relay — submits on-chain alerts on
+  // jerrythekid.eth's behalf via a KMS-signed relayer.
+  '0xe0396d6d738e726d39f96099b8f6a55d11184374': {
+    name: "JerryTheKid's Relayer",
+    tagline: "automated detector — submits alerts on jerrythekid.eth's behalf",
+    twitter: 'jerrythekid',
+    github: 'JeronimoHoulin',
+  },
 }
 
 const PER_CHAIN: PerChainLabels = {

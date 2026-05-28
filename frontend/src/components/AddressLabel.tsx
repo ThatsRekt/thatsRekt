@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { shortAddress } from '../lib/format'
 import { explorerAddressUrl, getChainBySlug } from '../lib/chains'
 import { useEnsLookup } from '../hooks/useEnsLookup'
+import { lookupContributor, lookupContributorGlobal } from '../lib/contributors'
 
 interface AddressLabelProps {
   addr: string
@@ -43,15 +44,27 @@ export function AddressLabel({ addr, chainSlug, full = false, ens = true }: Addr
     /^0x[0-9a-fA-F]{40}$/.test(addr) ? (addr as `0x${string}`) : undefined,
   )
 
+  // Resolve contributor alias — normalize to lowercase so the lookup is
+  // case-insensitive regardless of how callers supply the address.
+  const contributor = chainSlug
+    ? lookupContributor(chainSlug, addr.toLowerCase())
+    : lookupContributorGlobal(addr.toLowerCase())
+
   // What text to display in the primary tappable button. Priority:
-  //   1. ENS name when present + opted in.
-  //   2. Full hex when explicitly requested (e.g. inside modals).
-  //   3. Truncated hex (default for inline usage).
-  const displayText = ensName && ens
-    ? ensName
-    : full
-      ? addr
-      : shortAddress(addr)
+  //   1. Contributor name (human-readable alias) when registered.
+  //   2. ENS name when present + opted in.
+  //   3. Full hex when explicitly requested (e.g. inside modals).
+  //   4. Truncated hex (default for inline usage).
+  //
+  // Copy + explorer always operate on the raw `addr` regardless of which
+  // display form is active.
+  const displayText = contributor
+    ? contributor.name
+    : ensName && ens
+      ? ensName
+      : full
+        ? addr
+        : shortAddress(addr)
 
   const onCopy = async () => {
     try {
@@ -75,9 +88,10 @@ export function AddressLabel({ addr, chainSlug, full = false, ens = true }: Addr
         aria-label={`Copy address ${addr}`}
         className={
           'font-mono text-sm hover:bg-yellow-100 active:bg-yellow-200 px-1 -mx-0.5 rounded transition-colors cursor-pointer touch-manipulation min-w-0 ' +
-          // break-all only when showing the full hex — ENS names + short
-          // addresses are short enough not to need wrapping.
-          (full && !ensName ? 'break-all text-left' : 'whitespace-nowrap')
+          // break-all only when showing the full hex with no alias.
+          // Contributor names, ENS names, and short addresses are short
+          // enough not to need wrapping.
+          (full && !contributor && !ensName ? 'break-all text-left' : 'whitespace-nowrap')
         }
       >
         {displayText}

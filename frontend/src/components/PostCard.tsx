@@ -72,8 +72,6 @@ function LivePostCard({ post }: { post: FeedPost }) {
     <article className="space-y-4">
       <div className="flex flex-wrap items-center gap-2 text-xs">
         {chainSlug && <ChainBadge slug={chainSlug} />}
-        <span className="font-mono text-neutral-600">#{post.id}</span>
-        <span className="text-neutral-400">·</span>
         <span className="text-neutral-600 font-mono">attacked {relativeTime(post.attackedAt)} · {formatDateOnly(post.attackedAt)}</span>
       </div>
 
@@ -98,10 +96,6 @@ function LivePostCard({ post }: { post: FeedPost }) {
         <span>
           <span className="text-neutral-400">·</span>{' '}
           [{post.victimLinks.length} victim{post.victimLinks.length === 1 ? '' : 's'}]
-        </span>
-        <span>
-          <span className="text-neutral-400">·</span>{' '}
-          <ScoreBadge net={post.netScore} up={post.confirmations} down={post.disconfirmations} />
         </span>
       </div>
 
@@ -140,15 +134,6 @@ function livePostHref(post: FeedPost): string {
     return `/post/${chainSlug}/${onchainId}`
   }
   return `/post/${post.id}`
-}
-
-function ScoreBadge({ net, up, down }: { net: number; up: number; down: number }) {
-  const color = net > 0 ? 'text-emerald-700' : net < 0 ? 'text-red-600' : 'text-neutral-700'
-  return (
-    <span className={`font-mono ${color}`}>
-      {net >= 0 ? `+${net}` : net} ({up}↑/{down}↓)
-    </span>
-  )
 }
 
 // =============================================================================

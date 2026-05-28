@@ -49,7 +49,6 @@ function ArchiveDetailView({ post }: { post: ArchivePost }) {
 
       <header className="space-y-4 border-b-2 border-black pb-6">
         <div className="flex flex-wrap items-center gap-3 text-[10px] uppercase tracking-widest">
-          <span className="font-black">#{post.id}</span>
           <ChainBadge slug={post.chain} variant="full" />
           <span className="text-neutral-700">·</span>
           <span className="border border-neutral-700 px-2 py-0.5 font-black text-neutral-700">

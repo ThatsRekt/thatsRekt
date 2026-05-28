@@ -135,9 +135,7 @@ function LivePostDetail({ postId }: { postId: string }) {
 
       <header className="space-y-4 border-b-2 border-black pb-6">
         <div className="flex flex-wrap items-center gap-x-3 gap-y-2 text-[10px] uppercase tracking-widest">
-          <span className="font-black whitespace-nowrap">#{data.id}</span>
           {chainSlug && <ChainBadge slug={chainSlug} variant="full" />}
-          <span className="text-neutral-700">·</span>
           {data.removed ? (
             <span className="border border-red-600 px-2 py-0.5 font-black text-red-600">
               retracted
