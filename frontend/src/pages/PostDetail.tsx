@@ -105,12 +105,20 @@ function LivePostDetail({ postId }: { postId: string }) {
 
   return (
     <article className="space-y-10">
-      <Link
-        to="/"
-        className="inline-block text-xs uppercase tracking-widest rekt-link"
-      >
-        ← back to feed
-      </Link>
+      {/* Top action row: back-to-feed (left) + mobile-only share (right).
+          On sm+ the share button is hidden here and lives next to the
+          title instead (its existing desktop position, unchanged). */}
+      <div className="flex items-center justify-between gap-x-4">
+        <Link
+          to="/"
+          className="inline-block text-xs uppercase tracking-widest rekt-link"
+        >
+          ← back to feed
+        </Link>
+        <span className="sm:hidden">
+          <ShareButton path={sharePath} size="md" />
+        </span>
+      </div>
 
       {/* Retract banner — only renders when the poster has called
           removePost() on this entry. Direct shared URLs still resolve
@@ -151,21 +159,36 @@ function LivePostDetail({ postId }: { postId: string }) {
               </span>
             </>
           )}
-          <span className="ml-auto">
+          {/* Desktop score: pushed right inside the flex-wrap chip row.
+              Hidden on mobile — the bigger mobile score lives below. */}
+          <span className="ml-auto hidden sm:inline">
             <ScoreLine net={data.netScore} up={data.confirmations} down={data.disconfirmations} />
           </span>
+        </div>
+
+        {/* Mobile-only score: bigger, right-aligned, under the chip row.
+            Inherits no font-size from the 10px parent above.
+            Hidden on sm+ where the inline score above takes over. */}
+        <div className="sm:hidden text-right">
+          <ScoreLine
+            net={data.netScore}
+            up={data.confirmations}
+            down={data.disconfirmations}
+            size="mobile"
+          />
         </div>
 
         <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
           <h1 className="flex-1 min-w-0 font-black tracking-tight text-3xl sm:text-4xl leading-tight text-neutral-900 whitespace-pre-wrap break-words">
             {data.title?.trim() || '(untitled)'}
           </h1>
-          {/* Share lives next to the title so it's the first thing a
-              reader reaches for after they've decided this post is
-              worth sending around. The path resolves to the canonical
-              `/post/:chain/:id` URL — pasting it into Telegram / X /
-              Discord triggers Mesh's OG card render. */}
-          <ShareButton path={sharePath} size="md" />
+          {/* Share lives next to the title on desktop (sm+) so it's the
+              first thing a reader reaches for after they've decided this
+              post is worth sending around. Hidden on mobile — the share
+              button moved to the top action row instead. */}
+          <span className="hidden sm:block">
+            <ShareButton path={sharePath} size="md" />
+          </span>
         </div>
 
         <dl className="grid grid-cols-1 gap-1 text-xs uppercase tracking-widest text-neutral-700 sm:grid-cols-2">
@@ -309,7 +332,30 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
   )
 }
 
-function ScoreLine({ net, up, down }: { net: number; up: number; down: number }) {
+function ScoreLine({
+  net,
+  up,
+  down,
+  size = 'desktop',
+}: {
+  net: number
+  up: number
+  down: number
+  /** `desktop` — inherits parent font-size (tiny inside the chip row).
+   *  `mobile`  — explicit text-lg net score + text-xs breakdown for
+   *              the mobile-only block rendered outside the chip row. */
+  size?: 'desktop' | 'mobile'
+}) {
+  if (size === 'mobile') {
+    return (
+      <span className="font-mono">
+        <span className={`text-lg font-black ${scoreTextColor(net)}`}>
+          {net >= 0 ? `+${net}` : net}
+        </span>{' '}
+        <span className="text-xs text-neutral-700">({up}↑/{down}↓)</span>
+      </span>
+    )
+  }
   return (
     <span className="font-mono">
       <span className={`font-black ${scoreTextColor(net)}`}>
