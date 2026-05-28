@@ -8,57 +8,19 @@
  *
  * happy-dom provides window/document globals via test/setup.ts.
  * We spy on window.scrollTo and clear it between each test.
+ *
+ * Note on rAF timing:
+ *   ScrollManager calls window.requestAnimationFrame (not bare globalThis rAF)
+ *   to avoid React act() intercepting and deferring the callbacks.
+ *   happy-dom's window.requestAnimationFrame fires after ~16–50ms of real wall
+ *   clock time. The simple tests wait 150ms AFTER act() returns to let it fire.
+ *   The async-growth (clamping) test replaces window.requestAnimationFrame with
+ *   a synchronous manual queue so it can drive individual poll ticks precisely.
  */
-import { describe, it, expect, beforeEach, afterEach, mock, spyOn } from 'bun:test'
+import { describe, it, expect, beforeEach, afterEach, spyOn } from 'bun:test'
 import { render, act, cleanup, within } from '@testing-library/react'
 import { MemoryRouter, Route, Routes, useNavigate } from 'react-router-dom'
 import { ScrollManager } from './ScrollManager'
-
-// ---------------------------------------------------------------------------
-// ResizeObserver spy infrastructure
-// ---------------------------------------------------------------------------
-
-// Captured callbacks for each ResizeObserver instance instantiated during a
-// test. Keyed sequentially so multi-observer scenarios remain deterministic.
-let resizeCallbacks: ResizeObserverCallback[] = []
-let origResizeObserver: typeof ResizeObserver
-
-function installResizeObserverSpy(): void {
-  resizeCallbacks = []
-  // In the test environment, ResizeObserver lives on window (the happy-dom
-  // GlobalWindow hoisted to globalThis.window) not on bare globalThis.
-  // ScrollManager accesses it via window.ResizeObserver, so we must spy
-  // on window — not globalThis — to intercept the constructor calls.
-  origResizeObserver = (window as unknown as { ResizeObserver: typeof ResizeObserver }).ResizeObserver
-
-  // Spy class records each callback so tests can fire resize events manually
-  // (happy-dom's ResizeObserver doesn't auto-fire on defineProperty changes).
-  const FakeResizeObserver = class implements ResizeObserver {
-    #cb: ResizeObserverCallback
-    constructor(cb: ResizeObserverCallback) {
-      this.#cb = cb
-      resizeCallbacks.push(cb)
-    }
-    observe(_target: Element, _options?: ResizeObserverOptions): void {}
-    unobserve(_target: Element): void {}
-    disconnect(): void {}
-  }
-
-  Object.defineProperty(window, 'ResizeObserver', {
-    value: FakeResizeObserver,
-    writable: true,
-    configurable: true,
-  })
-}
-
-function restoreResizeObserver(): void {
-  Object.defineProperty(window, 'ResizeObserver', {
-    value: origResizeObserver,
-    writable: true,
-    configurable: true,
-  })
-  resizeCallbacks = []
-}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -66,9 +28,17 @@ function restoreResizeObserver(): void {
 
 let scrollToSpy: ReturnType<typeof spyOn>
 
+/**
+ * Wait for pending window.requestAnimationFrame callbacks to fire.
+ * happy-dom fires them after ~16–50ms; 150ms is a safe upper bound.
+ * Must be called OUTSIDE of act() — React's act() intercepts globalThis.rAF
+ * but NOT window.rAF; happy-dom fires the latter on its own real-time schedule.
+ */
+async function waitForRaf(): Promise<void> {
+  await new Promise<void>((resolve) => setTimeout(resolve, 150))
+}
+
 beforeEach(() => {
-  // Spy on window.scrollTo before each test.
-  // happy-dom attaches scrollTo to the window; spyOn lets us track calls.
   scrollToSpy = spyOn(window, 'scrollTo').mockImplementation(() => undefined)
 })
 
@@ -95,7 +65,9 @@ function NavigatorPage({ to, label }: { to: string; label: string }) {
 
 describe('ScrollManager', () => {
   it('scrolls to top on PUSH navigation', async () => {
-    // Mount on "/" — the initial render is a PUSH
+    // Mount on "/" — the initial render is a PUSH.
+    // saved === 0 on a fresh history entry, so ScrollManager scrolls once
+    // directly (no rAF loop) — assertion is immediately after act.
     const { container } = render(
       <MemoryRouter initialEntries={['/']}>
         <ScrollManager />
@@ -120,25 +92,20 @@ describe('ScrollManager', () => {
 
   it('restores scroll position on POP navigation after a saved position', async () => {
     // Simulate: user was on "/" with scrollY = 400, navigated to a post,
-    // then pressed back. ScrollManager should restore 400 on the POP.
+    // then pressed back.  ScrollManager should restore 400 on the POP.
     //
-    // Approach: mount with entries ["/", "/post/base-1"] so the second
-    // entry is active (index 1). Then trigger a back navigation (POP).
-    // Before that, we need to prime the saved position map.
-    //
-    // Because the Map is internal to the component we cannot inject it
-    // directly. Instead we:
-    //   1. Mount with "/" as the initial route.
-    //   2. Navigate to "/post/base-1" (PUSH — ScrollManager saves "/" key).
-    //      We fake window.scrollY = 400 before the save fires (cleanup).
-    //   3. Navigate back (POP) — ScrollManager should restore 400.
-    //
-    // The save happens in the effect cleanup of the previous location
-    // (i.e., when the location changes away from "/"), so we set
-    // window.scrollY *after* the initial render and *before* navigating.
+    // Make the document tall so 400 is reachable from the first rAF tick.
 
-    // happy-dom supports scrollY as a getter; override it to control the value.
-    Object.defineProperty(window, 'scrollY', { value: 400, writable: true, configurable: true })
+    Object.defineProperty(document.documentElement, 'scrollHeight', {
+      value: 11000,
+      writable: true,
+      configurable: true,
+    })
+    Object.defineProperty(window, 'innerHeight', {
+      value: 768,
+      writable: true,
+      configurable: true,
+    })
 
     let navigateRef: ((delta: number) => void) | null = null
 
@@ -148,43 +115,51 @@ describe('ScrollManager', () => {
       return <div>post page</div>
     }
 
+    // Render at "/" with scrollY=0 (initial no-op spy, direct scrollTo(0,0)).
     const { container } = render(
       <MemoryRouter initialEntries={['/', '/post/base-1']} initialIndex={0}>
         <ScrollManager />
         <Routes>
           <Route
             path="/"
-            element={
-              <NavigatorPage to="/post/base-1" label="go to post" />
-            }
+            element={<NavigatorPage to="/post/base-1" label="go to post" />}
           />
           <Route path="/post/base-1" element={<BackNavigatorPage />} />
         </Routes>
       </MemoryRouter>,
     )
 
-    // Navigate to post (PUSH) — cleanup of "/" will save scrollY=400
+    // Prime scrollY=400 so the "/" cleanup saves it when we navigate away.
+    Object.defineProperty(window, 'scrollY', { value: 400, writable: true, configurable: true })
+
+    // Navigate to post (PUSH) — cleanup of "/" fires and saves scrollY=400.
     await act(async () => {
       within(container).getByText('go to post').click()
     })
 
     scrollToSpy.mockClear()
 
-    // Reset scrollY to 0 (simulating the post page top)
+    // Simulate arriving at post at top.
     Object.defineProperty(window, 'scrollY', { value: 0, writable: true, configurable: true })
 
-    // Navigate back (POP)
+    // Trigger POP — React effects run synchronously inside act().
+    // The rAF loop is scheduled on window.requestAnimationFrame (not globalThis),
+    // so act() does NOT intercept it.  We wait for it AFTER act() returns.
     await act(async () => {
       navigateRef!(-1)
     })
 
-    // Should restore the saved 400
+    // Wait for window.requestAnimationFrame to fire (outside act, real time).
+    await waitForRaf()
+
+    // Should restore the saved 400.
     expect(scrollToSpy).toHaveBeenCalledWith(0, 400)
   })
 
   it('scrolls to top (fallback) on POP when no position was saved', async () => {
     // Navigate forward and back without a pre-existing saved position.
-    // This covers a cold deep-link → back scenario.
+    // saved === 0 (Map miss → default 0) so ScrollManager skips the rAF loop
+    // and scrolls to top directly — no rAF wait needed.
     let navigateRef: ((delta: number) => void) | null = null
 
     function BackPage() {
@@ -203,52 +178,51 @@ describe('ScrollManager', () => {
       </MemoryRouter>,
     )
 
-    // Navigate forward — use container-scoped query to avoid cross-test DOM interference
     await act(async () => {
       within(container).getByText('go to post').click()
     })
 
     scrollToSpy.mockClear()
 
-    // Navigate back — no saved position for '/other' after a cold start
+    // Navigate back — no saved position → saved=0 → direct scrollTo(0,0), no loop.
     await act(async () => {
       navigateRef!(-1)
     })
 
-    // Falls back to top
     expect(scrollToSpy).toHaveBeenCalledWith(0, 0)
   })
 
-  it('re-applies scroll on POP when the document grows after initial restore (async content race)', async () => {
-    // This is the cold-path race: the feed list renders asynchronously AFTER
-    // the POP restore fires. At restore time the document is short, so
-    // scrollTo(0, 700) clamps to ~219 and stays there. The fix must watch
-    // for document growth via ResizeObserver and re-apply until reached.
+  it('re-applies scroll on POP when the document grows after initial restore (rAF poll models real clamping)', async () => {
+    // -------------------------------------------------------------------------
+    // Reproduces the exact browser failure mode:
     //
-    // Test strategy:
-    //   1. Install fake ResizeObserver so we can fire its callback manually.
-    //   2. Stub document.documentElement.scrollHeight = 300 (target 700 unreachable).
-    //   3. POP to feed with saved position 700.
-    //   4. Assert initial scrollTo(0,700) was attempted.
-    //   5. Grow document: scrollHeight = 11000 + stub window.scrollY = 700.
-    //   6. Fire the captured ResizeObserver callback.
-    //   7. Assert scrollTo(0,700) was re-applied.
+    //   1. Stored feed position = 700.
+    //   2. POP fires when document is SHORT (scrollHeight 300, innerHeight 768
+    //      → maxScroll = 0). scrollTo(0, 700) clamps to 0 — scrollY stays 0.
+    //   3. Several animation frames later feed renders: scrollHeight grows to
+    //      11000 → maxScroll = 10232. scrollTo(0, 700) now sticks.
+    //
+    // The rAF polling loop re-applies scrollTo every frame. This test drives
+    // each frame manually so we can assert the intermediate clamped state and
+    // the final locked state precisely.
+    //
+    // Why a single-shot / ResizeObserver implementation FAILS this test:
+    //   - Single-shot: scrollTo fires once while short → clamps → never corrects.
+    //   - ResizeObserver on documentElement: observes the border-box, which
+    //     stays ≈ viewport height regardless of scrollHeight growth → never fires.
+    //
+    // Setup sequence:
+    //   1. Render component (no-op spy; no rAF stubbing yet — initial PUSH
+    //      uses direct scrollTo(0,0) so the stub has no effect here).
+    //   2. Set scrollY=700 AFTER initial render (the "/" PUSH effect already ran).
+    //   3. Install window.rAF stub + clamping scrollTo stub.
+    //   4. PUSH to post — "/" cleanup saves scrollY=700.
+    //   5. Reset to short document + scrollY=0, clear rafQueue.
+    //   6. POP — drives the rAF poll loop manually, verifying clamping.
+    //
+    // -------------------------------------------------------------------------
 
-    installResizeObserverSpy()
-
-    // Make the document start short — target Y=700 is unreachable.
-    Object.defineProperty(document.documentElement, 'scrollHeight', {
-      value: 300,
-      writable: true,
-      configurable: true,
-    })
-    Object.defineProperty(window, 'innerHeight', {
-      value: 768,
-      writable: true,
-      configurable: true,
-    })
-    Object.defineProperty(window, 'scrollY', { value: 400, writable: true, configurable: true })
-
+    // --- Step 1: Render with default spies (no rAF stub yet) -----------------
     let navigateRef: ((delta: number) => void) | null = null
 
     function BackNavigatorPage() {
@@ -261,62 +235,137 @@ describe('ScrollManager', () => {
       <MemoryRouter initialEntries={['/', '/post/base-1']} initialIndex={0}>
         <ScrollManager />
         <Routes>
-          <Route
-            path="/"
-            element={<NavigatorPage to="/post/base-1" label="go to post" />}
-          />
+          <Route path="/" element={<NavigatorPage to="/post/base-1" label="go to post" />} />
           <Route path="/post/base-1" element={<BackNavigatorPage />} />
         </Routes>
       </MemoryRouter>,
     )
 
-    // Navigate to post (PUSH) — cleanup of "/" will save scrollY=400.
+    // Initial "/" PUSH effect has run (scrollTo(0,0) called, no rAF).
+
+    // --- Step 2: Set scrollY=700 to prime the saved position -----------------
+    Object.defineProperty(window, 'scrollY', { value: 700, writable: true, configurable: true })
+
+    // --- Step 3: Install controllable rAF stub + clamping scrollTo stub ------
+
+    type RafCallback = FrameRequestCallback
+    const rafQueue: Array<{ id: number; cb: RafCallback }> = []
+    let rafIdCounter = 0
+
+    const origWindowRaf = window.requestAnimationFrame
+    const origWindowCaf = window.cancelAnimationFrame
+
+    Object.defineProperty(window, 'requestAnimationFrame', {
+      value: (cb: RafCallback): number => {
+        rafIdCounter += 1
+        rafQueue.push({ id: rafIdCounter, cb })
+        return rafIdCounter
+      },
+      writable: true,
+      configurable: true,
+    })
+
+    Object.defineProperty(window, 'cancelAnimationFrame', {
+      value: (id: number): void => {
+        const idx = rafQueue.findIndex((entry) => entry.id === id)
+        if (idx !== -1) rafQueue.splice(idx, 1)
+      },
+      writable: true,
+      configurable: true,
+    })
+
+    /** Flush the oldest N pending rAF callbacks (count fixed at call time). */
+    function flushRafs(n?: number): void {
+      const count = n !== undefined ? Math.min(n, rafQueue.length) : rafQueue.length
+      for (let i = 0; i < count; i++) {
+        const entry = rafQueue.shift()
+        if (entry !== undefined) {
+          entry.cb(performance.now())
+        }
+      }
+    }
+
+    // Restore the no-op spy and install a clamping stub.
+    scrollToSpy.mockRestore()
+
+    let fakeScrollY = 700
+    let fakeScrollHeight = 10802 // tall for the PUSH phase (700 reachable)
+
+    Object.defineProperty(window, 'scrollY', {
+      get: () => fakeScrollY,
+      configurable: true,
+    })
+    Object.defineProperty(document.documentElement, 'scrollHeight', {
+      get: () => fakeScrollHeight,
+      configurable: true,
+    })
+    Object.defineProperty(window, 'innerHeight', {
+      value: 768,
+      writable: true,
+      configurable: true,
+    })
+
+    scrollToSpy = spyOn(window, 'scrollTo').mockImplementation(
+      ((_x: number, y: number): void => {
+        const maxScroll = Math.max(0, fakeScrollHeight - (window.innerHeight ?? 768))
+        fakeScrollY = Math.min(Math.max(0, y), maxScroll)
+      }) as typeof window.scrollTo,
+    )
+
+    // --- Step 4: PUSH to post — "/" cleanup saves fakeScrollY=700 -----------
     await act(async () => {
       within(container).getByText('go to post').click()
     })
 
-    // Simulate arriving at the post page at the top.
-    Object.defineProperty(window, 'scrollY', { value: 0, writable: true, configurable: true })
+    // Verify the "/" key got the right value (700 was reachable → saved=700).
+    // The PUSH to "/post" calls scrollTo(0,0) → fakeScrollY=0 now.
+    // Cleanup of "/" ran BEFORE that, saving 700. Good.
 
+    // --- Step 5: Reset to SHORT document + scrollY=0 -------------------------
+    fakeScrollY = 0
+    fakeScrollHeight = 300  // short — target 700 unreachable (maxScroll = 0)
     scrollToSpy.mockClear()
+    rafQueue.length = 0
 
-    // Navigate back (POP) — ScrollManager restores saved Y=400 but the document
-    // is short so the browser would clamp it.  The manager must also register
-    // a ResizeObserver to re-apply once the document grows.
+    // --- Step 6: POP — ScrollManager queues the first rAF tick ---------------
     await act(async () => {
       navigateRef!(-1)
     })
 
-    // Initial restore was attempted.
-    expect(scrollToSpy).toHaveBeenCalledWith(0, 400)
-    scrollToSpy.mockClear()
+    // The POP effect reads saved=700 from Map, calls window.requestAnimationFrame(poll).
+    // act() does NOT intercept window.rAF — should be in our queue.
+    expect(rafQueue.length).toBeGreaterThan(0)
 
-    // Grow the document — feed list has rendered.
-    Object.defineProperty(document.documentElement, 'scrollHeight', {
-      value: 11000,
+    // --- Phase 1: short document — target clamped to 0 -----------------------
+    // maxScroll = max(0, 300-768) = 0 → scrollTo(0,700) clamps fakeScrollY to 0.
+    flushRafs(2)
+    expect(fakeScrollY).not.toBe(700)
+
+    // --- Phase 2: document grows — target now reachable ----------------------
+    fakeScrollHeight = 11000  // maxScroll = 11000-768 = 10232 >> 700
+
+    flushRafs(3)
+    expect(fakeScrollY).toBe(700)
+
+    // Loop stopped: no more rAF frames queued.
+    expect(rafQueue.length).toBe(0)
+
+    // --- Restore ---------------------------------------------------------------
+    Object.defineProperty(window, 'requestAnimationFrame', {
+      value: origWindowRaf,
       writable: true,
       configurable: true,
     })
-    // Simulate browser NOT having scrolled yet (still at 0 because the page
-    // was short when the restore fired).
-    Object.defineProperty(window, 'scrollY', { value: 0, writable: true, configurable: true })
-
-    // At least one ResizeObserver must have been registered by the fix.
-    // The POP effect (restoring saved=400) registers the LAST observer —
-    // earlier observers may have been registered during the initial render
-    // (where saved=0) and were torn down before we got here.
-    expect(resizeCallbacks.length).toBeGreaterThan(0)
-
-    // Fire the most-recently-registered ResizeObserver callback — this is the
-    // one the POP effect installed while the page was still short.
-    await act(async () => {
-      const cb = resizeCallbacks[resizeCallbacks.length - 1]
-      cb([], {} as ResizeObserver)
+    Object.defineProperty(window, 'cancelAnimationFrame', {
+      value: origWindowCaf,
+      writable: true,
+      configurable: true,
     })
-
-    // Fix re-applied the target position now that the page is tall enough.
-    expect(scrollToSpy).toHaveBeenCalledWith(0, 400)
-
-    restoreResizeObserver()
+    Object.defineProperty(window, 'scrollY', { value: 0, writable: true, configurable: true })
+    Object.defineProperty(document.documentElement, 'scrollHeight', {
+      value: 768,
+      writable: true,
+      configurable: true,
+    })
   })
 })
