@@ -1,4 +1,5 @@
-import { useParams, Link } from 'react-router-dom'
+import { useParams } from 'react-router-dom'
+import { BackLink } from '../components/BackLink'
 import { useQuery } from '@tanstack/react-query'
 import { chainSlugFromCompositeId, fetchPostDetail } from '../lib/queries'
 import { fetchCommentCount } from '../lib/comments'
@@ -109,12 +110,9 @@ function LivePostDetail({ postId }: { postId: string }) {
           On sm+ the share button is hidden here and lives next to the
           title instead (its existing desktop position, unchanged). */}
       <div className="flex items-center justify-between gap-x-4">
-        <Link
-          to="/"
-          className="inline-block text-xs uppercase tracking-widest rekt-link"
-        >
+        <BackLink className="inline-block text-xs uppercase tracking-widest rekt-link">
           ← back to feed
-        </Link>
+        </BackLink>
         <span className="sm:hidden">
           <ShareButton path={sharePath} size="md" />
         </span>
@@ -452,12 +450,9 @@ function PurgedTombstone({
 }) {
   return (
     <article className="space-y-8">
-      <Link
-        to="/"
-        className="inline-block text-xs uppercase tracking-widest rekt-link"
-      >
+      <BackLink className="inline-block text-xs uppercase tracking-widest rekt-link">
         ← back to feed
-      </Link>
+      </BackLink>
       <div className="border-2 border-black bg-black text-[#f5f4ee] px-6 py-10 text-center space-y-3">
         <p className="text-[10px] uppercase tracking-widest opacity-70">
           [post #{postId}]

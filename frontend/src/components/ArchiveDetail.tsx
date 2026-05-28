@@ -1,4 +1,4 @@
-import { Link } from 'react-router-dom'
+import { BackLink } from './BackLink'
 import {
   findArchiveBySlug,
   formatAmountUsd,
@@ -40,12 +40,9 @@ function ArchiveDetailView({ post }: { post: ArchivePost }) {
 
   return (
     <article className="space-y-10">
-      <Link
-        to="/"
-        className="inline-block text-xs uppercase tracking-widest rekt-link"
-      >
+      <BackLink className="inline-block text-xs uppercase tracking-widest rekt-link">
         ← back to feed
-      </Link>
+      </BackLink>
 
       <header className="space-y-4 border-b-2 border-black pb-6">
         <div className="flex flex-wrap items-center gap-3 text-[10px] uppercase tracking-widest">

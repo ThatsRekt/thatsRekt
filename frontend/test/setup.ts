@@ -22,3 +22,20 @@ Object.defineProperty(globalThis, 'Element', { value: window.Element, writable: 
 Object.defineProperty(globalThis, 'Node', { value: window.Node, writable: true })
 Object.defineProperty(globalThis, 'Event', { value: window.Event, writable: true })
 Object.defineProperty(globalThis, 'CustomEvent', { value: window.CustomEvent, writable: true })
+Object.defineProperty(globalThis, 'MouseEvent', { value: window.MouseEvent, writable: true })
+
+// requestAnimationFrame / cancelAnimationFrame — happy-dom exposes these on
+// its window object. Hoist them so components that call rAF in effects work
+// under bun:test without a ReferenceError.
+if (typeof globalThis.requestAnimationFrame === 'undefined') {
+  Object.defineProperty(globalThis, 'requestAnimationFrame', {
+    value: (cb: FrameRequestCallback) => setTimeout(() => cb(Date.now()), 0),
+    writable: true,
+  })
+}
+if (typeof globalThis.cancelAnimationFrame === 'undefined') {
+  Object.defineProperty(globalThis, 'cancelAnimationFrame', {
+    value: (id: number) => clearTimeout(id),
+    writable: true,
+  })
+}

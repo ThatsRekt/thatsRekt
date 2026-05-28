@@ -12,6 +12,7 @@ import { useDisconnectIfNotWhitelisted } from './hooks/useDisconnectIfNotWhiteli
 import { PostAlertButton, AccountChip } from './components/PostAlertButton'
 import { TgChannelCTA, GetAlertsButton } from './components/TgChannelCTA'
 import { Footer } from './components/Footer'
+import { ScrollManager } from './components/ScrollManager'
 
 const NAV_LINKS: { to: string; label: string }[] = [
   { to: '/', label: 'feed' },
@@ -41,6 +42,8 @@ export function App() {
   useDisconnectIfNotWhitelisted()
 
   return (
+    <>
+      <ScrollManager />
     <div className="mx-auto flex min-h-full max-w-3xl flex-col px-4 sm:px-6 py-6 sm:py-10">
       {IS_MOCK_MODE && <MockBanner />}
       <Header />
@@ -74,6 +77,7 @@ export function App() {
       </main>
       <Footer />
     </div>
+    </>
   )
 }
 
