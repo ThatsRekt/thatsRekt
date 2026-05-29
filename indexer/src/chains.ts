@@ -4,7 +4,7 @@
  *
  * Two flavors of chain entry:
  *   - Real chains:  `sepolia` (EIP-155 11155111), `base` (8453),
- *     `optimism` (10). Use Subsquid Network archive gateways +
+ *     `optimism` (10), `bsc` (56). Use Subsquid Network archive gateways +
  *     routeme.sh RPCs.
  *   - Local Anvil forks: `anvil-eth` (chainId 31337), `anvil-base`
  *     (chainId 31338). RPC-only mode (no archive gateway). Forked
@@ -35,6 +35,7 @@ export type ChainSlug =
   | 'base-sepolia'
   | 'optimism'
   | 'arbitrum'
+  | 'bsc'
 
 export interface ChainConfig {
   /** EIP-155 chain id. */
@@ -150,6 +151,24 @@ export const CHAINS: Readonly<Record<ChainSlug, ChainConfig>> = Object.freeze({
     contractEnvVar: 'CONTRACT_ARBITRUM',
     startBlockEnvVar: 'START_BLOCK_ARBITRUM',
     finalityConfirmation: 75,
+    rpcRateLimit: 10,
+  },
+  bsc: {
+    // BNB Chain (BSC) — PoSA consensus, ~3s block time, 21-validator set.
+    // thatsRekt canonical proxy deployed at block 101156350.
+    // Subsquid archive: https://v2.archive.subsquid.io/network/binance-mainnet
+    // (slug confirmed live via /height probe; "binance" in archive-registry maps
+    // to "binance-mainnet" in the v2.archive URL namespace).
+    chainId: 56,
+    slug: 'bsc',
+    name: 'BNB Chain',
+    gateway: 'https://v2.archive.subsquid.io/network/binance-mainnet',
+    rpcEnvVar: 'RPC_BSC_HTTP',
+    contractEnvVar: 'CONTRACT_BSC',
+    startBlockEnvVar: 'START_BLOCK_BSC',
+    // PoSA BFT finality: blocks are finalized after 2/3+1 validators sign off,
+    // which takes ~15 blocks (~45s). Use 15 for a safe margin.
+    finalityConfirmation: 15,
     rpcRateLimit: 10,
   },
 })
