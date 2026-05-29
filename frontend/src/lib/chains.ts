@@ -121,12 +121,6 @@ export const CHAINS: Readonly<Record<ChainSlug, FrontendChain>> = Object.freeze(
     isTestnet: false,
     liveIndexed: true,
   },
-  // ---------------------------------------------------------------------------
-  // Archive-only chains (`liveIndexed: false`) — exist purely so the archive
-  // feed can render pre-platform attacks with correct badges and explorer
-  // links. The live indexer doesn't read from these chains, so picking one
-  // in the chain filter will show an empty live section. That's intended.
-  // ---------------------------------------------------------------------------
   bsc: {
     chainId: 56,
     slug: 'bsc',
@@ -135,8 +129,14 @@ export const CHAINS: Readonly<Record<ChainSlug, FrontendChain>> = Object.freeze(
     explorer: 'https://bscscan.com',
     isLocalFork: false,
     isTestnet: false,
-    liveIndexed: false,
+    liveIndexed: true,
   },
+  // ---------------------------------------------------------------------------
+  // Archive-only chains (`liveIndexed: false`) — exist purely so the archive
+  // feed can render pre-platform attacks with correct badges and explorer
+  // links. The live indexer doesn't read from these chains, so picking one
+  // in the chain filter will show an empty live section. That's intended.
+  // ---------------------------------------------------------------------------
   blast: {
     chainId: 81457,
     slug: 'blast',

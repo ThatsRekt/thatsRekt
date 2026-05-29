@@ -14,7 +14,7 @@ import { CHAINS, liveIndexedChains, visibleChains } from './chains'
  * production-visible set.
  */
 describe('chain registry ordering', () => {
-  it('visibleChains() lists production chains by relevance — mainnets then archive', () => {
+  it('visibleChains() lists production chains by relevance — live mainnets then archive-only', () => {
     expect(visibleChains().map((c) => c.slug)).toEqual([
       'ethereum',
       'base',
@@ -31,6 +31,7 @@ describe('chain registry ordering', () => {
       'base',
       'arbitrum',
       'optimism',
+      'bsc',
     ])
   })
 })

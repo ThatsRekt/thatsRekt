@@ -191,6 +191,7 @@ export const SLUG_TO_PREFIX: Record<string, string> = {
   'base-sepolia': 'BaseSepolia',
   optimism: 'Optimism',
   arbitrum: 'Arbitrum',
+  bsc: 'Bsc',
 }
 
 /**
