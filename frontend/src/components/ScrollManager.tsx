@@ -149,9 +149,48 @@ export function ScrollManager(): null {
         }
       }
     } else {
-      // PUSH or REPLACE — always start at the top.
+      // PUSH or REPLACE.
       // Seed the position map so POPs back here start from 0.
       positions.current.set(key, 0)
+
+      if (location.hash) {
+        // The target route may render asynchronously (e.g. /docs lazy-loads
+        // its sections), so the element may not be in the DOM on the first
+        // frame.  Mirror the rAF-poll pattern used by DocsTOC: retry for up
+        // to POLL_DEADLINE_MS before falling back to top-of-page.
+        const id = location.hash.slice(1)
+        const startTime = performance.now()
+        let rafId: number | null = null
+
+        function pollHash(): void {
+          const el = document.getElementById(id)
+          if (el) {
+            el.scrollIntoView({ behavior: 'auto', block: 'start' })
+            rafId = null
+            return
+          }
+
+          if (performance.now() - startTime > POLL_DEADLINE_MS) {
+            // Element never appeared — fall back to top.
+            window.scrollTo(0, 0)
+            rafId = null
+            return
+          }
+
+          rafId = window.requestAnimationFrame(pollHash)
+        }
+
+        rafId = window.requestAnimationFrame(pollHash)
+
+        return () => {
+          if (rafId !== null) {
+            window.cancelAnimationFrame(rafId)
+            rafId = null
+          }
+        }
+      }
+
+      // No hash — scroll to top.
       window.scrollTo(0, 0)
       return
     }
