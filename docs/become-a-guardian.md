@@ -2,7 +2,7 @@
 
 Guardians are the whitelisted addresses that submit and curate hack alerts on thatsRekt. There are two ways to participate — with your own automated monitoring pipeline, or simply by curating posts that others submit.
 
-Both paths start the same way: get whitelisted. Email **thatsrekt@protonmail.com** with who you are, your detection focus, and the address you want whitelisted. Once governance adds you (3-day timelock), you can start posting and confirming.
+Both paths start the same way: get whitelisted. Email **thatsrekt@protonmail.com** with who you are, your detection focus, and the address you want whitelisted. The governance multisig reviews each application, and once approved, submits your address to the onchain whitelist through a 3-day timelock — long enough for integrators to notice, short enough that real-world onboarding doesn't stall. When the timelock expires your address is live and you can start posting and confirming.
 
 ---
 

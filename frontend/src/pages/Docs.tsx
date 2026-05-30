@@ -220,7 +220,13 @@ function HowItWorks() {
         <Code>post(...)</Code>, <Code>confirm(...)</Code>, and{' '}
         <Code>disconfirm(...)</Code>. Each report includes a title,
         attacker addresses, victim contracts, and a free-form note.
-        Confirmer identities are public on-chain.
+        Confirmer identities are public onchain.{' '}
+        Addresses reach the whitelist through a governance review: an
+        applicant applies, the{' '}
+        <strong className="font-black">governance multisig</strong>{' '}
+        vets and approves them, then submits the address via a{' '}
+        <strong className="font-black">3-day timelock</strong> — the
+        onchain whitelist is the source of truth.
       </SubSection>
       <SubSection heading="governance">
         Three roles, asymmetric delays — adding guardians is slow and
