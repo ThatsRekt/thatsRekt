@@ -18,6 +18,7 @@ export type ChainSlug =
   | 'arbitrum'
   | 'optimism'
   | 'bsc'
+  | 'polygon'
   | 'blast'
   | 'sepolia'
   | 'base-sepolia'
@@ -127,6 +128,16 @@ export const CHAINS: Readonly<Record<ChainSlug, FrontendChain>> = Object.freeze(
     name: 'BNB Smart Chain',
     badge: 'bsc',
     explorer: 'https://bscscan.com',
+    isLocalFork: false,
+    isTestnet: false,
+    liveIndexed: true,
+  },
+  polygon: {
+    chainId: 137,
+    slug: 'polygon',
+    name: 'Polygon',
+    badge: 'polygon',
+    explorer: 'https://polygonscan.com',
     isLocalFork: false,
     isTestnet: false,
     liveIndexed: true,

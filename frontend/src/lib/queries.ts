@@ -192,6 +192,7 @@ export const SLUG_TO_PREFIX: Record<string, string> = {
   optimism: 'Optimism',
   arbitrum: 'Arbitrum',
   bsc: 'Bsc',
+  polygon: 'Polygon',
 }
 
 /**
