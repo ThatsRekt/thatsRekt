@@ -5,9 +5,10 @@
  *   1. Assert every canonical chain entry has the expected shape.
  *   2. Verify the BSC (chain 56) entry specifically — correctness of
  *      chainId, slug, env var names, gateway URL, and finality setting.
- *   3. Confirm `getChain` resolves known slugs and throws on unknown ones
+ *   3. Verify the Polygon (chain 137) entry — locked config from grill 2026-05-29.
+ *   4. Confirm `getChain` resolves known slugs and throws on unknown ones
  *      (fail-fast, never silently default).
- *   4. Confirm CHAIN_SLUGS is exhaustive and matches CHAINS keys.
+ *   5. Confirm CHAIN_SLUGS is exhaustive and matches CHAINS keys.
  */
 import { describe, expect, test } from 'bun:test'
 import {
@@ -56,6 +57,10 @@ describe('CHAIN_SLUGS', () => {
 
   test('includes bsc', () => {
     expect(CHAIN_SLUGS).toContain('bsc')
+  })
+
+  test('includes polygon', () => {
+    expect(CHAIN_SLUGS).toContain('polygon')
   })
 })
 
@@ -118,6 +123,52 @@ describe('CHAINS.bsc', () => {
 })
 
 // ---------------------------------------------------------------------------
+// Polygon-specific assertions
+// ---------------------------------------------------------------------------
+
+describe('CHAINS.polygon', () => {
+  const polygon = CHAINS['polygon']
+
+  test('chainId is 137', () => {
+    expect(polygon.chainId).toBe(137)
+  })
+
+  test('slug is polygon', () => {
+    expect(polygon.slug).toBe('polygon')
+  })
+
+  test('name is Polygon', () => {
+    expect(polygon.name).toBe('Polygon')
+  })
+
+  test('rpcEnvVar is RPC_POLYGON_HTTP', () => {
+    expect(polygon.rpcEnvVar).toBe('RPC_POLYGON_HTTP')
+  })
+
+  test('contractEnvVar is CONTRACT_POLYGON', () => {
+    expect(polygon.contractEnvVar).toBe('CONTRACT_POLYGON')
+  })
+
+  test('startBlockEnvVar is START_BLOCK_POLYGON', () => {
+    expect(polygon.startBlockEnvVar).toBe('START_BLOCK_POLYGON')
+  })
+
+  test('gateway points to polygon-mainnet Subsquid archive', () => {
+    expect(polygon.gateway).toBe(
+      'https://v2.archive.subsquid.io/network/polygon-mainnet',
+    )
+  })
+
+  test('finalityConfirmation is 100 (deep reorg window for Polygon PoS)', () => {
+    expect(polygon.finalityConfirmation).toBe(100)
+  })
+
+  test('rpcRateLimit is 10 (matches other mainnet chains)', () => {
+    expect(polygon.rpcRateLimit).toBe(10)
+  })
+})
+
+// ---------------------------------------------------------------------------
 // getChain — lookup + fail-fast
 // ---------------------------------------------------------------------------
 
@@ -132,8 +183,13 @@ describe('getChain', () => {
     expect(cfg.chainId).toBe(1)
   })
 
+  test('resolves polygon by slug', () => {
+    const cfg = getChain('polygon')
+    expect(cfg.chainId).toBe(137)
+  })
+
   test('throws on unknown slug', () => {
-    expect(() => getChain('polygon')).toThrow(/Unknown chain slug/)
+    expect(() => getChain('solana')).toThrow(/Unknown chain slug/)
   })
 
   test('error message lists known slugs', () => {
@@ -142,6 +198,7 @@ describe('getChain', () => {
     } catch (e) {
       expect(String(e)).toContain('bsc')
       expect(String(e)).toContain('ethereum')
+      expect(String(e)).toContain('polygon')
     }
   })
 })

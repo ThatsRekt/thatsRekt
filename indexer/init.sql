@@ -23,3 +23,4 @@ CREATE DATABASE thatsrekt_base;
 CREATE DATABASE thatsrekt_optimism;
 CREATE DATABASE thatsrekt_arbitrum;
 CREATE DATABASE thatsrekt_bsc;
+CREATE DATABASE thatsrekt_polygon;

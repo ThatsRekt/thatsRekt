@@ -4,8 +4,8 @@
  *
  * Two flavors of chain entry:
  *   - Real chains:  `sepolia` (EIP-155 11155111), `base` (8453),
- *     `optimism` (10), `bsc` (56). Use Subsquid Network archive gateways +
- *     routeme.sh RPCs.
+ *     `optimism` (10), `bsc` (56), `polygon` (137). Use Subsquid Network
+ *     archive gateways + routeme.sh RPCs.
  *   - Local Anvil forks: `anvil-eth` (chainId 31337), `anvil-base`
  *     (chainId 31338). RPC-only mode (no archive gateway). Forked
  *     against real chain state via `--fork-url`. Distinct chain ids
@@ -36,6 +36,7 @@ export type ChainSlug =
   | 'optimism'
   | 'arbitrum'
   | 'bsc'
+  | 'polygon'
 
 export interface ChainConfig {
   /** EIP-155 chain id. */
@@ -169,6 +170,23 @@ export const CHAINS: Readonly<Record<ChainSlug, ChainConfig>> = Object.freeze({
     // PoSA BFT finality: blocks are finalized after 2/3+1 validators sign off,
     // which takes ~15 blocks (~45s). Use 15 for a safe margin.
     finalityConfirmation: 15,
+    rpcRateLimit: 10,
+  },
+  polygon: {
+    // Polygon PoS — BOR/Heimdall consensus, ~2s block time, reorgs can run
+    // deeper than BSC due to the checkpoint-based finality model. 100-block
+    // window is the safe industry standard used by major Polygon integrators.
+    // thatsRekt canonical proxy deployed at block 87634893.
+    // Subsquid archive: https://v2.archive.subsquid.io/network/polygon-mainnet
+    // (ArrowSquid tier-1 archive, verified present).
+    chainId: 137,
+    slug: 'polygon',
+    name: 'Polygon',
+    gateway: 'https://v2.archive.subsquid.io/network/polygon-mainnet',
+    rpcEnvVar: 'RPC_POLYGON_HTTP',
+    contractEnvVar: 'CONTRACT_POLYGON',
+    startBlockEnvVar: 'START_BLOCK_POLYGON',
+    finalityConfirmation: 100,
     rpcRateLimit: 10,
   },
 })

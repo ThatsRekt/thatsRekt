@@ -13,11 +13,12 @@
 #   base           (chainId 8453)   — real Base mainnet
 #   optimism       (chainId 10)    — real Optimism mainnet
 #   bsc            (chainId 56)    — BNB Chain mainnet
+#   polygon        (chainId 137)   — Polygon mainnet
 #
 # Service map per chain:
 #   migrate-{slug}     one-shot migrations against thatsrekt_{slug}
 #   processor-{slug}   long-running indexer
-#   graphql-{slug}     squid GraphQL on internal port (4351-4355, 4358 for bsc)
+#   graphql-{slug}     squid GraphQL on internal port (4351-4355, 4358 for bsc, 4363 for polygon)
 #
 # Plus shared:
 #   db                 postgres :5432  (host loopback only, 127.0.0.1)
@@ -508,7 +509,64 @@ services:
         condition: service_completed_successfully
 
   # ===========================================================================
-  # Mesh gateway — single public GraphQL surface stitching all 8 squid APIs.
+  # polygon (chainId 137)
+  # ===========================================================================
+  migrate-polygon:
+    <<: *indexer
+    command: ['npx', 'squid-typeorm-migration', 'apply']
+    environment:
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_NAME: thatsrekt_polygon
+      DB_USER: ${DB_USER:-postgres}
+      DB_PASS: ${DB_PASS:-postgres}
+    restart: 'no'
+    depends_on:
+      db:
+        condition: service_healthy
+
+  processor-polygon:
+    <<: *indexer
+    command: ['node', 'lib/main.js']
+    environment:
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_NAME: thatsrekt_polygon
+      DB_USER: ${DB_USER:-postgres}
+      DB_PASS: ${DB_PASS:-postgres}
+      CHAIN: polygon
+      RPC_POLYGON_HTTP: ${RPC_POLYGON_HTTP:-}
+      CONTRACT_POLYGON: ${CONTRACT_POLYGON:-}
+      START_BLOCK_POLYGON: ${START_BLOCK_POLYGON:-}
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate-polygon:
+        condition: service_completed_successfully
+
+  graphql-polygon:
+    <<: *indexer
+    command: ['npx', 'squid-graphql-server']
+    environment:
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_NAME: thatsrekt_polygon
+      DB_USER: ${DB_USER:-postgres}
+      DB_PASS: ${DB_PASS:-postgres}
+      GQL_PORT: 4363
+      NODE_ENV: development
+    expose:
+      - '4363'
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate-polygon:
+        condition: service_completed_successfully
+
+  # ===========================================================================
+  # Mesh gateway — single public GraphQL surface stitching all 9 squid APIs.
   # ===========================================================================
   mesh:
     build:
@@ -516,7 +574,7 @@ services:
       dockerfile: Dockerfile
     environment:
       PORT: ${MESH_PORT:-4350}
-      MESH_CHAINS: ${MESH_CHAINS:-anvil-eth,anvil-base,sepolia,ethereum,base,optimism,arbitrum,bsc}
+      MESH_CHAINS: ${MESH_CHAINS:-anvil-eth,anvil-base,sepolia,ethereum,base,optimism,arbitrum,bsc,polygon}
       GRAPHQL_ANVIL_ETH_URL: http://graphql-anvil-eth:4351/graphql
       GRAPHQL_ANVIL_BASE_URL: http://graphql-anvil-base:4354/graphql
       GRAPHQL_SEPOLIA_URL: http://graphql-sepolia:4352/graphql
@@ -525,6 +583,7 @@ services:
       GRAPHQL_OPTIMISM_URL: http://graphql-optimism:4355/graphql
       GRAPHQL_ARBITRUM_URL: http://graphql-arbitrum:4357/graphql
       GRAPHQL_BSC_URL: http://graphql-bsc:4358/graphql
+      GRAPHQL_POLYGON_URL: http://graphql-polygon:4363/graphql
     ports:
       - '127.0.0.1:${MESH_PORT:-4350}:${MESH_PORT:-4350}'
     restart: unless-stopped
@@ -544,6 +603,8 @@ services:
       graphql-arbitrum:
         condition: service_started
       graphql-bsc:
+        condition: service_started
+      graphql-polygon:
         condition: service_started
 
 volumes:
