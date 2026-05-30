@@ -109,6 +109,11 @@ jobs:
         env:
           IMAGE: ${{ env.AWS_ACCOUNT }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/thatsrekt/${{ matrix.service }}
           SHA: ${{ needs.resolve.outputs.sha }}
+          # Public Cloudflare Turnstile site key for the prod frontend bundle.
+          # Set as a repo VARIABLE (not a secret: the site key is public). When
+          # unset, this is empty and the bundle falls back to the always-pass
+          # test key, so dev/CI need no real key. Prod-only by construction.
+          VITE_TURNSTILE_SITE_KEY: ${{ vars.VITE_TURNSTILE_SITE_KEY }}
         run: |
           # Frontend bakes its GraphQL endpoint at build time (Vite inlines).
           # Default to a relative same-origin path so the bundle is
@@ -120,6 +125,7 @@ jobs:
               BUILD_ARGS+=(--build-arg "VITE_USE_MOCK_DATA=false")
               BUILD_ARGS+=(--build-arg "VITE_SHOW_LOCAL_FORKS=false")
               BUILD_ARGS+=(--build-arg "VITE_SHOW_TESTNETS=false")
+              BUILD_ARGS+=(--build-arg "VITE_TURNSTILE_SITE_KEY=${VITE_TURNSTILE_SITE_KEY}")
           fi
 
           docker buildx build \

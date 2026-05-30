@@ -26,7 +26,7 @@ import {
   commentsTypeDefs,
   startRateLimitGc,
 } from './comments.js'
-import { buildGuardianResolvers, guardianTypeDefs } from './guardian.js'
+import { assertTurnstileSecretForProd, buildGuardianResolvers, guardianTypeDefs } from './guardian.js'
 import { ensureCommentsTable, ensureGuardianApplicationsTable } from './db.js'
 import {
   handleOgImageRoute,
@@ -640,6 +640,13 @@ const parseQueryToDocument = (source: string): DocumentNode => parse(source)
 // ---------------------------------------------------------------------------
 
 const main = async () => {
+  // Fail loud before touching any infrastructure if the Turnstile secret is
+  // absent or set to a known Cloudflare test key in production. A missing
+  // real secret means the only anti-griefing guard on the public application
+  // form is silently disabled. Guard fires only in NODE_ENV=production (which
+  // the mesh Dockerfile bakes in at runtime); dev/CI test keys are unaffected.
+  assertTurnstileSecretForProd(process.env.NODE_ENV, process.env.TURNSTILE_SECRET)
+
   const port = Number.parseInt(process.env.PORT ?? '4350', 10)
   const chains = enabledChains()
   if (chains.length === 0) {

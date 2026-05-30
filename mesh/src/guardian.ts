@@ -36,12 +36,60 @@ const EXTRA_CONTACTS_MAX = 2   // primary + extras ≤ 3 total
 // Cloudflare Turnstile siteverify endpoint.
 const TURNSTILE_SITEVERIFY_URL = 'https://challenges.cloudflare.com/turnstile/v0/siteverify'
 
+// Cloudflare-documented test secret keys. These produce predictable results
+// from the real siteverify endpoint without requiring prod credentials:
+//   1x...AA — always-pass (success:true for any token)
+//   2x...AA — always-fail (success:false for any token)
+//   3x...AA — token-already-spent / yes dummy
+// ALL THREE are rejected in production by assertTurnstileSecretForProd().
+const CLOUDFLARE_TEST_SECRET_KEYS: ReadonlySet<string> = new Set([
+  '1x0000000000000000000000000000000AA',
+  '2x0000000000000000000000000000000AA',
+  '3x0000000000000000000000000000000AA',
+])
+
+// ---------------------------------------------------------------------------
+// Prod boot guard — called once at startup from server.ts
+// ---------------------------------------------------------------------------
+
+/**
+ * Assert that a real Turnstile secret is configured when running in production.
+ *
+ * Throws a descriptive Error (causing server.ts main() to reject) if:
+ *   - NODE_ENV is "production", AND
+ *   - TURNSTILE_SECRET is missing/empty OR is one of the known Cloudflare test
+ *     keys (which silently no-op the anti-griefing protection).
+ *
+ * In any other environment (development, test, undefined) this function is
+ * a no-op so dev/CI workflows continue to use test keys without friction.
+ *
+ * Pure function — takes explicit arguments so tests can drive it without
+ * touching process.env or module state.
+ */
+export const assertTurnstileSecretForProd = (
+  nodeEnv: string | undefined,
+  turnstileSecret: string | undefined,
+): void => {
+  if (nodeEnv !== 'production') return
+
+  if (!turnstileSecret || CLOUDFLARE_TEST_SECRET_KEYS.has(turnstileSecret)) {
+    throw new Error(
+      '[guardian] TURNSTILE_SECRET is missing or set to a Cloudflare test key in production. ' +
+      'Turnstile would be a silent no-op and the only anti-griefing guard on the application form ' +
+      'would be disabled. Set TURNSTILE_SECRET to the real secret key from your Cloudflare ' +
+      'Turnstile widget before starting the mesh in production.',
+    )
+  }
+}
+
 // Turnstile secret from env. In dev/CI this MUST be one of the Cloudflare
 // documented test secrets so the real siteverify endpoint returns a
 // predictable result without prod keys:
 //   Always-pass secret: 1x0000000000000000000000000000000AA
 //   Always-fail secret: 2x0000000000000000000000000000000AA
-// Prod secrets are injected at deploy time (slice #178) — do NOT hardcode them.
+// Prod secrets are injected at deploy time (slice #178). The prod boot guard
+// above (assertTurnstileSecretForProd) ensures the real key is present before
+// this module's default verifier is used in anger.
 const DEFAULT_TURNSTILE_SECRET =
   process.env.TURNSTILE_SECRET ?? '1x0000000000000000000000000000000AA'
 

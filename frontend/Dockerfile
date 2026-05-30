@@ -34,10 +34,17 @@ ARG VITE_GRAPHQL_ENDPOINT=/graphql
 ARG VITE_USE_MOCK_DATA=false
 ARG VITE_SHOW_LOCAL_FORKS=false
 ARG VITE_SHOW_TESTNETS=false
+# Cloudflare Turnstile public site key. Empty default on purpose: an unset
+# build arg leaves the runtime fallback to Cloudflare's always-pass TEST
+# site key (see ApplyForm.tsx), so local and non-prod image builds need no
+# real key. Prod CI passes the real key via --build-arg. The site key is
+# public (it ships in the bundle); the secret key lives only in mesh env.
+ARG VITE_TURNSTILE_SITE_KEY=
 ENV VITE_GRAPHQL_ENDPOINT=${VITE_GRAPHQL_ENDPOINT}
 ENV VITE_USE_MOCK_DATA=${VITE_USE_MOCK_DATA}
 ENV VITE_SHOW_LOCAL_FORKS=${VITE_SHOW_LOCAL_FORKS}
 ENV VITE_SHOW_TESTNETS=${VITE_SHOW_TESTNETS}
+ENV VITE_TURNSTILE_SITE_KEY=${VITE_TURNSTILE_SITE_KEY}
 
 RUN pnpm build
 
