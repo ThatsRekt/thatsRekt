@@ -1,0 +1,19 @@
+{
+  "ok": true,
+  "result": {
+    "message_id": 42,
+    "from": {
+      "id": 7654321,
+      "is_bot": true,
+      "first_name": "thatsRekt Guardian Bot",
+      "username": "thatsrekt_guardian_bot"
+    },
+    "chat": {
+      "id": -1001234567890,
+      "title": "thatsRekt Guardian Applications (private)",
+      "type": "channel"
+    },
+    "date": 1748534400,
+    "text": "New Guardian Application"
+  }
+}

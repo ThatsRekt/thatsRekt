@@ -1,7 +1,7 @@
 name: Build container images
 
 # =============================================================================
-# Builds the four thatsRekt container images and pushes them to AWS ECR
+# Builds the thatsRekt container images and pushes them to AWS ECR
 # in the operator's account. Does NOT deploy — the operator runs deploy
 # scripts on their cloud after CI produces the images.
 #
@@ -73,7 +73,7 @@ jobs:
         id: matrix
         run: |
           if [[ "${{ inputs.services }}" == "all" ]]; then
-            SVC='["indexer","mesh","frontend","relay","notifier"]'
+            SVC='["indexer","mesh","frontend","relay","notifier","guardian-apply-bot"]'
           else
             SVC=$(echo '${{ inputs.services }}' | jq -Rc 'split(",") | map(gsub("^\\s+|\\s+$";""))')
           fi
