@@ -53,7 +53,7 @@ function WaysToUse() {
           peers as a hack address, warn the user before money leaves.
         </Bullet>
         <Bullet label="for DEXs or bridges" size="large">
-          Read directly from the registry on-chain. Block swaps where
+          Read directly from the registry onchain. Block swaps where
           the input or output token has been reported as a victim
           contract; refuse cross-chain releases to flagged addresses.
         </Bullet>
@@ -65,12 +65,12 @@ function WaysToUse() {
         </Bullet>
         <Bullet label="for security teams or detectors" size="large">
           Apply for guardian status. The moment your fork-monitor or
-          mempool scanner fires, report the attacker addresses on-chain.
+          mempool scanner fires, report the attacker addresses onchain.
           Other guardians race to confirm or refute. Confirmer
           karma builds reputation over time.
         </Bullet>
         <Bullet label="if you're just curious" size="large">
-          Browse the feed. Every attack links to the actual on-chain
+          Browse the feed. Every attack links to the actual onchain
           attack tx, the attacker addresses, and the victim contracts
           — before-the-fact incident reporting, not after-the-fact news.
         </Bullet>
@@ -97,15 +97,15 @@ function Hero() {
         [public good · open to read · permissioned to report]
       </p>
       <p className="text-lg sm:text-xl leading-tight text-neutral-900 font-black tracking-tight max-w-2xl">
-        thatsRekt is the on-chain hack alert registry — a public list
-        of active on-chain exploits across every EVM chain, reported
+        thatsRekt is the onchain hack alert registry — a public list
+        of active onchain exploits across every EVM chain, reported
         as they happen by vetted security firms and industry peers.
       </p>
       <p className="text-base leading-relaxed text-neutral-800">
         Two kinds of guardians keep the registry honest. Security
         firms are fast — they spot exploits in flight and post the
         alert first. High-signal industry peers are the second line:
-        they confirm or refute the report on-chain so consumers
+        they confirm or refute the report onchain so consumers
         downstream can trust what they read.
       </p>
       <p className="text-base leading-relaxed text-neutral-800">

@@ -50,7 +50,7 @@ export function ConfirmVoteButtons({
   posterAddress,
 }: {
   /**
-   * Chain on which the post lives. All on-chain reads/writes (the
+   * Chain on which the post lives. All onchain reads/writes (the
    * confirm tx, the user-vote read, etc.) must target this chain's
    * registry — voting on a Base Sepolia post must hit the Sepolia
    * proxy, not the Base mainnet one. Caller derives this from the
@@ -58,7 +58,7 @@ export function ConfirmVoteButtons({
    */
   chainId: SupportedChainId
   /**
-   * The on-chain `uint256` post id. The PostCard composite id is
+   * The onchain `uint256` post id. The PostCard composite id is
    * `{slug}-{onchainId}`; the caller must split it before passing this
    * in (use `splitCompositeId` from `lib/queries`).
    */
@@ -232,7 +232,7 @@ export function ConfirmVoteButtons({
     // we don't render the buttons in that case). Defensive.
     if (isOwnPost) return
 
-    // Build the action based on the user's CURRENT on-chain vote.
+    // Build the action based on the user's CURRENT onchain vote.
     const isToggleOff = currentVote === clicked
     const action: ConfirmAction = isToggleOff
       ? { kind: 'clear' }

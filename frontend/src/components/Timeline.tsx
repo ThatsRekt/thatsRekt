@@ -3,7 +3,7 @@ import { AddressLabel } from './AddressLabel'
 import { formatTimestamp, relativeTime } from '../lib/format'
 
 // Synthesized "inception" event derived from the post's own creation
-// data (no separate Inception entity exists on-chain — the PostCreated
+// data (no separate Inception entity exists onchain — the PostCreated
 // event IS the inception). Always rendered as the first row so a
 // brand-new post still has a visible timeline.
 interface InceptionData {

@@ -17,7 +17,7 @@ import { Markdown } from './Markdown'
 import { ShareButton } from './ShareButton'
 
 /**
- * Discriminated union — `kind: 'live'` for on-chain posts, `kind:
+ * Discriminated union — `kind: 'live'` for onchain posts, `kind:
  * 'archive'` for pre-platform incidents from `data/historic-incidents.json`.
  *
  * Keeps the call site honest: TypeScript forces every branch to handle
@@ -39,12 +39,12 @@ export function PostCard({ item }: { item: PostCardItem }) {
 
 function LivePostCard({ post }: { post: FeedPost }) {
   const chainSlug = post.chain?.slug
-  // v1.1: title is a required on-chain field — it IS the headline.
+  // v1.1: title is a required onchain field — it IS the headline.
   // Note is the longer free-form body; previewed below the title.
   const headline = post.title?.trim() || '(untitled)'
   const body = post.note?.trim()
-  // The on-chain `confirm` / `unconfirm` calls take the bare uint256 id,
-  // not our composite `{slug}-{onchainId}`. Extract the on-chain part.
+  // The onchain `confirm` / `unconfirm` calls take the bare uint256 id,
+  // not our composite `{slug}-{onchainId}`. Extract the onchain part.
   const { onchainId } = splitCompositeId(post.id)
   const numericPostId = (() => {
     try {
@@ -226,7 +226,7 @@ function ArchiveChip() {
   return (
     <span
       className="inline-flex items-center px-1.5 py-0.5 border border-red-600 text-[10px] font-mono font-bold uppercase tracking-widest text-red-700 bg-red-50"
-      title="Archive — pre-platform attack, not on-chain"
+      title="Archive — pre-platform attack, not onchain"
     >
       archive
     </span>

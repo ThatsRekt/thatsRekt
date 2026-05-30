@@ -50,7 +50,7 @@ export function BecomeAPosterCallout({
         Reporting is permissioned — addresses are added to the whitelist
         by governance after a vetting review. If you run a security
         team, an exploit detector, or any pipeline that produces
-        timely on-chain incident signals, get in touch.
+        timely onchain incident signals, get in touch.
       </p>
       <p className="text-sm leading-relaxed text-neutral-800">
         Send a short pitch — track record, detection focus, and the

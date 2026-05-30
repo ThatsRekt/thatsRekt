@@ -5,12 +5,12 @@ import { BecomeAPosterCallout } from '../components/BecomeAPosterCallout'
  * Guardians page — the directory of every whitelisted address that
  * can submit hack alerts on the registry, broken down per chain.
  *
- * Guardians and the leaderboard are two views of the same on-chain
+ * Guardians and the leaderboard are two views of the same onchain
  * concept (whitelisted addresses): this page is the static directory
  * sourced from the indexer's whitelist event log; `/leaderboard`
  * ranks them by lifetime confirmation activity.
  *
- * Note: the on-chain primitive is still called a "poster" in contracts
+ * Note: the onchain primitive is still called a "poster" in contracts
  * and indexer schemas — the user-facing rebrand is purely cosmetic.
  */
 export function Guardians() {
@@ -32,7 +32,7 @@ export function Guardians() {
           rotation is publicly visible; misbehaving guardians are
           removed{' '}
           <strong className="font-black">instantly</strong> by the
-          governance multisig. The on-chain whitelist is the source of
+          governance multisig. The onchain whitelist is the source of
           truth; the names below are a courtesy lookup.
         </p>
       </header>

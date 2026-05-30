@@ -125,7 +125,7 @@ export function Feed() {
           archivePosts={archivePosts}
           showArchive={showArchive}
           // When sort=oldest, render the archive ABOVE the live section.
-          // Archives are by definition older than any on-chain post, so
+          // Archives are by definition older than any onchain post, so
           // this preserves global chronology — "oldest first" reads as
           // The DAO 2016 → today, top to bottom.
           archiveAbove={sort === 'oldest'}
@@ -190,8 +190,8 @@ function FeedBody({
         title="no attacks reported yet."
         hint={
           showArchive
-            ? 'no on-chain attacks have been indexed, and no archive entries match the current chain filter.'
-            : 'no on-chain attacks have been indexed. Toggle "show archive" above to see pre-platform attacks.'
+            ? 'no onchain attacks have been indexed, and no archive entries match the current chain filter.'
+            : 'no onchain attacks have been indexed. Toggle "show archive" above to see pre-platform attacks.'
         }
       />
     )
@@ -219,7 +219,7 @@ function FeedBody({
           Independent of section order — just a top-of-page hint. */}
       {!error && liveEmpty && showArchive && !archiveEmpty && (
         <p className="mb-6 text-xs uppercase tracking-widest text-neutral-700">
-          no on-chain attacks yet · showing pre-platform archive
+          no onchain attacks yet · showing pre-platform archive
         </p>
       )}
 

@@ -1,9 +1,9 @@
 /**
- * Archive posts — pre-platform on-chain exploits.
+ * Archive posts — pre-platform onchain exploits.
  *
- * These are NOT on-chain. They're a curated dataset
+ * These are NOT onchain. They're a curated dataset
  * (`data/historic-incidents.json`, copied to `frontend/src/data/`) that
- * the feed renders read-only beneath the live on-chain section.
+ * the feed renders read-only beneath the live onchain section.
  *
  * The shape mirrors the JSON schema documented in `data/README.md`. Any
  * field-level changes there must be reflected here — and vice versa.

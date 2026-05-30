@@ -4,7 +4,7 @@
  * Shows the full lifecycle of a single alert: a guardian submits via the
  * contract, peers confirm or refute, and the aggregate `attackerScore`
  * updates in real time. Aggregates flow back to readers (contracts and
- * dApps) without indexer dependency for the cheap on-chain reads.
+ * dApps) without indexer dependency for the cheap onchain reads.
  *
  * Brutalist style — black 2px borders, monospace labels, no gradients.
  */

@@ -19,7 +19,7 @@ import { relativeTime, twitterUrl } from '../lib/format'
  * and its own selected-tab state.
  */
 export function WhitelistersByChain() {
-  // Whitelisters live on-chain — only fan out queries to chains the
+  // Whitelisters live onchain — only fan out queries to chains the
   // live indexer actually ingests. Archive-only chains (ethereum, etc.)
   // would resolve to empty sections and pollute the tab list.
   const chains = liveIndexedChains()

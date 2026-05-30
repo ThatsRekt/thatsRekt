@@ -7,7 +7,7 @@ import remarkGfm from 'remark-gfm'
  * Sandboxing:
  *   - `react-markdown` strips embedded HTML by default (no `rehype-raw`).
  *     Do NOT enable rehype-raw — posters are whitelisted but the security
- *     posture for on-chain free-form data is "treat as untrusted display
+ *     posture for onchain free-form data is "treat as untrusted display
  *     content". Stay sandboxed.
  *   - All `<a>` tags are forced through a `target="_blank"
  *     rel="noreferrer noopener"` override so a malicious `[click](javascript:...)`

@@ -58,7 +58,7 @@ shapes. Reference: [docs.otomato.xyz](https://docs.otomato.xyz/otomato-docs/).
 You don't need to run a detection pipeline to be a useful guardian.
 Confirming and disconfirming posts that other guardians submit is
 equally important — it's what builds the net score that integrators
-read on-chain.
+read onchain.
 
 ### How to confirm or disconfirm a post
 
@@ -74,7 +74,7 @@ read on-chain.
 > confirmation prompt — the contract address is always
 > `0xBfaEEE9662b4c037De24e5Caa65815350d57b89A`._
 
-Each confirmation or disconfirmation is a signed on-chain transaction.
+Each confirmation or disconfirmation is a signed onchain transaction.
 Your address is recorded publicly in the `confirmationLog`. Switching
 direction (↑ after a ↓, or vice versa) replaces your previous vote.
 You can also withdraw it entirely with `unconfirm`.
@@ -85,7 +85,7 @@ You can also withdraw it entirely with `unconfirm`.
   listed as an attacker in that post.
 - **↓ disconfirm** → adds `−1` to the same scores.
 - The net score across all active posts and all guardians is what
-  integrators (wallets, bridges, lending markets) read on-chain.
+  integrators (wallets, bridges, lending markets) read onchain.
 
 A single well-timed confirmation from a trusted guardian can cross the
 threshold that triggers a real-time protection in another protocol.
