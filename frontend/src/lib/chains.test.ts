@@ -21,6 +21,7 @@ describe('chain registry ordering', () => {
       'arbitrum',
       'optimism',
       'bsc',
+      'polygon',
       'blast',
     ])
   })
@@ -32,6 +33,7 @@ describe('chain registry ordering', () => {
       'arbitrum',
       'optimism',
       'bsc',
+      'polygon',
     ])
   })
 })

@@ -24,6 +24,8 @@ Canonical proxy address — identical on every chain via CREATE2:
 | Base | 8453 | [basescan](https://basescan.org/address/0xBfaEEE9662b4c037De24e5Caa65815350d57b89A) |
 | Arbitrum One | 42161 | [arbiscan](https://arbiscan.io/address/0xBfaEEE9662b4c037De24e5Caa65815350d57b89A) |
 | Optimism | 10 | [optimistic.etherscan](https://optimistic.etherscan.io/address/0xBfaEEE9662b4c037De24e5Caa65815350d57b89A) |
+| BNB Smart Chain | 56 | [bscscan](https://bscscan.com/address/0xBfaEEE9662b4c037De24e5Caa65815350d57b89A) |
+| Polygon | 137 | [polygonscan](https://polygonscan.com/address/0xBfaEEE9662b4c037De24e5Caa65815350d57b89A) |
 
 ## How posts work
 

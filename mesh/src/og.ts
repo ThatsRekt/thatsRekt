@@ -298,9 +298,13 @@ const explorerAddressUrl = (chainSlug: string, address: string): string => {
     'anvil-eth': '',
     'anvil-base': '',
     'sepolia': 'https://sepolia.etherscan.io',
+    'ethereum': 'https://etherscan.io',
     'base': 'https://basescan.org',
     'base-sepolia': 'https://sepolia.basescan.org',
     'optimism': 'https://optimistic.etherscan.io',
+    'arbitrum': 'https://arbiscan.io',
+    'bsc': 'https://bscscan.com',
+    'polygon': 'https://polygonscan.com',
   }
   const root = base[chainSlug]
   if (!root) return ''
