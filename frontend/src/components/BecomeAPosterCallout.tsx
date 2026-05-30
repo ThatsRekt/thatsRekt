@@ -1,8 +1,4 @@
-/**
- * Email address for prospective guardians to apply. Defined in one
- * place so swapping it out is a single edit.
- */
-export const BECOME_POSTER_EMAIL = 'thatsrekt@protonmail.com'
+import { Link } from 'react-router-dom'
 
 interface BecomeAPosterCalloutProps {
   /**
@@ -16,27 +12,13 @@ interface BecomeAPosterCalloutProps {
 export function BecomeAPosterCallout({
   variant = 'card',
 }: BecomeAPosterCalloutProps) {
-  const subject = encodeURIComponent('thatsRekt — guardian application')
-  const body = encodeURIComponent(
-    [
-      'Team / detector name:',
-      'Public profile (X / GitHub / website):',
-      'Detection focus (which protocols, which chains, which exploit classes):',
-      'Existing track record (writeups, prior incidents flagged, etc.):',
-      'Address you want whitelisted:',
-      '',
-      "We'll review and reply with next steps.",
-    ].join('\n'),
-  )
-  const mailto = `mailto:${BECOME_POSTER_EMAIL}?subject=${subject}&body=${body}`
-
   if (variant === 'inline') {
     return (
       <p className="text-sm leading-relaxed text-neutral-800">
         Run a security team or automated detector?{' '}
-        <a href={mailto} className="rekt-link font-black uppercase tracking-widest text-red-600">
+        <Link to="/apply" className="rekt-link font-black uppercase tracking-widest text-red-600">
           apply to guard →
-        </a>
+        </Link>
       </p>
     )
   }
@@ -53,16 +35,17 @@ export function BecomeAPosterCallout({
         timely onchain incident signals, get in touch.
       </p>
       <p className="text-sm leading-relaxed text-neutral-800">
-        Send a short pitch — track record, detection focus, and the
-        address you want whitelisted. We'll review and add you.
+        Submit a short application — track record, detection focus, and the
+        address you want whitelisted. The governance multisig reviews each
+        application and approves via an onchain timelock.
       </p>
-      <a
-        href={mailto}
+      <Link
+        to="/apply"
         className="inline-flex items-center gap-1 mt-1 border-2 border-red-600 bg-red-600 text-white px-3 py-2 text-xs uppercase tracking-widest font-black hover:bg-red-700 hover:border-red-700 transition-colors focus:outline-none focus:ring-2 focus:ring-red-600 focus:ring-offset-2"
       >
-        <span>email {BECOME_POSTER_EMAIL}</span>
+        <span>apply to guard</span>
         <span aria-hidden="true">→</span>
-      </a>
+      </Link>
     </section>
   )
 }

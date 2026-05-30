@@ -1,8 +1,7 @@
 import { useEffect, useRef } from 'react'
+import { Link } from 'react-router-dom'
 import { useConnect } from 'wagmi'
 import { AddressLabel } from './AddressLabel'
-
-const APPLY_EMAIL = 'thatsrekt@protonmail.com'
 
 /**
  * Shared connect-or-gate modal. Three states:
@@ -15,7 +14,7 @@ const APPLY_EMAIL = 'thatsrekt@protonmail.com'
  *      panel so the user gets feedback during the brief window where
  *      we don't yet know if they can act.
  *   3. **Connected, not whitelisted.** Renders the "become a guardian"
- *      gate with a pre-filled mailto.
+ *      gate routing to /apply.
  *
  * The "connected + whitelisted" state is intentionally NOT rendered by
  * this component — different callers want different UIs (PostAlert
@@ -233,20 +232,6 @@ function NotWhitelistedPanel({
   address: `0x${string}` | undefined
   onClose: () => void
 }) {
-  const subject = encodeURIComponent('thatsRekt — guardian application')
-  // Pre-fill the body so the recipient gets the exact info we need to
-  // vet, including the connected address (saves the user a copy/paste).
-  const bodyLines = [
-    'Team / detector name:',
-    'Public profile (X / GitHub / website):',
-    'Detection focus (which protocols, chains, exploit classes):',
-    'Existing track record (writeups, prior incidents flagged):',
-    address ? `Address to whitelist: ${address}` : 'Address to whitelist:',
-    '',
-    "We'll review and reply with next steps.",
-  ]
-  const mailto = `mailto:${APPLY_EMAIL}?subject=${subject}&body=${encodeURIComponent(bodyLines.join('\n'))}`
-
   return (
     <div className="space-y-4">
       <p className="text-sm leading-relaxed text-neutral-800">
@@ -258,16 +243,17 @@ function NotWhitelistedPanel({
           [become a guardian]
         </p>
         <p className="text-sm leading-relaxed text-neutral-800">
-          Email us with who you are, what you'd be reporting, and the
-          address you want whitelisted. We'll review and add you.
+          Submit an application — who you are, what you'd be reporting, and the
+          address you want whitelisted. The governance multisig reviews each
+          application and approves via an onchain timelock.
         </p>
-        <a
-          href={mailto}
+        <Link
+          to="/apply"
           onClick={onClose}
           className="inline-flex items-center gap-1 border-2 border-red-600 bg-red-600 text-white px-3 py-2 text-xs uppercase tracking-widest font-black hover:bg-red-700 hover:border-red-700 transition-colors focus:outline-none focus:ring-2 focus:ring-red-600 focus:ring-offset-1"
         >
-          email {APPLY_EMAIL} →
-        </a>
+          apply to guard →
+        </Link>
       </section>
     </div>
   )

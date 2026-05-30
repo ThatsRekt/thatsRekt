@@ -22,30 +22,9 @@ import { twitterUrl } from '../lib/format'
 
 const GITHUB_URL = 'https://github.com/ThatsRekt/thatsRekt'
 const GITHUB_ISSUES_URL = `${GITHUB_URL}/issues`
-const APPLY_EMAIL = 'thatsrekt@protonmail.com'
 /** Project X (Twitter) account — distinct from any maintainer's
  *  personal handle (those go on the bottom credits line). */
 const PROJECT_X_URL = 'https://x.com/ThatsRekt_'
-
-/**
- * Build the same mailto string `WhitelistGateModal` uses, minus the
- * connected-address line (footer has no wallet context). Keeping
- * subject + body wording identical means inbound applications land in
- * the same triage bucket regardless of which surface the user clicked.
- */
-function buildApplyMailto(): string {
-  const subject = encodeURIComponent('thatsRekt — guardian application')
-  const bodyLines = [
-    'Team / detector name:',
-    'Public profile (X / GitHub / website):',
-    'Detection focus (which protocols, chains, exploit classes):',
-    'Existing track record (writeups, prior incidents flagged):',
-    'Address to whitelist:',
-    '',
-    "We'll review and reply with next steps.",
-  ]
-  return `mailto:${APPLY_EMAIL}?subject=${subject}&body=${encodeURIComponent(bodyLines.join('\n'))}`
-}
 
 export function Footer() {
   return (
@@ -142,18 +121,17 @@ function CommunityColumn() {
 }
 
 function ContactColumn() {
-  const mailto = buildApplyMailto()
   return (
     <div>
       <ColumnHeading>[contact]</ColumnHeading>
       <ul className="space-y-1.5">
         <li>
-          <a
-            href={mailto}
+          <Link
+            to="/apply"
             className="text-[11px] uppercase tracking-widest font-mono rekt-link"
           >
             apply to guard <span aria-hidden="true">→</span>
-          </a>
+          </Link>
         </li>
         <li>
           <a

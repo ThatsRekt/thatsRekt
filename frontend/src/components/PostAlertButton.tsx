@@ -22,7 +22,7 @@ import { chainsWithRegistry } from '../lib/contracts'
  *      opens — operator requirement: no second click.
  *   2. **Connected, whitelisted.** → opens composer directly.
  *   3. **Connected, not whitelisted.** → opens gate; the gate's own
- *      panel logic shows the "become a guardian" mailto.
+ *      panel logic shows the "become a guardian" /apply link.
  *
  * Visual: red-fill button, matches the `REKT` brand accent.
  */

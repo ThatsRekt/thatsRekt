@@ -4,34 +4,6 @@ import { TG_CHANNEL_URL } from './TgChannelCTA'
 
 const STORAGE_KEY = 'thatsrekt_tldr_dismissed_v1'
 
-/** Email address for prospective guardians to apply. Same value as the
- *  one in `WhitelistGateModal` / `Footer` / `BecomeAPosterCallout` —
- *  duplicated here to keep the dual-CTA self-contained without forcing
- *  a cross-component import dance. */
-const APPLY_EMAIL = 'thatsrekt@protonmail.com'
-
-/**
- * Build the same mailto string `WhitelistGateModal`'s
- * `NotWhitelistedPanel` and `Footer` use, so applications from the
- * TLDR's primary CTA land in the same triage bucket as applications
- * from anywhere else on the site. No connected-wallet context here, so
- * we omit the address line — the gate modal still injects it when
- * available from its own surface.
- */
-function buildApplyMailto(): string {
-  const subject = encodeURIComponent('thatsRekt — guardian application')
-  const bodyLines = [
-    'Team / detector name:',
-    'Public profile (X / GitHub / website):',
-    'Detection focus (which protocols, chains, exploit classes):',
-    'Existing track record (writeups, prior incidents flagged):',
-    'Address to whitelist:',
-    '',
-    "We'll review and reply with next steps.",
-  ]
-  return `mailto:${APPLY_EMAIL}?subject=${subject}&body=${encodeURIComponent(bodyLines.join('\n'))}`
-}
-
 /**
  * Top-of-feed orientation block for first-time visitors.
  *
@@ -113,9 +85,8 @@ export function FeedTLDR() {
 /**
  * Two-CTA stack at the bottom of the TLDR.
  *
- *   - Primary (filled red): `[apply as guardian →]` — opens the same
- *     pre-filled application mailto as WhitelistGateModal /
- *     BecomeAPosterCallout / Footer. Guardians do the reporting.
+ *   - Primary (filled red): `[apply as guardian →]` — routes to /apply.
+ *     Guardians do the reporting.
  *   - Secondary (outline red): `[join alerts ↗]` — links to the
  *     public Telegram alerts channel. The rest of the world reads.
  *
@@ -124,7 +95,6 @@ export function FeedTLDR() {
  * see `TgChannelCTA.tsx`.
  */
 function DualCTAPanel() {
-  const mailto = buildApplyMailto()
   return (
     <section className="mt-4 border-2 border-black bg-white p-4 space-y-3">
       <p className="text-[10px] uppercase tracking-widest text-neutral-700">
@@ -134,13 +104,13 @@ function DualCTAPanel() {
         Guardians report. The rest of the world reads. Pick whichever you are.
       </p>
       <div className="flex flex-wrap gap-2">
-        <a
-          href={mailto}
+        <Link
+          to="/apply"
           aria-label="apply to become a guardian"
           className="inline-flex items-center gap-1 border-2 border-red-600 bg-red-600 text-white px-3 py-2 text-xs uppercase tracking-widest font-black hover:bg-red-700 hover:border-red-700 transition-colors focus:outline-none focus:ring-2 focus:ring-red-600 focus:ring-offset-1"
         >
           [apply as guardian <span aria-hidden="true">→</span>]
-        </a>
+        </Link>
         <a
           href={TG_CHANNEL_URL}
           target="_blank"
