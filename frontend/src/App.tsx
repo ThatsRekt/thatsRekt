@@ -6,6 +6,7 @@ import { About } from './pages/About'
 import { Guardians } from './pages/Guardians'
 import { Leaderboard } from './pages/Leaderboard'
 import { Docs } from './pages/Docs'
+import { Donations } from './pages/Donations'
 import { IS_MOCK_MODE } from './lib/queries'
 import { useHasPosts } from './hooks/useHasPosts'
 import { useDisconnectIfNotWhitelisted } from './hooks/useDisconnectIfNotWhitelisted'
@@ -19,6 +20,7 @@ const NAV_LINKS: { to: string; label: string }[] = [
   { to: '/about', label: 'about' },
   { to: '/guardians', label: 'guardians' },
   { to: '/leaderboard', label: 'leaderboard' },
+  { to: '/donate', label: 'donate' },
   { to: '/docs', label: 'docs' },
 ]
 
@@ -71,6 +73,7 @@ export function App() {
               from before the rename should still land somewhere useful. */}
           <Route path="/posters" element={<Navigate to="/guardians" replace />} />
           <Route path="/leaderboard" element={<LeaderboardGate />} />
+          <Route path="/donate" element={<Donations />} />
           <Route path="/docs" element={<Docs />} />
           <Route path="*" element={<NotFound />} />
         </Routes>

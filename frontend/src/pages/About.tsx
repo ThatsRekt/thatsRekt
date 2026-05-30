@@ -1,5 +1,4 @@
 import { Maintainers } from '../components/Maintainers'
-import { DonateAddress } from '../components/DonateAddress'
 import { BecomeAPosterCallout } from '../components/BecomeAPosterCallout'
 import { TgChannelCTA } from '../components/TgChannelCTA'
 
@@ -12,7 +11,6 @@ import { TgChannelCTA } from '../components/TgChannelCTA'
  *   4. Get alerts    — Telegram channel CTA (high-intent placement
  *                       directly after "ways to use" is read)
  *   5. Maintainers   — who runs it
- *   6. Donate        — how to support
  */
 export function About() {
   return (
@@ -22,7 +20,6 @@ export function About() {
       <WaysToUse />
       <GetAlertsSection />
       <Maintainers />
-      <DonateSection />
     </article>
   )
 }
@@ -205,34 +202,3 @@ function GetAlertsSection() {
   )
 }
 
-function DonateSection() {
-  return (
-    <section className="space-y-6">
-      <header className="space-y-1">
-        <h2 className="font-black uppercase tracking-tighter text-2xl sm:text-3xl leading-none">
-          donate
-        </h2>
-        <p className="text-xs uppercase tracking-widest text-neutral-700">
-          [help cover gateway + indexer costs]
-        </p>
-      </header>
-      <p className="text-base leading-relaxed text-neutral-800">
-        If the registry has saved a user from a bad transaction, or if
-        you'd like to help cover the cost of running the gateway and
-        the indexers, donations are welcome on any EVM chain.
-      </p>
-
-      <div className="flex flex-col items-center space-y-3 text-center pt-2">
-        <p className="text-xs uppercase tracking-widest text-neutral-700">
-          [donation address]
-        </p>
-        <DonateAddress />
-        <p className="max-w-md text-xs leading-relaxed text-neutral-700">
-          Send on any EVM chain — Ethereum, Base, Arbitrum, Optimism,
-          Polygon, and so on. The ENS resolves to the same controlling
-          address everywhere.
-        </p>
-      </div>
-    </section>
-  )
-}
