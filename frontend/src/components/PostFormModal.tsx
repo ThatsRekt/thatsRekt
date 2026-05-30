@@ -154,7 +154,7 @@ function PostFormBody({
   const [submitError, setSubmitError] = useState<string | null>(null)
 
   // ---- derived: byte counts and address validity ----------------------
-  // Title length is enforced on-chain in BYTES (UTF-8), not chars. A
+  // Title length is enforced onchain in BYTES (UTF-8), not chars. A
   // multi-byte char like emoji costs 4 bytes; a naive .length would let
   // the user submit a tx that reverts.
   const titleBytes = useMemo(
@@ -710,7 +710,7 @@ function AddressList({
   }
   // On blur: if the row has a valid hex address, replace it with its
   // EIP-55 checksum. Saves the user from worrying about case while
-  // typing, and ensures the bytes we send on-chain are display-correct
+  // typing, and ensures the bytes we send onchain are display-correct
   // (the contract doesn't care, but downstream consumers and explorers do).
   const checksumRow = (idx: number) => {
     const row = rows[idx]?.trim()

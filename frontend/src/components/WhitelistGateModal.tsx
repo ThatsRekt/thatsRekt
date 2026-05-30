@@ -89,7 +89,7 @@ export function WhitelistGateModal({
     prevConnectedRef.current = isConnected
   }, [open, isConnected, onClose])
 
-  // Hide the modal during the post-connect on-chain whitelist check,
+  // Hide the modal during the post-connect onchain whitelist check,
   // and silently after a verdict of "whitelisted" when no
   // `whenWhitelisted` slot is provided. Two reasons:
   //

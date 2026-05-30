@@ -166,7 +166,7 @@ function ArchiveBanner() {
       <span className="text-neutral-400 mx-2">·</span>
       <span className="normal-case tracking-normal">
         Pre-platform incident, compiled by the community. Not on the
-        on-chain registry — no confirmations, no edits, no timeline.
+        onchain registry — no confirmations, no edits, no timeline.
         See{' '}
         <a
           href="https://github.com/ThatsRekt/thatsRekt/blob/master/data/historic-incidents.json"

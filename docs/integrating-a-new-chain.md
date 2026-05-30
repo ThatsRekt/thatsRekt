@@ -2,7 +2,7 @@
 
 This checklist captures the exact procedure executed end-to-end when adding BNB Smart Chain
 (chain 56) to the thatsRekt stack. Follow it in order. Each section is a gate: do not
-move to the next section until the current one is complete and verified on-chain / in prod.
+move to the next section until the current one is complete and verified onchain / in prod.
 
 **Reference implementation (BSC):**
 - `thatsRekt#154` — address-parity CI gate
@@ -26,7 +26,7 @@ address, destroying trust and integration assumptions.
 
 The address depends on a fixed tuple:
 - CREATE2 factory: `0x4e59b44847b379578588920cA78FbF26c0B4956C` (universal singleton; must
-  be deployed on the target chain — check on-chain before proceeding)
+  be deployed on the target chain — check onchain before proceeding)
 - Deployer EOA: `0xb5a6c8ca369e38050784e2a6793bee6447109340`
 - The ORIGINAL canonical 6 `initialWhitelisters` (order matters): `0x5822B262EDdA82d2C6A436b598Ff96fA9AB894c4`, `0xda1b9dFA299d655135C1ECdc4f0b4c9aED9a7f45`, `0x9e8680dbbca1127add812abe209a10e621b385df`, `0x24c2167054a9a9e00f67233f1ebc4060501f54fa`, `0xe0396d6d738e726d39f96099b8f6a55d11184374`, `0xb5a6c8ca369e38050784e2a6793bee6447109340`
 - Governance Safe: `0x59E4DBc95BD312A882Bb36b7f3E8298682340679`
@@ -177,7 +177,7 @@ The Safe Transaction Service URL for BSC:
 - [ ] Confirm the proposal appears in the Safe UI with 0 confirmations.
 - [ ] Collect 2-of-5 signatures from Safe owners.
 - [ ] Execute — `swapOwner` lands immediately; it is NOT timelocked.
-- [ ] Verify `swapOwner` result on-chain: new owners match other chains.
+- [ ] Verify `swapOwner` result onchain: new owners match other chains.
 - [ ] Wait 3 days for the Add-TLC timelock to mature.
 - [ ] Execute `executeBatch` on the Add-TLC (executor role is open — any address can call it).
   Keep the salt from the `scheduleBatch` call; you'll need it:
@@ -193,7 +193,7 @@ The Safe Transaction Service URL for BSC:
   the first post).
 
 > **Apply-gate:** do NOT activate the relayer (step 3 Terraform apply) or hack-claw routing
-> (step 3) until this step is complete and the poster is whitelisted on-chain. Messages
+> (step 3) until this step is complete and the poster is whitelisted onchain. Messages
 > published to SQS before the poster is whitelisted will hit the contract, revert, and DLQ.
 
 ---
@@ -228,7 +228,7 @@ The three locations you must update for each new chain:
 
 **`blocksForDuration` block-time rule:** use a conservative value rounded DOWN to the
 nearest smaller number (more blocks = more scanning = safer). A value that is too high
-→ shorter lookback → duplicate on-chain posts.
+→ shorter lookback → duplicate onchain posts.
 
 BSC block time after the Maxwell hardfork is ~0.45s (sub-second). Do NOT use 1s.
 
@@ -241,7 +241,7 @@ Write an Anvil-fork e2e test for the new chain (`test/v21harness/`) mirroring th
 per-chain test pattern. The test must:
 1. Deploy thatsRekt onto an Anvil fork of the new chain.
 2. Call `postAdd`, `postAmend`, `postRetract`.
-3. Assert idempotency (duplicate SQS message → no second on-chain tx).
+3. Assert idempotency (duplicate SQS message → no second onchain tx).
 
 Run before claiming done:
 ```bash
@@ -515,7 +515,7 @@ Reference: `damm-top-up-monitor#28`.
 
 - [ ] Fund deployer EOA `0xb5a6c8…9340` with enough native token for the deploy gas (step 1).
 - [ ] Fund relayer poster `0xFe6B4dFf18D741e725c7c6922CCF69121B2fFFdb` with enough native
-  token for at least 100 on-chain posts (step 2 + step 5).
+  token for at least 100 onchain posts (step 2 + step 5).
 - [ ] Once the 3-day timelock has elapsed and `executeBatch` is run: verify the poster is
   listed as a whitelister on the new chain's proxy:
   ```bash
@@ -527,7 +527,7 @@ Reference: `damm-top-up-monitor#28`.
   ```
 - [ ] Trigger a real end-to-end event: submit a `createPost` action for the new chain
   (either via hack-claw re-emit or by manually enqueuing the SQS message). Confirm:
-  - [ ] On-chain: `post()` tx lands at `0xBfaEEE…89A` on the new chain.
+  - [ ] Onchain: `post()` tx lands at `0xBfaEEE…89A` on the new chain.
   - [ ] Indexer: the event is processed (check `processor-<chain>` logs).
   - [ ] Mesh: the post appears in the unified GraphQL feed.
   - [ ] Frontend: the post renders with the correct chain badge and explorer links.
@@ -542,7 +542,7 @@ Reference: `damm-top-up-monitor#28`.
 | G1 | Canonical bytecode is **macOS-arm64 + forge 1.5.1** only | Deploy on Linux or wrong forge version → wrong address → parity broken | Deploy from macOS-arm64; verify forge version; run parity gate before broadcast |
 | G2 | Universal CREATE2 factory may not be deployed on new chain | `forge script --broadcast` silently deploys to wrong address | `cast code 0x4e59b…4956C` must return non-empty bytecode first |
 | G3 | Safe signing: `signMessage` vs `account.sign` | `signMessage` EIP-191-prefixes → service recovers wrong signer → HTTP 4xx proposal rejection | Use `account.sign({ hash: safeTxHash })` — signs raw digest only |
-| G4 | Relayer has three per-chain branches, not one | Missing `blocksForDuration` case → dedup lookback 5h instead of 24h → duplicate on-chain posts | `grep -rn "switch chainID\|map\[uint64\]"` before writing code; add a case to all three |
+| G4 | Relayer has three per-chain branches, not one | Missing `blocksForDuration` case → dedup lookback 5h instead of 24h → duplicate onchain posts | `grep -rn "switch chainID\|map\[uint64\]"` before writing code; add a case to all three |
 | G5 | `blocksForDuration` rounds wrong direction | Using `ceil` or a safe round → shorter lookback → missed dedup window | Round DOWN (use a block time slightly shorter than reality → more blocks → safer) |
 | G6 | Stale cross-repo checkout | Worktree for repo A was cut before a critical PR merged in repo B → falsely reports "X is missing" | `git fetch origin && git log origin/main -3` in every cross-repo clone before relying on its state |
 | G7 | `damm-cloud` default branch is `main`; `thatsRekt` is `master` | Grepping `origin/master` in damm-cloud finds nothing | Note the default branch per repo; fetch + check `origin/main` for damm-cloud |
@@ -558,7 +558,7 @@ Hacks on chains not yet integrated into thatsRekt are **silently dropped** at th
 hack-claw publish boundary. When `chain_dispatch.py` cannot resolve a queue URL for a
 `chain_id` (i.e., the chain is not in `CHAIN_ENV_VAR` and `SQS_ACTION_QUEUE_URL` is unset),
 it raises `ChainQueueMisconfiguredError`. The caller logs the error but does not alert;
-the action never enters SQS and is never posted on-chain. There is no retry, no DLQ, no
+the action never enters SQS and is never posted onchain. There is no retry, no DLQ, no
 public TG alert.
 
 **This is a known, accepted limitation** (operator decision). Adding a new chain to the

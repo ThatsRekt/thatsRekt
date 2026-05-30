@@ -46,7 +46,7 @@ export interface FeedPost {
    * Set true once governance has purged the post. Used to hide the post
    * from the feed entirely — the original content is intentionally NOT
    * surfaced (the point of purging is to scrub abusive material from
-   * view, even though it remains readable on-chain).
+   * view, even though it remains readable onchain).
    */
   purged: boolean
   createdAtTimestamp: string
@@ -169,7 +169,7 @@ interface MeshUnifiedPost {
 
 // Per-chain detail: Mesh exposes the full upstream squid schema under a
 // `<Prefix>_postById(id:...)` root field thanks to the prefix transforms.
-// All on-chain data — confirmations, edits, address scores, etc. — is consumable
+// All onchain data — confirmations, edits, address scores, etc. — is consumable
 // here. We parse the chain prefix from the composite id and pick the
 // matching root field at query time.
 // Must match the `prefix` field in `mesh/src/chains.ts::CHAINS` for every
@@ -201,7 +201,7 @@ export const SLUG_TO_PREFIX: Record<string, string> = {
  * Returns `undefined` when the id's prefix isn't a known indexed-chain
  * slug — e.g. legacy bare numeric ids, or a slug we haven't wired into
  * `SLUG_TO_PREFIX` yet. Iterates longest-slug-first so `base-sepolia-7`
- * never gets matched as `base` with `sepolia-7` as the on-chain id.
+ * never gets matched as `base` with `sepolia-7` as the onchain id.
  *
  * Distinct from `splitCompositeId` below: that helper's "assume base"
  * fallback silently rewrites unknown slugs to `base`, which is correct

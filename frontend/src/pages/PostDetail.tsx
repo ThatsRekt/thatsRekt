@@ -90,7 +90,7 @@ function LivePostDetail({ postId }: { postId: string }) {
 
   // Governance-purged posts render a tombstone instead of the original
   // payload. The point of purging is to scrub the offending material
-  // from the UI even though it remains readable on-chain — so we
+  // from the UI even though it remains readable onchain — so we
   // deliberately drop title / note / attackers / victims here.
   if (data.purged) {
     return <PurgedTombstone postId={data.id} purgedAt={data.purgedAtTimestamp} />
@@ -120,7 +120,7 @@ function LivePostDetail({ postId }: { postId: string }) {
 
       {/* Retract banner — only renders when the poster has called
           removePost() on this entry. Direct shared URLs still resolve
-          (the on-chain audit trail is intentionally preserved) and the
+          (the onchain audit trail is intentionally preserved) and the
           original content stays visible below for transparency, but
           someone landing here from a stale link needs to know at a
           glance that the alert is no longer endorsed by its poster.
@@ -191,7 +191,7 @@ function LivePostDetail({ postId }: { postId: string }) {
           <Field label="guardian">
             <AddressLabel addr={data.poster.id} chainSlug={chainSlug} />
           </Field>
-          <Field label="reported on-chain" tooltip={formatTimestamp(data.createdAtTimestamp)}>
+          <Field label="reported onchain" tooltip={formatTimestamp(data.createdAtTimestamp)}>
             {relativeTime(data.createdAtTimestamp)}
           </Field>
           <Field label="last updated" tooltip={formatTimestamp(data.lastUpdatedAt)}>
@@ -208,7 +208,7 @@ function LivePostDetail({ postId }: { postId: string }) {
       {/* Vote action bar — same component the feed uses, so the cache
           invalidation + tx flow is shared. The hooks for this component
           handle whitelist gating internally. Numeric postId is the
-          on-chain part of the composite id (`base-2` → `2n`). The
+          onchain part of the composite id (`base-2` → `2n`). The
           chainId is derived from the post's slug — buttons only render
           when the post lives on a chain with a deployed registry. */}
       {(() => {
@@ -390,7 +390,7 @@ function Field({
  * retracted by its poster (`removePost(id)`). Distinct from
  * `PurgedTombstone`:
  *
- *   - Retract is a poster-initiated walk-back — the on-chain content
+ *   - Retract is a poster-initiated walk-back — the onchain content
  *     stays available, and the UI preserves it below the banner so
  *     anyone landing on a stale shared link can still read what the
  *     poster originally said. The unified feed hides retracted posts
@@ -434,7 +434,7 @@ function RetractedBanner({ removedAt }: { removedAt: string | null }) {
  * callout — no title / note / attackers / victims surfaced; the entire
  * point of the purge is to keep the offending content out of view.
  *
- * The on-chain record still exists; integrators can still read every
+ * The onchain record still exists; integrators can still read every
  * field via `getPost(postId)` or the GraphQL gateway. This tombstone is
  * purely a frontend signal that the registry's curators chose to hide
  * this entry.
@@ -468,7 +468,7 @@ function PurgedTombstone({
         )}
       </div>
       <p className="text-xs uppercase tracking-widest text-neutral-700">
-        the on-chain record is still readable directly from the contract.
+        the onchain record is still readable directly from the contract.
         this UI deliberately hides the original content.
       </p>
     </article>

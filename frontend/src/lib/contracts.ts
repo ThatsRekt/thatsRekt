@@ -1,5 +1,5 @@
 /**
- * On-chain registry contract handles.
+ * Onchain registry contract handles.
  *
  * Per-chain proxy registry. CREATE2-deterministic per (governance, whitelist,
  * purgeAdmin, initialWhitelisters) tuple. v1.2.0 fresh deploy 2026-05-07
@@ -53,7 +53,7 @@ export const chainsWithRegistry = (): readonly SupportedChainId[] =>
 export const REGISTRY_PROXY_ADDRESS = REGISTRY_PROXIES[8453]
 
 /**
- * On-chain `ConfirmDirection` enum mirror.
+ * Onchain `ConfirmDirection` enum mirror.
  *
  * Solidity's `enum ConfirmDirection { None, Up, Down }` encodes as `uint8`
  * over the wire. The names are surfaced for callers that want to reason
@@ -99,7 +99,7 @@ export const registryAbi = [
   },
   // Cast (or change) a vote on a post. Reverts unless caller is whitelisted.
   // `direction` MUST be Up or Down — passing None reverts with
-  // `InvalidConfirmDirection()` on-chain. To clear a vote, call `unconfirm`.
+  // `InvalidConfirmDirection()` onchain. To clear a vote, call `unconfirm`.
   {
     type: 'function',
     name: 'confirm',

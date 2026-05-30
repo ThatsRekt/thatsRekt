@@ -90,7 +90,7 @@ export function FeedTLDR() {
       </p>
       <p className="text-base leading-relaxed text-neutral-800 mb-2 pr-6">
         thatsRekt is an{' '}
-        <strong className="font-black">on-chain hack alert registry</strong>.
+        <strong className="font-black">onchain hack alert registry</strong>.
         Vetted security teams report structured alerts the moment they spot
         a live exploit on any EVM chain — attacker addresses, victim
         contracts, free-form context. Other guardians race to vouch
@@ -98,7 +98,7 @@ export function FeedTLDR() {
       </p>
       <p className="text-base leading-relaxed text-neutral-800">
         Wallets, DEXs, bridges, and lending markets read this state{' '}
-        <strong className="font-black">directly on-chain</strong> to
+        <strong className="font-black">directly onchain</strong> to
         protect their users in real time. The live feed is below.{' '}
         <Link to="/docs" className="rekt-link font-black uppercase tracking-widest text-xs">
           integrate →

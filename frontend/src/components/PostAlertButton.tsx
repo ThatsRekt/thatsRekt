@@ -11,7 +11,7 @@ import { chainsWithRegistry } from '../lib/contracts'
  *
  *   - **Gate modal** (`WhitelistGateModal`) handles connect + the
  *     "not whitelisted, here's how to apply" panel.
- *   - **Composer modal** (`PostFormModal`) is the actual on-chain post
+ *   - **Composer modal** (`PostFormModal`) is the actual onchain post
  *     form, scoped to the chains the user is whitelisted on.
  *
  * Click matrix:

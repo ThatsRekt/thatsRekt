@@ -1,13 +1,13 @@
 /**
  * Human-readable labels for whitelisted contributor addresses.
  *
- * Keyed by lowercase address. The whitelist itself is on-chain (the
+ * Keyed by lowercase address. The whitelist itself is onchain (the
  * indexer's Whitelister entity is the source of truth for who CAN post);
  * this file only attaches names so the UI can display "SlowMist" instead
  * of "0x1234…abcd".
  *
  * Adding a contributor:
- *   1. The address must be added on-chain via governance
+ *   1. The address must be added onchain via governance
  *      (`addWhitelisted(address)` through the timelock). Once indexed,
  *      it shows up in the contributors list automatically with its
  *      raw address as the label.
@@ -52,7 +52,7 @@ const GLOBAL: GlobalLabels = {
     name: 'Dev EOA (Anvil account 0)',
     tagline: 'local-dev seeder — never authoritative on real chains',
   },
-  // JeronimoHoulin's automated relay — submits on-chain alerts on
+  // JeronimoHoulin's automated relay — submits onchain alerts on
   // jerrythekid.eth's behalf via a KMS-signed relayer.
   '0xe0396d6d738e726d39f96099b8f6a55d11184374': {
     name: "JerryTheKid's Relayer",

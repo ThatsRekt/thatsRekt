@@ -73,7 +73,7 @@ function BrandColumn() {
     <div>
       <ColumnHeading>[thatsrekt]</ColumnHeading>
       <p className="text-xs leading-relaxed text-neutral-800 mb-3">
-        on-chain hack alerts for the public good.
+        onchain hack alerts for the public good.
       </p>
       <ul className="space-y-1.5">
         <li>
@@ -173,7 +173,7 @@ function ContactColumn() {
 /**
  * Maintainer credits link to each maintainer's X profile (same handles
  * exposed in the `Maintainers` component on the About page). ENS names
- * read as the canonical on-chain identity; X is where commentary lives.
+ * read as the canonical onchain identity; X is where commentary lives.
  */
 function BottomBar() {
   return (

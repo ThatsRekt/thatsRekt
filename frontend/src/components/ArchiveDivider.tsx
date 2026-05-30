@@ -1,5 +1,5 @@
 /**
- * Visual cleave between the live on-chain feed and the archive
+ * Visual cleave between the live onchain feed and the archive
  * section. Rendered only when both sections have visible items.
  */
 export function ArchiveDivider() {

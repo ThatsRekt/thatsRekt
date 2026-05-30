@@ -3,7 +3,7 @@ import { useReadContract } from 'wagmi'
 import { registryAddress, registryAbi } from '../lib/contracts'
 
 /**
- * On-chain whitelist gate, multi-chain.
+ * Onchain whitelist gate, multi-chain.
  *
  * Reads `isWhitelisted(address)` on each registry proxy we have deployed
  * (today: Base mainnet [8453] and Base Sepolia [84532]). The user is
@@ -15,7 +15,7 @@ import { registryAddress, registryAbi } from '../lib/contracts'
  * don't fire pre-connect.
  *
  * Refetches on the connected account changing AND on a 30s interval —
- * the whitelist is mutable on-chain, so we want fresh state without
+ * the whitelist is mutable onchain, so we want fresh state without
  * forcing the user to refresh manually.
  *
  * Implementation note: `useReadContract` is a hook, so its call ordering

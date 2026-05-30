@@ -80,7 +80,7 @@ function UseCases() {
             On every swap path, check{' '}
             <Code>isVictim(token)</Code> for input + output. If true,
             the pool's been reported as the target of an active attack
-            — refuse to route through it. Cheap on-chain read, no
+            — refuse to route through it. Cheap onchain read, no
             indexer dependency.
           </>
         }
@@ -120,7 +120,7 @@ function UseCases() {
           <>
             Subscribe to <Code>PostCreated</Code> events from the
             registry on every chain you care about. Pipe into PagerDuty
-            / Slack / your incident bot. The on-chain feed is the same
+            / Slack / your incident bot. The onchain feed is the same
             substrate every other integrator reads, so your dashboards
             and your contract guards stay in lockstep.
           </>
@@ -186,9 +186,9 @@ function WhatIs() {
     <Section heading="what is thatsRekt">
       <p className="text-base leading-relaxed text-neutral-800">
         thatsRekt is an{' '}
-        <strong className="font-black">on-chain hack alert registry</strong>.
+        <strong className="font-black">onchain hack alert registry</strong>.
         Whitelisted guardians report structured alerts about active
-        on-chain exploits on any EVM chain — attacker addresses,
+        onchain exploits on any EVM chain — attacker addresses,
         victim contracts, and a free-form note. Other guardians race
         to <em>vouch</em> (confirm) or <em>refute</em> (disconfirm).
       </p>
@@ -253,7 +253,7 @@ function HowItWorks() {
         confirmations minus disconfirmations across every active
         attack that names the address as an attacker) and an address's{' '}
         <Code>isVictim</Code> flag (true if the address is currently
-        the target of an active alert). Both are readable on-chain in
+        the target of an active alert). Both are readable onchain in
         a single view call.
       </SubSection>
     </Section>
@@ -279,7 +279,7 @@ function Architecture() {
           A guardian submits an alert; the contract emits an event; the
           indexer writes it to Postgres; the GraphQL gateway exposes
           it; this site renders it. Reader contracts and dApps tap in
-          at whichever tier matches their needs — direct on-chain
+          at whichever tier matches their needs — direct onchain
           reads (cheap, no infra), or rich GraphQL queries (free,
           public).
         </p>
@@ -300,7 +300,7 @@ function Architecture() {
       <SubSection heading="public read functions">
         <p className="text-sm leading-relaxed text-neutral-800 mb-2">
           Anyone can call these — no whitelist needed. This is what
-          dApps, indexers, and on-chain integrators consume.
+          dApps, indexers, and onchain integrators consume.
         </p>
         <ul className="space-y-1 text-sm leading-relaxed text-neutral-800 list-disc list-inside marker:text-neutral-400">
           <li>
@@ -494,7 +494,7 @@ function DappIntegration() {
   return (
     <Section heading="integrating from a dApp (GraphQL)">
       <p className="text-base leading-relaxed text-neutral-800">
-        For dApps and indexers that don't sit on-chain, query the
+        For dApps and indexers that don't sit onchain, query the
         public Mesh GraphQL gateway. It exposes a single endpoint
         that fans out to every chain and sort-merges results
         automatically.
