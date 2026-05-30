@@ -198,13 +198,10 @@ function Bullet({
 function GetAlertsSection() {
   return (
     <section className="space-y-4">
-      <header className="space-y-1">
+      <header>
         <h2 className="font-black uppercase tracking-tighter text-2xl sm:text-3xl leading-none">
           get alerts
         </h2>
-        <p className="text-xs uppercase tracking-widest text-neutral-700">
-          [follow live attacks on telegram]
-        </p>
       </header>
       <TgChannelCTA variant="panel" />
     </section>

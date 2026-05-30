@@ -70,9 +70,6 @@ function PanelVariant() {
       className="border-2 border-black bg-white p-4 space-y-3"
       aria-label="follow live alerts on telegram"
     >
-      <p className="text-[10px] uppercase tracking-widest text-neutral-700">
-        [follow live alerts]
-      </p>
       <p className="text-sm leading-relaxed text-neutral-800">
         Alerts in real time on{' '}
         <span className="font-mono font-black">{TG_CHANNEL_HANDLE}</span>.
