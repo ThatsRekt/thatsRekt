@@ -81,3 +81,44 @@ export async function ensureCommentsTable(): Promise<void> {
        ON comments(signer_address, post_id, signed_at);`,
   )
 }
+
+/**
+ * Idempotent schema bootstrap for guardian applications. Safe to run on
+ * every Mesh start.
+ *
+ * Columns:
+ * - `id` — surrogate primary key (BIGSERIAL).
+ * - `created_at` — insertion timestamp; immutable.
+ * - `primary_contact_type` — one of: telegram, email, signal, twitter.
+ * - `primary_contact_value` — the validated contact handle / address.
+ * - `extra_contacts` — JSONB array of additional {type, value} objects,
+ *   or NULL when none provided. Stored as JSONB for flexibility; max 2
+ *   entries enforced at the application layer.
+ * - `justification` — free-text motivation, 50–1500 chars.
+ * - `forwarded_at` — nullable timestamp set when the downstream bot picks
+ *   up this row and posts it to the operator channel.
+ * - `forwarded_message_id` — nullable Telegram message id of the bot
+ *   notification, for threading replies.
+ * - `source_ip_hash` — SHA-256 of source IP truncated to 16 hex chars.
+ *   Stored for abuse forensics only; not reversible to the original IP.
+ */
+export async function ensureGuardianApplicationsTable(): Promise<void> {
+  await metaPool.query(`
+    CREATE TABLE IF NOT EXISTS guardian_applications (
+      id                    BIGSERIAL PRIMARY KEY,
+      created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      primary_contact_type  VARCHAR(16) NOT NULL
+                              CHECK (primary_contact_type IN ('telegram', 'email', 'signal', 'twitter')),
+      primary_contact_value VARCHAR(128) NOT NULL CHECK (length(primary_contact_value) >= 1),
+      extra_contacts        JSONB,
+      justification         TEXT NOT NULL CHECK (length(justification) BETWEEN 50 AND 1500),
+      forwarded_at          TIMESTAMPTZ,
+      forwarded_message_id  TEXT,
+      source_ip_hash        VARCHAR(16)
+    );
+  `)
+  await metaPool.query(
+    `CREATE INDEX IF NOT EXISTS guardian_applications_created_idx
+       ON guardian_applications(created_at DESC);`,
+  )
+}

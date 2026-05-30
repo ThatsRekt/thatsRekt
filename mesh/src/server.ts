@@ -26,7 +26,8 @@ import {
   commentsTypeDefs,
   startRateLimitGc,
 } from './comments.js'
-import { ensureCommentsTable } from './db.js'
+import { buildGuardianResolvers, guardianTypeDefs } from './guardian.js'
+import { ensureCommentsTable, ensureGuardianApplicationsTable } from './db.js'
 import {
   handleOgImageRoute,
   handleOgRoute,
@@ -653,12 +654,13 @@ const main = async () => {
     await waitForUpstream(c)
   }
 
-  // Off-chain comments: ensure the shared `thatsrekt_meta` schema exists
-  // before the gateway accepts mutations. Fail loud and stay down on
-  // bootstrap failure — half-up Mesh would silently 500 every comment.
+  // Off-chain tables: ensure both the comments and guardian_applications
+  // schemas exist before the gateway accepts mutations. Fail loud on
+  // bootstrap failure — half-up Mesh would silently 500 every mutation.
   await ensureCommentsTable()
+  await ensureGuardianApplicationsTable()
   startRateLimitGc()
-  console.log('[mesh] comments table ensured')
+  console.log('[mesh] comments + guardian_applications tables ensured')
 
   // Per-chain executor lookup for the comments module. Reuses the same
   // makeExecutor() pattern used by the cross-chain `posts(...)` resolver
@@ -673,17 +675,22 @@ const main = async () => {
   const subschemas = await Promise.all(chains.map(buildSubschema))
   const additionalResolvers = buildAdditionalResolvers(chains)
   const commentsResolvers = buildCommentsResolvers({ chains, getExecutor })
+  const guardianResolvers = buildGuardianResolvers()
   const schema = stitchSchemas({
     subschemas,
-    typeDefs: [additionalTypeDefs, commentsTypeDefs],
+    typeDefs: [additionalTypeDefs, commentsTypeDefs, guardianTypeDefs],
     resolvers: {
       Query: {
         ...additionalResolvers.Query,
         ...commentsResolvers.Query,
       },
-      Mutation: commentsResolvers.Mutation,
+      Mutation: {
+        ...commentsResolvers.Mutation,
+        ...guardianResolvers.Mutation,
+      },
       SubmitCommentResult: commentsResolvers.SubmitCommentResult,
       DeleteCommentResult: commentsResolvers.DeleteCommentResult,
+      GuardianApplicationResult: guardianResolvers.GuardianApplicationResult,
     },
   })
 
