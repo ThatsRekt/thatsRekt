@@ -209,6 +209,12 @@ export interface GuardianDeps {
    * Override in tests to use the Cloudflare test secrets.
    */
   verifyTurnstile?: (token: string) => Promise<boolean>
+  /**
+   * Postgres pool to use for DB writes. Defaults to the module-level
+   * metaPool singleton. Override in integration/e2e tests to inject a
+   * test-scoped pool without relying on process.env.META_DB_URL.
+   */
+  pool?: import('pg').Pool
 }
 
 // ---------------------------------------------------------------------------
@@ -293,6 +299,7 @@ export const submitGuardianApplication = async (
   deps: GuardianDeps = {},
 ): Promise<GuardianApplicationResult> => {
   const verifyTurnstile = deps.verifyTurnstile ?? defaultVerifyTurnstile
+  const pool = deps.pool ?? metaPool
 
   // 1. Structural parse — catches missing fields / wrong JS types.
   //    We use a loose schema so semantic errors (wrong contact type, bad
@@ -350,7 +357,7 @@ export const submitGuardianApplication = async (
 
   let row: ApplicationDbRow
   try {
-    const result = await metaPool.query<ApplicationDbRow>(
+    const result = await pool.query<ApplicationDbRow>(
       `INSERT INTO guardian_applications (
          primary_contact_type,
          primary_contact_value,

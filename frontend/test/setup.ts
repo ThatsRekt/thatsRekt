@@ -39,3 +39,40 @@ if (typeof globalThis.cancelAnimationFrame === 'undefined') {
     writable: true,
   })
 }
+
+// Cloudflare Turnstile widget stub for component tests.
+//
+// The real widget is a CDN-injected browser global: window.turnstile.render(container, opts)
+// calls opts.callback(token) asynchronously once the CAPTCHA is solved. In
+// test environments the CDN script never loads, so window.turnstile is
+// undefined and opts.callback is never called, leaving turnstileToken === ''.
+//
+// This stub fires opts.callback synchronously with the Cloudflare documented
+// always-pass test token (1x00000000000000000000AA) so that tests which render
+// TurnstileWidget receive a non-empty token without any network calls. Stub
+// also implements reset/remove as no-ops so the widget lifecycle is clean.
+//
+// This is a browser-API-level stub (equivalent to mocking requestAnimationFrame),
+// not an infra boundary mock.
+const TURNSTILE_TEST_TOKEN = '1x00000000000000000000AA'
+let widgetCounter = 0
+
+Object.defineProperty(globalThis, 'turnstile', {
+  value: {
+    render: (
+      _container: HTMLElement,
+      opts: { callback: (token: string) => void; 'expired-callback'?: () => void; 'error-callback'?: () => void },
+    ): string => {
+      const id = String(++widgetCounter)
+      // Fire synchronously so the token is set before any awaited user-event.
+      opts.callback(TURNSTILE_TEST_TOKEN)
+      return id
+    },
+    reset: (_id: string): void => {},
+    remove: (_id: string): void => {},
+  },
+  writable: true,
+})
+
+// Also expose on window so ApplyForm's `window.turnstile` check sees it.
+;(window as unknown as Record<string, unknown>)['turnstile'] = (globalThis as unknown as Record<string, unknown>)['turnstile']

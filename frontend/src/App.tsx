@@ -3,6 +3,7 @@ import { Routes, Route, Link, Navigate, useLocation } from 'react-router-dom'
 import { Feed } from './pages/Feed'
 import { PostDetail } from './pages/PostDetail'
 import { About } from './pages/About'
+import { ApplyForm } from './pages/ApplyForm'
 import { Guardians } from './pages/Guardians'
 import { Leaderboard } from './pages/Leaderboard'
 import { Docs } from './pages/Docs'
@@ -67,6 +68,7 @@ export function App() {
           <Route path="/post/:chainSlug/:postId" element={<PostDetail />} />
           <Route path="/post/:id" element={<PostDetail />} />
           <Route path="/about" element={<About />} />
+          <Route path="/apply" element={<ApplyForm />} />
           <Route path="/guardians" element={<Guardians />} />
           {/* Legacy `/posters` URL kept alive as a permanent redirect to
               `/guardians` — the page rebranded but inbound shared links
