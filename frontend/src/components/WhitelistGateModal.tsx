@@ -243,7 +243,7 @@ function NotWhitelistedPanel({
           [become a guardian]
         </p>
         <p className="text-sm leading-relaxed text-neutral-800">
-          Submit an application — who you are, what you'd be reporting, and the
+          Submit an application: who you are, what you'd be reporting, and the
           address you want whitelisted. The governance multisig reviews each
           application and approves via an onchain timelock.
         </p>

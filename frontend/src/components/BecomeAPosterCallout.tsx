@@ -35,7 +35,7 @@ export function BecomeAPosterCallout({
         timely onchain incident signals, get in touch.
       </p>
       <p className="text-sm leading-relaxed text-neutral-800">
-        Submit a short application — track record, detection focus, and the
+        Submit a short application: track record, detection focus, and the
         address you want whitelisted. The governance multisig reviews each
         application and approves via an onchain timelock.
       </p>
