@@ -6,7 +6,7 @@ Both paths start the same way: get whitelisted. Email **thatsrekt@protonmail.com
 
 ---
 
-## Path A — With automated monitoring
+## Path A: With automated monitoring
 
 Set up a pipeline that watches security feeds and posts alerts to the registry automatically, without you having to do anything once it's running.
 
@@ -17,16 +17,17 @@ The fastest way to get there is the **example-otomato** workflow in this repo. I
 - Automatic relay webhook call on a positive hit
 - Email (or Telegram / Slack / any HTTPS endpoint) alerts to your team
 
-![Otomato workflow builder — thatsRekt detector pipeline](../example-otomato/assets/otomato-workflow.png)
+![Otomato workflow builder: thatsRekt detector pipeline](../example-otomato/assets/otomato-workflow.png)
+
 > _What the pipeline looks like inside [builder.otomato.xyz](https://builder.otomato.xyz/) after a single `npm run create`. Each column is one protocol branch; hits automatically fire the relay and your chosen alert channels._
 
 ### What you need
 
-| Requirement | Notes |
-|-------------|-------|
-| Otomato account | Sign up at [app.otomato.xyz](https://app.otomato.xyz). API key from **Settings → API Keys**. |
-| A hosted relay | Deploy the `relay/` service (Railway, fly.io, etc.) with your whitelisted EOA's private key. See [`relay/README.md`](../relay/README.md). |
-| Node 20+ | To run the setup script once. |
+| Requirement     | Notes                                                                                                                                     |
+| --------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| Otomato account | Sign up at [app.otomato.xyz](https://app.otomato.xyz). API key from **Settings → API Keys**.                                              |
+| A hosted relay  | Deploy the `relay/` service (Railway, fly.io, etc.) with your whitelisted EOA's private key. See [`relay/README.md`](../relay/README.md). |
+| Node 20+        | To run the setup script once.                                                                                                             |
 
 ### Quick start
 
@@ -53,7 +54,7 @@ shapes. Reference: [docs.otomato.xyz](https://docs.otomato.xyz/otomato-docs/).
 
 ---
 
-## Path B — Without automated monitoring
+## Path B: Without automated monitoring
 
 You don't need to run a detection pipeline to be a useful guardian.
 Confirming and disconfirming posts that other guardians submit is
@@ -68,7 +69,8 @@ read onchain.
 3. Hit **↑** to confirm (you agree the attack is real / accurate) or
    **↓** to disconfirm (you believe it's wrong or a false positive).
 
-![Confirming a post on thatsRekt — Rabby wallet confirm dialog](assets/guardian-confirm.png)
+![Confirming a post on thatsRekt: Rabby wallet confirm dialog](assets/guardian-confirm.png)
+
 > _Clicking ↑ sends a `confirm(postId, Up)` transaction to the thatsRekt
 > contract on the post's chain. Rabby (or any wallet) will show a
 > confirmation prompt; the contract address is always
