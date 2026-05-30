@@ -603,8 +603,18 @@ const PLANNED_DEPLOYMENTS: ReadonlyArray<{
     proxy: '0xBfaEEE9662b4c037De24e5Caa65815350d57b89A',
     status: 'live',
   },
-  { name: 'polygon', chainId: 137, proxy: null },
-  { name: 'bsc', chainId: 56, proxy: null },
+  {
+    name: 'polygon',
+    chainId: 137,
+    proxy: '0xBfaEEE9662b4c037De24e5Caa65815350d57b89A',
+    status: 'live',
+  },
+  {
+    name: 'bsc',
+    chainId: 56,
+    proxy: '0xBfaEEE9662b4c037De24e5Caa65815350d57b89A',
+    status: 'live',
+  },
   { name: 'blast', chainId: 81457, proxy: null },
   { name: 'avalanche', chainId: 43114, proxy: null },
 ] as const
@@ -628,12 +638,10 @@ function Reference() {
           The proxy address is{' '}
           <strong className="font-black">stable across chains</strong>{' '}
           via CREATE2 — when contracts ship with the canonical
-          governance + whitelist, the same address resolves on every
-          chain below. Base is currently being{' '}
-          <strong className="font-black">redeployed</strong>{' '}
-          with a new purge-admin governance role; the proxy address
-          below will be filled in once that lands. Optimism is
-          temporarily out of the table while the redeploy stabilises.
+          governance + whitelist, the same address resolves onchain on
+          every live chain below. Ethereum, Base, Optimism, Arbitrum,
+          Polygon, and BSC are all live at the canonical proxy.
+          Blast and Avalanche are pending deploy.
         </p>
         <div className="overflow-x-auto border-2 border-black">
           <table className="w-full text-left text-sm">
