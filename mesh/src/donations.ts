@@ -4,15 +4,12 @@
  * Direct-SQL against thatsrekt_donations (second pg pool).
  * Mirrors the comments.ts + db.ts pattern exactly.
  *
- * Walking skeleton (slice #205): default newest-first only.
- * No orderBy/direction args yet — those land in slice #208.
- * Structure already accommodates them (orderByClause is defined and
- * whitelisted) so #208 is a non-breaking additive change.
- *
  * GraphQL query exposed:
- *   donations(limit: Int, offset: Int): [Donation!]!
+ *   donations(limit: Int, offset: Int, orderBy: String, direction: String): [Donation!]!
  *
- * Returns rows newest first (block_timestamp DESC).
+ * Default: newest-first (date DESC).
+ * orderBy must be one of: date, amount, chain, token, donor (whitelist).
+ * Non-whitelisted values are REJECTED, never interpolated into SQL (injection guard).
  */
 
 import { donationsPool } from './donationsDb.js'
@@ -114,16 +111,23 @@ export const orderByClause = (column: string, direction: string): string => {
 // ---------------------------------------------------------------------------
 
 /**
- * List donations, newest first (block_timestamp DESC).
- * Slice #208 will add orderBy/direction params.
+ * List donations, ordered by the specified column and direction.
+ * Defaults to newest-first (date DESC) when no orderBy/direction are given.
+ *
+ * Non-whitelisted orderBy values throw immediately (injection guard).
  */
 export const listDonations = async (opts: {
   limit: number
   offset: number
+  /** Whitelisted column: date | amount | chain | token | donor. Defaults to 'date'. */
+  orderBy?: string
+  /** 'ASC' or 'DESC'. Defaults to 'DESC'. */
+  direction?: string
 }): Promise<DonationRow[]> => {
   const safeLimit = Math.max(1, Math.min(200, opts.limit))
   const safeOffset = Math.max(0, opts.offset)
-  const order = orderByClause('date', 'DESC')
+  // orderByClause throws on non-whitelisted column — that's the injection guard.
+  const order = orderByClause(opts.orderBy ?? 'date', opts.direction ?? 'DESC')
   try {
     const { rows } = await donationsPool.query<DbRow>(
       `SELECT id, chain_id, chain_slug, from_address,
@@ -178,10 +182,18 @@ export const donationsTypeDefs = /* GraphQL */ `
 
   extend type Query {
     """
-    List donations to thatsrekt.eth, newest first.
+    List donations to thatsrekt.eth.
     limit/offset for pagination. Default limit 50.
+    orderBy: one of date, amount, chain, token, donor. Default: date.
+    direction: ASC or DESC. Default: DESC (newest first).
+    Non-whitelisted orderBy values are rejected (injection guard).
     """
-    donations(limit: Int = 50, offset: Int = 0): [Donation!]!
+    donations(
+      limit: Int = 50
+      offset: Int = 0
+      orderBy: String = "date"
+      direction: String = "DESC"
+    ): [Donation!]!
   }
 `
 
@@ -189,7 +201,13 @@ export const buildDonationsResolvers = () => ({
   Query: {
     donations: (
       _root: unknown,
-      args: { limit?: number; offset?: number },
-    ) => listDonations({ limit: args.limit ?? 50, offset: args.offset ?? 0 }),
+      args: { limit?: number; offset?: number; orderBy?: string; direction?: string },
+    ) =>
+      listDonations({
+        limit: args.limit ?? 50,
+        offset: args.offset ?? 0,
+        orderBy: args.orderBy ?? 'date',
+        direction: args.direction ?? 'DESC',
+      }),
   },
 })

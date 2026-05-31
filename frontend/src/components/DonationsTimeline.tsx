@@ -1,8 +1,10 @@
 /**
  * DonationsTimeline — renders the list of donations below the goal bar.
  *
- * Walking skeleton (slice #205):
- *   - Newest-first order only (no sort controls — those land in #208).
+ * Slice #208:
+ *   - Clickable column headers with sort indicators (asc/desc arrows).
+ *   - sortState + onSort props wired to useDonations via the parent.
+ *   - Proper offset pagination (50/page) with correct hasMore signal.
  *   - Each row: donor address, nominal amount, token symbol, chain badge,
  *     timestamp (relative), and explorer tx link.
  *   - "Load more" button when hasMore.
@@ -13,6 +15,8 @@
  */
 
 import type { Donation } from '../lib/queries'
+import type { OrderColumn, SortState } from '../lib/sortState'
+import { sortStateReducer } from '../lib/sortState'
 import { getChainBySlug, explorerTxUrl, explorerAddressUrl } from '../lib/chains'
 import { ChainBadge } from './ChainBadge'
 
@@ -25,13 +29,17 @@ interface DonationsTimelineProps {
   hasMore: boolean
   onLoadMore: () => void
   isFetchingMore: boolean
+  /** Current sort state. When omitted no sort UI is rendered (backwards compat). */
+  sortState?: SortState
+  /** Called when a column header is clicked with the new orderBy + direction. */
+  onSort?: (orderBy: string, direction: string) => void
 }
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-/** Truncate an address to 0x…1234 format. */
+/** Truncate an address to 0x...1234 format. */
 const shortAddr = (addr: string): string =>
   `${addr.slice(0, 6)}...${addr.slice(-4)}`
 
@@ -46,6 +54,66 @@ const relativeTime = (iso: string): string => {
   if (diffHr < 24) return `${diffHr}h ago`
   const diffDay = Math.floor(diffHr / 24)
   return `${diffDay}d ago`
+}
+
+// ---------------------------------------------------------------------------
+// SortHeader — a clickable <th> button for one sortable column
+// ---------------------------------------------------------------------------
+
+interface SortHeaderProps {
+  /** The OrderColumn key this header maps to. */
+  column: OrderColumn
+  /** Display label shown in the header. */
+  label: string
+  /** Current sort state. */
+  sortState: SortState
+  /** Called with (column, nextDirection) when the header is clicked. */
+  onSort: (orderBy: string, direction: string) => void
+  className?: string
+}
+
+function SortHeader({ column, label, sortState, onSort, className }: SortHeaderProps) {
+  const isActive = sortState.orderBy === column
+
+  const handleClick = () => {
+    const next = sortStateReducer(sortState, column)
+    onSort(next.orderBy, next.direction)
+  }
+
+  // Arrow indicator: show on active column only.
+  const indicator = isActive
+    ? sortState.direction === 'ASC'
+      ? ' ↑'
+      : ' ↓'
+    : ''
+
+  return (
+    <th
+      className={className}
+      aria-sort={
+        isActive
+          ? sortState.direction === 'ASC'
+            ? 'ascending'
+            : 'descending'
+          : undefined
+      }
+    >
+      <button
+        type="button"
+        onClick={handleClick}
+        className={[
+          'text-xs uppercase tracking-widest font-black',
+          'hover:underline underline-offset-2 cursor-pointer',
+          isActive ? 'underline' : '',
+        ]
+          .filter(Boolean)
+          .join(' ')}
+      >
+        {label}
+        {indicator}
+      </button>
+    </th>
+  )
 }
 
 // ---------------------------------------------------------------------------
@@ -161,6 +229,8 @@ export function DonationsTimeline({
   hasMore,
   onLoadMore,
   isFetchingMore,
+  sortState,
+  onSort,
 }: DonationsTimelineProps) {
   if (isLoading) {
     return (
@@ -186,28 +256,75 @@ export function DonationsTimeline({
     )
   }
 
+  // When sort props are present, render sortable column headers.
+  const hasSortControls = sortState !== undefined && onSort !== undefined
+
+  const renderHeader = () => {
+    if (hasSortControls) {
+      return (
+        <tr className="border-b-2 border-black hidden sm:table-row">
+          <SortHeader
+            column="donor"
+            label="donor"
+            sortState={sortState}
+            onSort={onSort}
+            className="py-2 px-3 text-left"
+          />
+          <SortHeader
+            column="amount"
+            label="amount"
+            sortState={sortState}
+            onSort={onSort}
+            className="py-2 px-3 text-right"
+          />
+          <SortHeader
+            column="chain"
+            label="chain"
+            sortState={sortState}
+            onSort={onSort}
+            className="py-2 px-3 text-left"
+          />
+          <SortHeader
+            column="date"
+            label="when"
+            sortState={sortState}
+            onSort={onSort}
+            className="py-2 px-3 text-left"
+          />
+          <th className="py-2 px-3 text-left text-xs uppercase tracking-widest font-black">
+            tx
+          </th>
+        </tr>
+      )
+    }
+
+    return (
+      <tr className="border-b-2 border-black hidden sm:table-row">
+        <th className="py-2 px-3 text-left text-xs uppercase tracking-widest font-black">
+          donor
+        </th>
+        <th className="py-2 px-3 text-right text-xs uppercase tracking-widest font-black">
+          amount
+        </th>
+        <th className="py-2 px-3 text-left text-xs uppercase tracking-widest font-black">
+          chain
+        </th>
+        <th className="py-2 px-3 text-left text-xs uppercase tracking-widest font-black">
+          when
+        </th>
+        <th className="py-2 px-3 text-left text-xs uppercase tracking-widest font-black">
+          tx
+        </th>
+      </tr>
+    )
+  }
+
   return (
     <div className="space-y-4">
       <div className="overflow-x-auto">
         <table className="w-full border-collapse text-sm">
           <thead>
-            <tr className="border-b-2 border-black hidden sm:table-row">
-              <th className="py-2 px-3 text-left text-xs uppercase tracking-widest font-black">
-                donor
-              </th>
-              <th className="py-2 px-3 text-right text-xs uppercase tracking-widest font-black">
-                amount
-              </th>
-              <th className="py-2 px-3 text-left text-xs uppercase tracking-widest font-black">
-                chain
-              </th>
-              <th className="py-2 px-3 text-left text-xs uppercase tracking-widest font-black">
-                when
-              </th>
-              <th className="py-2 px-3 text-left text-xs uppercase tracking-widest font-black">
-                tx
-              </th>
-            </tr>
+            {renderHeader()}
           </thead>
           <tbody>
             {donations.map((d) => (
