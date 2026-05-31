@@ -2,34 +2,41 @@
 
 # Multi-stage build: deps -> builder -> proddeps -> runtime.
 # Final image contains only production node_modules, compiled JS in lib/,
-# and no dev tooling. Mirrors the pattern in indexer/Dockerfile.
+# and no dev tooling.
+#
+# Bun stages use the official oven/bun alpine image (bun preinstalled);
+# npm-installing bun on a node base fails to resolve its platform package.
+# `--ignore-scripts` skips package lifecycle scripts: the only deps with
+# install scripts here are the OPTIONAL native ws addons (utf-8-validate,
+# bufferutil, via websocket@1.0.35) which fail to node-gyp-compile under
+# bun's bundled node and aren't needed by an HTTP-RPC processor — websocket
+# falls back to its pure-JS path when they're absent. No dep in this tree
+# requires a build step at install time. Runtime is node:20-alpine (same
+# musl base) since the entrypoint is `node lib/main.js`.
 
 ARG NODE_VERSION=20-alpine
+ARG BUN_IMAGE=oven/bun:1.1.14-alpine
 
 # --- Stage 1: install all deps (needed for build) ----------------------------
-FROM node:${NODE_VERSION} AS deps
+FROM ${BUN_IMAGE} AS deps
 WORKDIR /app
-# Install bun for lockfile-compatible install, then use npm ci for prod.
-# We use bun.lock so we reproduce exact versions.
-RUN npm install -g bun@1.1.14
+# bun.lock pins exact versions; --frozen-lockfile reproduces them.
 COPY package.json bun.lock ./
-RUN bun install --frozen-lockfile
+RUN bun install --frozen-lockfile --ignore-scripts
 
 # --- Stage 2: tsc compile ----------------------------------------------------
-FROM node:${NODE_VERSION} AS builder
+FROM ${BUN_IMAGE} AS builder
 WORKDIR /app
-RUN npm install -g bun@1.1.14
 COPY --from=deps /app/node_modules ./node_modules
 COPY package.json bun.lock tsconfig.json ./
 COPY src ./src
 RUN bun run build
 
 # --- Stage 3: production-only deps -------------------------------------------
-FROM node:${NODE_VERSION} AS proddeps
+FROM ${BUN_IMAGE} AS proddeps
 WORKDIR /app
-RUN npm install -g bun@1.1.14
 COPY package.json bun.lock ./
-RUN bun install --frozen-lockfile --production
+RUN bun install --frozen-lockfile --production --ignore-scripts
 
 # --- Stage 4: slim runtime ---------------------------------------------------
 FROM node:${NODE_VERSION} AS runtime
