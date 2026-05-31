@@ -157,8 +157,8 @@ describe('mapNativeTransfer — drop conditions', () => {
     expect(row!.amountNorm).toBe('0.0001')
   })
 
-  test('returns null for an unknown chain (e.g. Base chainId 8453 not yet added)', () => {
-    const row = mapNativeTransfer({ ...BASE_INPUT, chainId: 8453, chainSlug: 'base' })
+  test('returns null for a completely unknown chain (e.g. chainId 9999)', () => {
+    const row = mapNativeTransfer({ ...BASE_INPUT, chainId: 9999, chainSlug: 'unknown' })
     expect(row).toBeNull()
   })
 
@@ -255,8 +255,8 @@ describe('mapErc20Transfer — drop conditions (anti-spam guarantee)', () => {
     expect(row).toBeNull()
   })
 
-  test('unknown chain returns null even for allowlisted token address', () => {
-    const row = mapErc20Transfer({ ...BASE_ERC20_INPUT, chainId: 8453 })
+  test('unknown chain returns null even if address looks like a token', () => {
+    const row = mapErc20Transfer({ ...BASE_ERC20_INPUT, chainId: 9999 })
     expect(row).toBeNull()
   })
 

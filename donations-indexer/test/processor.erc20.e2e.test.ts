@@ -224,6 +224,8 @@ beforeAll(async () => {
   // Clean slate for every test run.
   await pool.query(`DROP TABLE IF EXISTS donation`)
   await pool.query(`DROP TABLE IF EXISTS donations_indexer_status`)
+  await pool.query(`DROP TABLE IF EXISTS donations_indexer_status_legacy`)
+  await pool.query(`DROP TABLE IF EXISTS donations_indexer_status_v2`)
 }, 90_000)
 
 afterAll(async () => {
@@ -309,6 +311,7 @@ describe('processor ERC20 e2e — anvil mainnet fork + real Postgres', () => {
       // Run the processor from startBlock.
       await runProcessor(
         {
+          CHAIN_SLUG: 'ethereum',
           RPC_ETHEREUM_HTTP: ANVIL_RPC,
           DONATIONS_DB_URL: TEST_DB_URL,
           START_BLOCK_ETHEREUM: String(startBlock),
@@ -367,6 +370,7 @@ describe('processor ERC20 e2e — anvil mainnet fork + real Postgres', () => {
     async () => {
       await runProcessor(
         {
+          CHAIN_SLUG: 'ethereum',
           RPC_ETHEREUM_HTTP: ANVIL_RPC,
           DONATIONS_DB_URL: TEST_DB_URL,
           START_BLOCK_ETHEREUM: String(startBlock),

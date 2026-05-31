@@ -3,6 +3,7 @@
  * Written test-first (TDD).
  *
  * Slice #207 additions: ERC20 allowlist lookups, erc20Addresses(), TRANSFER_TOPIC0.
+ * Slice #209 additions: Base, Arbitrum, Optimism, BSC, Polygon chain coverage.
  */
 import { describe, expect, test } from 'bun:test'
 import {
@@ -232,5 +233,245 @@ describe('TRANSFER_TOPIC0', () => {
 
   test('is 66 characters (0x + 64 hex)', () => {
     expect(TRANSFER_TOPIC0).toHaveLength(66)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Slice #209: new chain coverage
+// ---------------------------------------------------------------------------
+
+describe('allowlistFor — new chains (slice #209)', () => {
+  test('returns non-null for Base (chainId 8453)', () => {
+    expect(allowlistFor(8453)).not.toBeNull()
+  })
+
+  test('returns non-null for Arbitrum (chainId 42161)', () => {
+    expect(allowlistFor(42161)).not.toBeNull()
+  })
+
+  test('returns non-null for Optimism (chainId 10)', () => {
+    expect(allowlistFor(10)).not.toBeNull()
+  })
+
+  test('returns non-null for BSC (chainId 56)', () => {
+    expect(allowlistFor(56)).not.toBeNull()
+  })
+
+  test('returns non-null for Polygon (chainId 137)', () => {
+    expect(allowlistFor(137)).not.toBeNull()
+  })
+
+  test('Base native symbol is ETH', () => {
+    expect(allowlistFor(8453)?.native.symbol).toBe('ETH')
+  })
+
+  test('Arbitrum native symbol is ETH', () => {
+    expect(allowlistFor(42161)?.native.symbol).toBe('ETH')
+  })
+
+  test('Optimism native symbol is ETH', () => {
+    expect(allowlistFor(10)?.native.symbol).toBe('ETH')
+  })
+
+  test('BSC native symbol is BNB', () => {
+    expect(allowlistFor(56)?.native.symbol).toBe('BNB')
+  })
+
+  test('Polygon native symbol is POL', () => {
+    expect(allowlistFor(137)?.native.symbol).toBe('POL')
+  })
+
+  test('Base has exactly 9 ERC20 entries', () => {
+    expect(Object.keys(allowlistFor(8453)!.erc20)).toHaveLength(9)
+  })
+
+  test('Arbitrum has exactly 9 ERC20 entries', () => {
+    expect(Object.keys(allowlistFor(42161)!.erc20)).toHaveLength(9)
+  })
+
+  test('Optimism has exactly 9 ERC20 entries', () => {
+    expect(Object.keys(allowlistFor(10)!.erc20)).toHaveLength(9)
+  })
+
+  test('BSC has exactly 9 ERC20 entries', () => {
+    expect(Object.keys(allowlistFor(56)!.erc20)).toHaveLength(9)
+  })
+
+  test('Polygon has exactly 9 ERC20 entries', () => {
+    expect(Object.keys(allowlistFor(137)!.erc20)).toHaveLength(9)
+  })
+})
+
+describe('native dust floors — new chains', () => {
+  test('Base nativeFloor is 0.0001 ETH (100_000_000_000_000 wei)', () => {
+    expect(nativeFloor(8453)).toBe(100_000_000_000_000n)
+  })
+
+  test('Arbitrum nativeFloor is 0.0001 ETH', () => {
+    expect(nativeFloor(42161)).toBe(100_000_000_000_000n)
+  })
+
+  test('Optimism nativeFloor is 0.0001 ETH', () => {
+    expect(nativeFloor(10)).toBe(100_000_000_000_000n)
+  })
+
+  test('BSC nativeFloor is 0.001 BNB (1_000_000_000_000_000 wei)', () => {
+    expect(nativeFloor(56)).toBe(1_000_000_000_000_000n)
+  })
+
+  test('Polygon nativeFloor is 1 POL (1_000_000_000_000_000_000 wei)', () => {
+    expect(nativeFloor(137)).toBe(1_000_000_000_000_000_000n)
+  })
+})
+
+describe('tokenMeta — new chains (decimals critical, cross-chain gotchas)', () => {
+  // Base
+  test('Base USDC decimals = 6 (native Circle USDC on Base)', () => {
+    const meta = tokenMeta(8453, '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913')
+    expect(meta?.symbol).toBe('USDC')
+    expect(meta?.decimals).toBe(6)
+  })
+
+  test('Base cbBTC decimals = 8 (NOT 18)', () => {
+    const meta = tokenMeta(8453, '0xcbb7c0000ab88b473b1f5afd9ef808440eed33bf')
+    expect(meta?.symbol).toBe('cbBTC')
+    expect(meta?.decimals).toBe(8)
+  })
+
+  test('Base rETH decimals = 18', () => {
+    const meta = tokenMeta(8453, '0xb6fe221fe9eef5aba221c348ba20a1bf5e73624c')
+    expect(meta?.symbol).toBe('rETH')
+    expect(meta?.decimals).toBe(18)
+  })
+
+  // Arbitrum
+  test('Arbitrum USDC decimals = 6 (native Circle USDC)', () => {
+    const meta = tokenMeta(42161, '0xaf88d065e77c8cc2239327c5edb3a432268e5831')
+    expect(meta?.symbol).toBe('USDC')
+    expect(meta?.decimals).toBe(6)
+  })
+
+  test('Arbitrum USDT decimals = 6 (NOT 18; bridged Tether)', () => {
+    const meta = tokenMeta(42161, '0xfd086bc7cd5c481dcc9c85ebe478a1c0b69fcbb9')
+    expect(meta?.symbol).toBe('USDT')
+    expect(meta?.decimals).toBe(6)
+  })
+
+  test('Arbitrum WBTC decimals = 8 (NOT 18)', () => {
+    const meta = tokenMeta(42161, '0x2f2a2543b76a4166549f7aab2e75bef0aefc5b0f')
+    expect(meta?.symbol).toBe('WBTC')
+    expect(meta?.decimals).toBe(8)
+  })
+
+  // Optimism
+  test('Optimism USDC decimals = 6', () => {
+    const meta = tokenMeta(10, '0x0b2c639c533813f4aa9d7837caf62653d097ff85')
+    expect(meta?.symbol).toBe('USDC')
+    expect(meta?.decimals).toBe(6)
+  })
+
+  test('Optimism WBTC decimals = 8 (NOT 18)', () => {
+    const meta = tokenMeta(10, '0x68f180fcce6836688e9084f035309e29bf0a2095')
+    expect(meta?.symbol).toBe('WBTC')
+    expect(meta?.decimals).toBe(8)
+  })
+
+  // BSC — critical: 18-decimal USDC/USDT/BTCB
+  test('BSC USDC decimals = 18 (Binance-pegged BEP20, NOT 6)', () => {
+    const meta = tokenMeta(56, '0x8ac76a51cc950d9822d68b83fe1ad97b32cd580d')
+    expect(meta?.symbol).toBe('USDC')
+    // 18 — this is the most common cross-chain decimal gotcha for BSC
+    expect(meta?.decimals).toBe(18)
+  })
+
+  test('BSC USDT decimals = 18 (Binance-pegged BEP20, NOT 6)', () => {
+    const meta = tokenMeta(56, '0x55d398326f99059ff775485246999027b3197955')
+    expect(meta?.symbol).toBe('USDT')
+    expect(meta?.decimals).toBe(18)
+  })
+
+  test('BSC BTCB decimals = 18 (Binance-pegged Bitcoin, NOT 8)', () => {
+    const meta = tokenMeta(56, '0x7130d2a12b9bcbfae4f2634d864a1ee1ce3ead9c')
+    expect(meta?.symbol).toBe('BTCB')
+    expect(meta?.decimals).toBe(18)
+  })
+
+  // Polygon
+  test('Polygon USDC decimals = 6 (native Circle USDC)', () => {
+    const meta = tokenMeta(137, '0x3c499c542cef5e3811e1192ce70d8cc03d5c3359')
+    expect(meta?.symbol).toBe('USDC')
+    expect(meta?.decimals).toBe(6)
+  })
+
+  test('Polygon USDT decimals = 6 (onchain symbol USDT0, stored as USDT)', () => {
+    const meta = tokenMeta(137, '0xc2132d05d31c914a87c6611c10748aeb04b58e8f')
+    expect(meta?.symbol).toBe('USDT')
+    expect(meta?.decimals).toBe(6)
+  })
+
+  test('Polygon WBTC decimals = 8 (NOT 18)', () => {
+    const meta = tokenMeta(137, '0x1bfd67037b42cf73acf2047067bd4f2c47d9bfd6')
+    expect(meta?.symbol).toBe('WBTC')
+    expect(meta?.decimals).toBe(8)
+  })
+})
+
+describe('isAllowed — new chains', () => {
+  test('Base USDC is allowed', () => {
+    expect(isAllowed(8453, '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913')).toBe(true)
+  })
+
+  test('BSC USDC is allowed (18 decimals BEP20)', () => {
+    expect(isAllowed(56, '0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d')).toBe(true)
+  })
+
+  test('Ethereum USDC address is NOT allowed on Base (different address)', () => {
+    // Ethereum USDC: 0xa0b86991...
+    expect(isAllowed(8453, '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48')).toBe(false)
+  })
+
+  test('Polygon AAVE is allowed', () => {
+    expect(isAllowed(137, '0xD6DF932A45C0f255f85145f286eA0b292B21C90B')).toBe(true)
+  })
+
+  test('Unknown address on Arbitrum is NOT allowed', () => {
+    expect(isAllowed(42161, '0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef')).toBe(false)
+  })
+})
+
+describe('erc20Addresses — new chains', () => {
+  test('Base returns 9 addresses', () => {
+    expect(erc20Addresses(8453)).toHaveLength(9)
+  })
+
+  test('Arbitrum returns 9 addresses', () => {
+    expect(erc20Addresses(42161)).toHaveLength(9)
+  })
+
+  test('Optimism returns 9 addresses', () => {
+    expect(erc20Addresses(10)).toHaveLength(9)
+  })
+
+  test('BSC returns 9 addresses', () => {
+    expect(erc20Addresses(56)).toHaveLength(9)
+  })
+
+  test('Polygon returns 9 addresses', () => {
+    expect(erc20Addresses(137)).toHaveLength(9)
+  })
+
+  test('all Base addresses are lowercased 0x + 40 hex', () => {
+    const addrs = erc20Addresses(8453)
+    for (const addr of addrs) {
+      expect(addr).toMatch(/^0x[0-9a-f]{40}$/)
+    }
+  })
+
+  test('BSC USDC address present', () => {
+    expect(erc20Addresses(56)).toContain('0x8ac76a51cc950d9822d68b83fe1ad97b32cd580d')
+  })
+
+  test('Polygon WBTC address present', () => {
+    expect(erc20Addresses(137)).toContain('0x1bfd67037b42cf73acf2047067bd4f2c47d9bfd6')
   })
 })

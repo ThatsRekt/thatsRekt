@@ -193,6 +193,8 @@ beforeAll(async () => {
   // Clean slate for every test run.
   await pool.query(`DROP TABLE IF EXISTS donation`)
   await pool.query(`DROP TABLE IF EXISTS donations_indexer_status`)
+  await pool.query(`DROP TABLE IF EXISTS donations_indexer_status_legacy`)
+  await pool.query(`DROP TABLE IF EXISTS donations_indexer_status_v2`)
 }, 30_000)
 
 afterAll(async () => {
@@ -242,6 +244,7 @@ describe('processor e2e — anvil + real Postgres', () => {
       // local anvil testing — no reorgs, instant finality.
       await runProcessor(
         {
+          CHAIN_SLUG: 'ethereum',
           RPC_ETHEREUM_HTTP: ANVIL_RPC,
           DONATIONS_DB_URL: TEST_DB_URL,
           START_BLOCK_ETHEREUM: String(startBlock),
@@ -279,9 +282,9 @@ describe('processor e2e — anvil + real Postgres', () => {
   test(
     'second processor run — no duplicate row, cursor advanced past startBlock',
     async () => {
-      // Read cursor height after the first run.
+      // Read cursor height after the first run (per-chain v2 table, chain_id=1).
       const { rows: before } = await pool.query<{ height: number }>(
-        `SELECT height FROM donations_indexer_status WHERE id = 1`,
+        `SELECT height FROM donations_indexer_status_v2 WHERE chain_id = 1`,
       )
       expect(before).toHaveLength(1)
       const cursorAfterFirstRun = before[0]!.height
@@ -290,6 +293,7 @@ describe('processor e2e — anvil + real Postgres', () => {
       // Run the processor again from the same START_BLOCK.
       await runProcessor(
         {
+          CHAIN_SLUG: 'ethereum',
           RPC_ETHEREUM_HTTP: ANVIL_RPC,
           DONATIONS_DB_URL: TEST_DB_URL,
           START_BLOCK_ETHEREUM: String(startBlock),
@@ -308,7 +312,7 @@ describe('processor e2e — anvil + real Postgres', () => {
       // Assert cursor is still advanced — second run resumes from cursorAfterFirstRun,
       // not from startBlock. This proves the cursor advance from the first run persisted.
       const { rows: after } = await pool.query<{ height: number }>(
-        `SELECT height FROM donations_indexer_status WHERE id = 1`,
+        `SELECT height FROM donations_indexer_status_v2 WHERE chain_id = 1`,
       )
       expect(after[0]!.height).toBeGreaterThan(startBlock)
     },

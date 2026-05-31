@@ -2,15 +2,20 @@
  * Donations indexer — processor entry point.
  *
  * Watches native-value transactions AND allowlisted ERC20 Transfer logs
- * whose recipient is the thatsrekt.eth donation Safe on Ethereum mainnet.
+ * whose recipient is the thatsrekt.eth donation Safe on the selected chain.
  * Writes rows to the `donation` table in `thatsrekt_donations` DB.
  *
  * Processor-only: no squid-graphql-server is started here.
  * The mesh reads directly via a second pg pool (DONATIONS_DB_URL).
  *
+ * Chain selection: set CHAIN_SLUG env var to one of:
+ *   ethereum | base | arbitrum | optimism | bsc | polygon
+ * One process = one chain. Deploy one task per chain (slice #210).
+ *
  * Slice #205: Ethereum + native ETH only.
  * Slice #207: ERC20 Transfer log subscriptions added.
- * Slice #209 adds additional chains.
+ * Slice #209: Multi-chain parameterization. Per-chain cursor isolation.
+ *             Base, Arbitrum, Optimism, BSC, Polygon added.
  */
 
 import 'dotenv/config'
@@ -26,6 +31,7 @@ import pkg from 'pg'
 import { ensureDonationTable, upsertDonation } from './donationStore.js'
 import { mapNativeTransfer, mapErc20Transfer } from './donationMapper.js'
 import { erc20Addresses, TRANSFER_TOPIC0 } from './tokenAllowlist.js'
+import { chainConfigFor } from './chainConfig.js'
 
 const { Pool } = pkg
 
@@ -39,30 +45,42 @@ const requireEnv = (key: string): string => {
   return v
 }
 
-const RPC_URL = requireEnv('RPC_ETHEREUM_HTTP')
+// ---------------------------------------------------------------------------
+// Chain selection.
+//
+// CHAIN_SLUG selects the target chain from the registry in chainConfig.ts.
+// All other chain-specific parameters (RPC URL, start block, finality depth)
+// are derived from the config rather than hard-coded here.
+// ---------------------------------------------------------------------------
+
+const CHAIN_SLUG_INPUT = requireEnv('CHAIN_SLUG')
+const chainConfig = chainConfigFor(CHAIN_SLUG_INPUT)
+if (!chainConfig) {
+  throw new Error(
+    `Unsupported CHAIN_SLUG="${CHAIN_SLUG_INPUT}". ` +
+      `Supported: ethereum, base, arbitrum, optimism, bsc, polygon`,
+  )
+}
+
+const { chainId: CHAIN_ID, slug: CHAIN_SLUG, rpcEnvKey, startBlockEnvKey } = chainConfig
+
+const RPC_URL = requireEnv(rpcEnvKey)
 const DB_URL = requireEnv('DONATIONS_DB_URL')
 
 // The thatsrekt.eth Safe — canonical donation address on every supported chain.
-// Ethereum mainnet v1.2.0 multisig (also the thatsRekt governance multisig).
 const DONATION_SAFE = '0x59E4DBc95BD312A882Bb36b7f3E8298682340679'.toLowerCase()
 
-// Ethereum chainId 1, slug 'ethereum'
-const CHAIN_ID = 1
-const CHAIN_SLUG = 'ethereum'
+// Start block: override via per-chain env var (used in tests), else pinned default.
+const START_BLOCK = parseInt(
+  process.env[startBlockEnvKey] ?? String(chainConfig.defaultStartBlock),
+  10,
+)
 
-// The Safe's deployment block on Ethereum mainnet.
-// We index from here so the full history is captured.
-// Confirmed via Etherscan: the Safe was deployed in the same tx that created
-// the thatsRekt governance multisig. Start block sourced from env so it can
-// be overridden for testing (anvil fork starts much later).
-const START_BLOCK = parseInt(process.env.START_BLOCK_ETHEREUM ?? '19000000', 10)
-
-// Finality confirmation in blocks.
-// Default: 75 (Ethereum PoS justification depth, ~15 min).
-// Set FINALITY_CONFIRMATION=0 in tests (e.g. anvil e2e) to treat all blocks
-// as final — with allBlocksAreFinal=true, the processor only calls transact()
-// and skips the hot-block phase entirely.
-const FINALITY_CONFIRMATION = parseInt(process.env.FINALITY_CONFIRMATION ?? '75', 10)
+// Finality confirmation: allow global override (e.g. FINALITY_CONFIRMATION=0 in tests).
+const FINALITY_CONFIRMATION = parseInt(
+  process.env.FINALITY_CONFIRMATION ?? String(chainConfig.finalityConfirmation),
+  10,
+)
 
 // ---------------------------------------------------------------------------
 // Postgres pool for donations DB.
@@ -101,7 +119,7 @@ const addressToTopic = (addr: string): string =>
 
 const DONATION_SAFE_TOPIC = addressToTopic(DONATION_SAFE)
 
-// Retrieve all allowlisted ERC20 addresses for chain 1 (Ethereum).
+// Retrieve all allowlisted ERC20 addresses for this chain.
 const ERC20_ADDRESSES = erc20Addresses(CHAIN_ID)
 
 let base = new EvmBatchProcessor()
@@ -140,9 +158,9 @@ for (const tokenAddr of ERC20_ADDRESSES) {
   })
 }
 
-// Subsquid Network archive — only for production Ethereum mainnet.
-// For local Anvil forks (no archive) we skip the gateway; the processor
-// falls back to RPC-only, which is fine at fork volumes.
+// Subsquid Network archive — only for production chains, not local anvil forks.
+// Set GATEWAY_URL to the chain-specific Subsquid Network gateway URL to enable.
+// Omit it (or leave it empty) for RPC-only mode (used in tests and local setups).
 const GATEWAY_URL = process.env.GATEWAY_URL
 const processor = GATEWAY_URL ? base.setGateway(GATEWAY_URL) : base
 
@@ -151,24 +169,19 @@ const processor = GATEWAY_URL ? base.setGateway(GATEWAY_URL) : base
 // ---------------------------------------------------------------------------
 
 const main = async () => {
+  console.log(`[donations-indexer] starting for chain=${CHAIN_SLUG} (id=${CHAIN_ID})`)
+
   // Ensure schema before starting the processor loop.
   await ensureDonationTable(pool)
   console.log('[donations-indexer] donation table ensured')
 
-  // We manage PG directly via our pool — no TypeORM overhead.
-  // buildHotDatabase() returns a HotDatabase<void> that satisfies the full
-  // Subsquid Database contract. Finalized batches are written in transact();
-  // hot (unfinalized) batches are ignored in transactHot() — the cursor only
-  // advances on finalized data so reorgs cannot introduce phantom rows.
   processor.run(
-    buildHotDatabase(pool),
+    buildHotDatabase(pool, CHAIN_ID),
     async (ctx) => {
       for (const block of ctx.blocks) {
         // Native value transfers.
         for (const tx of block.transactions) {
-          // Defensive: ensure the `to` field matches our Safe.
           if (!tx.to || tx.to.toLowerCase() !== DONATION_SAFE) continue
-          // Skip zero-value (pure contract calls, etc.).
           if (!tx.value || tx.value === 0n) continue
 
           const row = mapNativeTransfer({
@@ -192,24 +205,17 @@ const main = async () => {
 
         // ERC20 Transfer logs.
         for (const log of block.logs) {
-          // topic0 = Transfer, topic1 = from, topic2 = to (padded address)
           const topics = log.topics
           if (topics.length < 3) continue
 
-          // Defensive: verify topic0 is Transfer.
           if (topics[0]?.toLowerCase() !== TRANSFER_TOPIC0) continue
 
-          // Decode `from` and `to` from the padded 32-byte topics.
           const fromAddress = '0x' + (topics[1] ?? '').slice(-40)
           const toAddress = '0x' + (topics[2] ?? '').slice(-40)
 
-          // Defensive: ensure the recipient is our Safe.
           if (toAddress.toLowerCase() !== DONATION_SAFE) continue
 
-          // Decode amount from data (uint256, 32 bytes big-endian).
           const amount = log.data && log.data !== '0x' ? BigInt(log.data) : 0n
-
-          // Resolve the tx hash: log has transactionHash directly.
           const txHash = log.transactionHash
 
           const row = mapErc20Transfer({
@@ -227,7 +233,7 @@ const main = async () => {
 
           if (!row) {
             ctx.log.debug(
-              `[donations-indexer] dropped ERC20 log ${log.address}:${log.logIndex} (token not allowlisted or zero amount)`,
+              `[donations-indexer] dropped ERC20 log ${log.address}:${log.logIndex} (not allowlisted or zero)`,
             )
             continue
           }
@@ -243,49 +249,70 @@ const main = async () => {
 }
 
 // ---------------------------------------------------------------------------
-// HotDatabase<void> implementation.
+// HotDatabase<void> implementation — per-chain cursor isolation.
 //
-// Subsquid's run<Store>(db: Database<Store>, ...) requires a Database that
-// satisfies either FinalDatabase<S> or HotDatabase<S>.
+// The status table `donations_indexer_status_v2` is keyed by `chain_id` so
+// that multiple chain-processor instances writing to the same DB never clobber
+// each other's cursor. Each instance only reads/writes its own row.
 //
-// We implement HotDatabase<void>:
-//   - The void store type means the handler receives `store: void` which it
-//     ignores (handlers write directly via the module-level pg pool).
-//   - supportsHotBlocks: true  — required so the runner can enter the
-//     near-head hot-block phase without crashing.
-//   - connect()       — reads {height, hash, top:[]} from the status table.
-//   - transact()      — finalised-block path: run the handler, then advance
-//                       the cursor to info.nextHead. This is where all
-//                       donation rows are written (post finality-depth).
-//   - transactHot()   — hot-block path: no-op. We intentionally do not
-//                       persist donations from unfinalized blocks — with the
-//                       default 75-block finality depth on Ethereum mainnet,
-//                       every block we surface to the user is already safe.
-//                       The transactHot2 optional override is not implemented
-//                       so the runner falls back to transactHot.
+// Schema:
+//   donations_indexer_status_v2 (
+//     chain_id  INTEGER PRIMARY KEY,
+//     height    INTEGER NOT NULL DEFAULT -1,
+//     hash      TEXT    NOT NULL DEFAULT ''
+//   )
 //
-// Cursor semantics:
-//   The status table tracks the last committed FINALIZED block.
-//   Hot blocks are tracked in memory by Subsquid's runner (the `top` field
-//   in HotDatabaseState); we return top:[] from connect() because we do not
-//   persist hot-block state across restarts.
+// Migration from the original single-row table (donations_indexer_status with
+// id INTEGER PRIMARY KEY DEFAULT 1 CHECK (id=1)):
+//   1. Create donations_indexer_status_v2 (idempotent).
+//   2. Copy the old ETH cursor row (id=1 => chain_id=1) if old table exists.
+//   3. Rename old table to donations_indexer_status_legacy (additive — no DROP).
+//   4. Seed the row for this chain (idempotent).
 // ---------------------------------------------------------------------------
 
-function buildHotDatabase(pgPool: InstanceType<typeof Pool>): HotDatabase<void> {
+function buildHotDatabase(pgPool: InstanceType<typeof Pool>, chainId: number): HotDatabase<void> {
   const ensureStatus = async (): Promise<void> => {
+    // Step 1: create v2 table (idempotent).
     await pgPool.query(`
-      CREATE TABLE IF NOT EXISTS donations_indexer_status (
-        id      INTEGER PRIMARY KEY DEFAULT 1 CHECK (id = 1),
-        height  INTEGER NOT NULL DEFAULT -1,
-        hash    TEXT    NOT NULL DEFAULT ''
+      CREATE TABLE IF NOT EXISTS donations_indexer_status_v2 (
+        chain_id  INTEGER PRIMARY KEY,
+        height    INTEGER NOT NULL DEFAULT -1,
+        hash      TEXT    NOT NULL DEFAULT ''
       );
     `)
-    // Insert the sentinel row if absent — idempotent.
-    await pgPool.query(`
-      INSERT INTO donations_indexer_status (id, height, hash)
-      VALUES (1, -1, '')
-      ON CONFLICT (id) DO NOTHING;
+
+    // Step 2: migrate old single-row table if it still exists.
+    const { rows: oldTable } = await pgPool.query<{ exists: boolean }>(`
+      SELECT EXISTS (
+        SELECT 1 FROM information_schema.tables
+        WHERE table_name = 'donations_indexer_status'
+          AND table_schema = current_schema()
+      ) AS exists;
     `)
+    if (oldTable[0]?.exists) {
+      // Copy ETH cursor (id=1 => chain_id=1). ON CONFLICT DO NOTHING is safe
+      // if the v2 row already exists (idempotent re-run).
+      await pgPool.query(`
+        INSERT INTO donations_indexer_status_v2 (chain_id, height, hash)
+        SELECT 1, height, hash
+          FROM donations_indexer_status
+         WHERE id = 1
+        ON CONFLICT (chain_id) DO NOTHING;
+      `)
+      // Rename old table out of the way — additive migration, never DROP.
+      await pgPool.query(`
+        ALTER TABLE IF EXISTS donations_indexer_status
+          RENAME TO donations_indexer_status_legacy;
+      `)
+    }
+
+    // Step 3: seed this chain's cursor row (idempotent).
+    await pgPool.query(
+      `INSERT INTO donations_indexer_status_v2 (chain_id, height, hash)
+       VALUES ($1, -1, '')
+       ON CONFLICT (chain_id) DO NOTHING;`,
+      [chainId],
+    )
   }
 
   return {
@@ -294,32 +321,26 @@ function buildHotDatabase(pgPool: InstanceType<typeof Pool>): HotDatabase<void> 
     async connect(): Promise<HotDatabaseState> {
       await ensureStatus()
       const { rows } = await pgPool.query<{ height: number; hash: string }>(
-        `SELECT height, hash FROM donations_indexer_status WHERE id = 1`,
+        `SELECT height, hash FROM donations_indexer_status_v2 WHERE chain_id = $1`,
+        [chainId],
       )
       const row = rows[0] ?? { height: -1, hash: '' }
-      // top:[] — we do not persist hot-block state; the runner will re-fetch
-      // near-head blocks on restart if they haven't been finalized yet.
       return { ...row, top: [] }
     },
 
     async transact(info: FinalTxInfo, cb: (store: void) => Promise<void>): Promise<void> {
-      // Run the batch handler. Our upserts are individually idempotent so we
-      // don't need a full PG transaction wrapping the donation rows.
       await cb(undefined as void)
-      // Advance the cursor so the processor resumes from nextHead on restart.
-      // This must happen after cb() succeeds — the cursor only moves on
-      // successful finalized-block processing.
       await pgPool.query(
-        `UPDATE donations_indexer_status SET height = $1, hash = $2 WHERE id = 1`,
-        [info.nextHead.height, info.nextHead.hash],
+        `UPDATE donations_indexer_status_v2 SET height = $1, hash = $2 WHERE chain_id = $3`,
+        [info.nextHead.height, info.nextHead.hash, chainId],
       )
     },
 
-    async transactHot(_info: HotTxInfo, _cb: (store: void, block: HashAndHeight) => Promise<void>): Promise<void> {
-      // Hot blocks are not persisted. We only write finalized donations.
-      // With FINALITY_CONFIRMATION=75, every block surfaced to transact() is
-      // already 75 blocks deep — safe against any realistic Ethereum reorg.
-      // The runner calls transactHot() for near-head blocks; we skip them.
+    async transactHot(
+      _info: HotTxInfo,
+      _cb: (store: void, block: HashAndHeight) => Promise<void>,
+    ): Promise<void> {
+      // Hot blocks are not persisted. Only finalized donations are written.
     },
   }
 }
