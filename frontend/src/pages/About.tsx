@@ -69,6 +69,12 @@ function WaysToUse() {
           Other guardians race to confirm or refute. Confirmer
           karma builds reputation over time.
         </Bullet>
+        <Bullet label="for asset managers / curators" size="large">
+          Have your agents trigger disassembling transactions on an
+          alert mentioning a protocol you're exposed to. The moment a
+          guardian posts, your automation can exit positions, adjust
+          collateral, or pause strategies — before the market reacts.
+        </Bullet>
         <Bullet label="if you're just curious" size="large">
           Browse the feed. Every attack links to the actual onchain
           attack tx, the attacker addresses, and the victim contracts.

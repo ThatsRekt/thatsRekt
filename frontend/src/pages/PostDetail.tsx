@@ -13,7 +13,7 @@ import { ShareButton } from '../components/ShareButton'
 import { ConfirmVoteButtons } from '../components/ConfirmVoteButtons'
 import { Timeline } from '../components/Timeline'
 import { EmptyState } from '../components/EmptyState'
-import { chainIdFromSlug } from '../lib/chains'
+import { chainIdFromSlug, getChainBySlug } from '../lib/chains'
 import {
   registryAddress,
   type SupportedChainId,
@@ -202,6 +202,25 @@ function LivePostDetail({ postId }: { postId: string }) {
               {relativeTime(data.removedAtTimestamp)}
             </Field>
           )}
+          {(() => {
+            if (!chainSlug || !data.createdAtBlock) return null
+            const chain = getChainBySlug(chainSlug)
+            if (!chain) return null
+            const blockUrl = `${chain.explorer}/block/${data.createdAtBlock}`
+            return (
+              <Field label="view post onchain">
+                <a
+                  href={blockUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="rekt-link normal-case tracking-normal"
+                  title={blockUrl}
+                >
+                  poster.thatsRekt.eth ↗
+                </a>
+              </Field>
+            )
+          })()}
         </dl>
       </header>
 
