@@ -2,9 +2,11 @@
  * E2E test for donationsResolver against a real PostgreSQL instance.
  *
  * Verifies:
- *   1. listDonations() returns rows in newest-first order.
+ *   1. listDonations() returns rows in newest-first order (default).
  *   2. Pagination (limit/offset) works correctly.
  *   3. Row shape matches the DonationRow interface.
+ *   4. orderBy/direction args sort the full dataset server-side.
+ *   5. Non-whitelisted orderBy values are rejected (injection guard).
  *
  * Requires a running Postgres instance.
  * Set TEST_DB_URL to point at the test DB (default: localhost:5434).
@@ -184,5 +186,81 @@ describe('listDonations', () => {
     const rows = await listDonations({ limit: 9999, offset: 0 })
     // Returns at most 200 (we only have 3 seeds anyway)
     expect(rows.length).toBeLessThanOrEqual(200)
+  })
+
+  // ---- ordering by each whitelisted column ---------------------------------
+
+  test('orderBy: amount ASC returns smallest first', async () => {
+    const rows = await listDonations({ limit: 10, offset: 0, orderBy: 'amount', direction: 'ASC' })
+    expect(rows).toHaveLength(3)
+    // Seed amounts: 0.5, 1, 2  → ASC: 0.5 < 1 < 2
+    expect(rows[0]!.id).toBe('resolver-test-2')  // amount_norm 0.5
+    expect(rows[1]!.id).toBe('resolver-test-1')  // amount_norm 1
+    expect(rows[2]!.id).toBe('resolver-test-3')  // amount_norm 2
+  })
+
+  test('orderBy: amount DESC returns largest first', async () => {
+    const rows = await listDonations({ limit: 10, offset: 0, orderBy: 'amount', direction: 'DESC' })
+    expect(rows).toHaveLength(3)
+    expect(rows[0]!.id).toBe('resolver-test-3')  // amount_norm 2
+    expect(rows[1]!.id).toBe('resolver-test-1')  // amount_norm 1
+    expect(rows[2]!.id).toBe('resolver-test-2')  // amount_norm 0.5
+  })
+
+  test('orderBy: date ASC returns oldest first', async () => {
+    const rows = await listDonations({ limit: 10, offset: 0, orderBy: 'date', direction: 'ASC' })
+    expect(rows).toHaveLength(3)
+    // block_timestamp ASC: oldest = resolver-test-3 (12:00), middle = resolver-test-2 (13:00), newest = resolver-test-1 (14:00)
+    expect(rows[0]!.id).toBe('resolver-test-3')
+    expect(rows[1]!.id).toBe('resolver-test-2')
+    expect(rows[2]!.id).toBe('resolver-test-1')
+  })
+
+  test('orderBy: donor ASC returns addresses in lexicographic order', async () => {
+    const rows = await listDonations({ limit: 10, offset: 0, orderBy: 'donor', direction: 'ASC' })
+    expect(rows).toHaveLength(3)
+    // from_address: ...0001 < ...0002 < ...0003
+    expect(rows[0]!.id).toBe('resolver-test-1')
+    expect(rows[1]!.id).toBe('resolver-test-2')
+    expect(rows[2]!.id).toBe('resolver-test-3')
+  })
+
+  test('orderBy: chain ASC returns alphabetically sorted chain slugs', async () => {
+    // All rows have chain_slug = 'ethereum', so any order is stable.
+    const rows = await listDonations({ limit: 10, offset: 0, orderBy: 'chain', direction: 'ASC' })
+    expect(rows).toHaveLength(3)
+  })
+
+  test('orderBy: token ASC is accepted and returns rows', async () => {
+    // All rows have token_symbol = 'ETH', so any order is stable.
+    const rows = await listDonations({ limit: 10, offset: 0, orderBy: 'token', direction: 'ASC' })
+    expect(rows).toHaveLength(3)
+  })
+
+  test('orderBy + pagination: amount DESC limit 2 offset 0 returns top 2', async () => {
+    const rows = await listDonations({ limit: 2, offset: 0, orderBy: 'amount', direction: 'DESC' })
+    expect(rows).toHaveLength(2)
+    expect(rows[0]!.id).toBe('resolver-test-3')  // amount 2
+    expect(rows[1]!.id).toBe('resolver-test-1')  // amount 1
+  })
+
+  test('orderBy + pagination: amount DESC limit 2 offset 2 returns last row', async () => {
+    const rows = await listDonations({ limit: 2, offset: 2, orderBy: 'amount', direction: 'DESC' })
+    expect(rows).toHaveLength(1)
+    expect(rows[0]!.id).toBe('resolver-test-2')  // amount 0.5
+  })
+
+  // ---- injection guard -------------------------------------------------------
+
+  test('non-whitelisted orderBy is rejected and throws', async () => {
+    await expect(
+      listDonations({ limit: 10, offset: 0, orderBy: 'DROP TABLE donation; --', direction: 'ASC' })
+    ).rejects.toThrow('Unknown orderBy column')
+  })
+
+  test('orderBy "id" (valid SQL but not in whitelist) is rejected', async () => {
+    await expect(
+      listDonations({ limit: 10, offset: 0, orderBy: 'id', direction: 'ASC' })
+    ).rejects.toThrow('Unknown orderBy column')
   })
 })

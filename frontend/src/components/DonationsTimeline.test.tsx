@@ -172,3 +172,104 @@ describe('DonationsTimeline — address truncation', () => {
     expect(truncated.length).toBeGreaterThan(0)
   })
 })
+
+// ---------------------------------------------------------------------------
+// Sort header tests
+// ---------------------------------------------------------------------------
+
+describe('DonationsTimeline — sort headers', () => {
+  function renderWithSort(
+    orderBy = 'date',
+    direction: 'ASC' | 'DESC' = 'DESC',
+    onSort = mock((_orderBy: string, _direction: string) => {}),
+  ) {
+    return renderTimeline({
+      sortState: { orderBy, direction },
+      onSort,
+    })
+  }
+
+  it('renders clickable column headers for donor, amount, chain, when', () => {
+    renderWithSort()
+    const buttons = screen.getAllByRole('button')
+    const labels = buttons.map((b) => b.textContent?.toLowerCase() ?? '')
+    expect(labels.some((l) => l.includes('donor'))).toBe(true)
+    expect(labels.some((l) => l.includes('amount'))).toBe(true)
+    expect(labels.some((l) => l.includes('chain'))).toBe(true)
+    expect(labels.some((l) => l.includes('when'))).toBe(true)
+  })
+
+  it('clicking the "amount" header calls onSort with "amount"', async () => {
+    const fn = mock((_orderBy: string, _direction: string) => {})
+    renderWithSort('date', 'DESC', fn)
+    const amountBtn = screen
+      .getAllByRole('button')
+      .find((b) => b.textContent?.toLowerCase().includes('amount'))
+    expect(amountBtn).toBeDefined()
+    await userEvent.click(amountBtn!)
+    expect(fn).toHaveBeenCalledTimes(1)
+    const [calledOrderBy] = fn.mock.calls[0]!
+    expect(calledOrderBy).toBe('amount')
+  })
+
+  it('clicking the "donor" header calls onSort with "donor"', async () => {
+    const fn = mock((_orderBy: string, _direction: string) => {})
+    renderWithSort('date', 'DESC', fn)
+    const donorBtn = screen
+      .getAllByRole('button')
+      .find((b) => b.textContent?.toLowerCase().includes('donor'))
+    expect(donorBtn).toBeDefined()
+    await userEvent.click(donorBtn!)
+    const [calledOrderBy] = fn.mock.calls[0]!
+    expect(calledOrderBy).toBe('donor')
+  })
+
+  it('clicking the active "date" (when) header calls onSort with "date" (toggle)', async () => {
+    const fn = mock((_orderBy: string, _direction: string) => {})
+    renderWithSort('date', 'DESC', fn)
+    const dateBtn = screen
+      .getAllByRole('button')
+      .find((b) => b.textContent?.toLowerCase().includes('when'))
+    expect(dateBtn).toBeDefined()
+    await userEvent.click(dateBtn!)
+    const [calledOrderBy] = fn.mock.calls[0]!
+    expect(calledOrderBy).toBe('date')
+  })
+
+  it('shows a sort indicator on the active column', () => {
+    renderWithSort('date', 'DESC')
+    const buttons = screen.getAllByRole('button')
+    const dateBtn = buttons.find((b) => b.textContent?.toLowerCase().includes('when'))
+    expect(dateBtn).toBeDefined()
+    const text = dateBtn!.textContent ?? ''
+    const hasIndicator =
+      text.includes('↑') ||
+      text.includes('↓') ||
+      text.includes('▲') ||
+      text.includes('▼') ||
+      dateBtn!.closest('th')?.getAttribute('aria-sort') !== null
+    expect(hasIndicator).toBe(true)
+  })
+
+  it('passes toggled direction when clicking the active column', async () => {
+    const fn = mock((_orderBy: string, _direction: string) => {})
+    renderWithSort('date', 'DESC', fn)
+    const dateBtn = screen
+      .getAllByRole('button')
+      .find((b) => b.textContent?.toLowerCase().includes('when'))
+    await userEvent.click(dateBtn!)
+    expect(fn.mock.calls[0]![1]).toBe('ASC')
+  })
+
+  it('passes default direction when clicking an inactive column', async () => {
+    const fn = mock((_orderBy: string, _direction: string) => {})
+    renderWithSort('date', 'DESC', fn)
+    const chainBtn = screen
+      .getAllByRole('button')
+      .find((b) => b.textContent?.toLowerCase().includes('chain'))
+    await userEvent.click(chainBtn!)
+    const [calledOrderBy, calledDirection] = fn.mock.calls[0]!
+    expect(calledOrderBy).toBe('chain')
+    expect(calledDirection).toBe('ASC')
+  })
+})

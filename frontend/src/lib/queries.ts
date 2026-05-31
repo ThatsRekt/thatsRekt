@@ -735,8 +735,8 @@ export interface Donation {
 }
 
 const DONATIONS_QUERY = /* GraphQL */ `
-  query Donations($limit: Int!, $offset: Int!) {
-    donations(limit: $limit, offset: $offset) {
+  query Donations($limit: Int!, $offset: Int!, $orderBy: String!, $direction: String!) {
+    donations(limit: $limit, offset: $offset, orderBy: $orderBy, direction: $direction) {
       id
       chainId
       chainSlug
@@ -757,9 +757,15 @@ const DONATIONS_QUERY = /* GraphQL */ `
 export async function fetchDonations(opts: {
   limit?: number
   offset?: number
+  /** Whitelisted column: date | amount | chain | token | donor. Defaults to 'date'. */
+  orderBy?: string
+  /** 'ASC' or 'DESC'. Defaults to 'DESC'. */
+  direction?: string
 }): Promise<Donation[]> {
   const limit = opts.limit ?? 50
   const offset = opts.offset ?? 0
+  const orderBy = opts.orderBy ?? 'date'
+  const direction = opts.direction ?? 'DESC'
 
   if (USE_MOCK) {
     return mockFetchDonations(limit, offset)
@@ -767,7 +773,7 @@ export async function fetchDonations(opts: {
 
   const data = await gqlClient.request<{ donations: Donation[] }>(
     DONATIONS_QUERY,
-    { limit, offset },
+    { limit, offset, orderBy, direction },
   )
   return data.donations
 }
