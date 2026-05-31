@@ -7,7 +7,7 @@
  * call out of the DB-idempotency test.
  */
 
-import { claimAndForward, ensureGuardianApplicationsTable, metaPool } from './db.js'
+import { claimAndForward, metaPool } from './db.js'
 import { formatApplication } from './format.js'
 import { sendMessage } from './telegram.js'
 import type { TelegramConfig } from './telegram.js'
@@ -20,10 +20,13 @@ import type { Pool as PoolType } from 'pg'
 
 /**
  * Run one full forwarding cycle:
- *   1. Ensure schema exists (idempotent DDL).
- *   2. Transactionally claim all rows where `forwarded_at IS NULL`.
- *   3. For each claimed row: format -> post to Telegram -> stamp in DB.
- *   4. Return per-row results.
+ *   1. Transactionally claim all rows where `forwarded_at IS NULL`.
+ *   2. For each claimed row: format -> post to Telegram -> stamp in DB.
+ *   3. Return per-row results.
+ *
+ * The table is owned + created by mesh (single source of truth); the bot is a
+ * pure read/update consumer and never runs DDL. This lets it connect as a
+ * least-privilege role with only SELECT + UPDATE on guardian_applications.
  *
  * `pool` is injectable so tests can point the service at a test database
  * without touching the real `metaPool` singleton.
@@ -46,8 +49,6 @@ export async function runForwardingCycle(params: {
       const text = formatApplication(row)
       return sendMessage({ config: telegramConfig, text })
     })
-
-  await ensureGuardianApplicationsTable(pool)
 
   return claimAndForward({ pool, forwardFn })
 }
