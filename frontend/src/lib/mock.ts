@@ -1,5 +1,6 @@
 import type {
   AddressEntity,
+  Donation,
   EditEntity,
   EditKind,
   FeedPost,
@@ -289,4 +290,59 @@ export async function mockFetchFeed(
 export async function mockFetchPostDetail(id: string): Promise<PostDetail | null> {
   await delay(120)
   return ALL_POSTS.find((p) => p.id === id) ?? null
+}
+
+// ---- mock donations --------------------------------------------------------
+
+const MOCK_DONATIONS: readonly Donation[] = Object.freeze([
+  {
+    id: '1-0xmock001-native',
+    chainId: 1,
+    chainSlug: 'ethereum',
+    fromAddress: '0xd8da6bf26964af9d7eed9e03e53415d37aa96045',
+    tokenAddress: null,
+    tokenSymbol: 'ETH',
+    tokenDecimals: 18,
+    amountRaw: '500000000000000000',
+    amountNorm: '0.5',
+    txHash: '0xmock001mock001mock001mock001mock001mock001mock001mock001mock001mock001',
+    logIndex: null,
+    blockNumber: 20_100_001,
+    blockTimestamp: iso(NOW - 2 * HOUR),
+  },
+  {
+    id: '1-0xmock002-native',
+    chainId: 1,
+    chainSlug: 'ethereum',
+    fromAddress: '0xab5801a7d398351b8be11c439e05c5b3259aec9b',
+    tokenAddress: null,
+    tokenSymbol: 'ETH',
+    tokenDecimals: 18,
+    amountRaw: '1000000000000000000',
+    amountNorm: '1',
+    txHash: '0xmock002mock002mock002mock002mock002mock002mock002mock002mock002mock002',
+    logIndex: null,
+    blockNumber: 20_100_000,
+    blockTimestamp: iso(NOW - 5 * HOUR),
+  },
+  {
+    id: '1-0xmock003-native',
+    chainId: 1,
+    chainSlug: 'ethereum',
+    fromAddress: '0x1234567890abcdef1234567890abcdef12345678',
+    tokenAddress: null,
+    tokenSymbol: 'ETH',
+    tokenDecimals: 18,
+    amountRaw: '100000000000000000',
+    amountNorm: '0.1',
+    txHash: '0xmock003mock003mock003mock003mock003mock003mock003mock003mock003mock003',
+    logIndex: null,
+    blockNumber: 20_099_999,
+    blockTimestamp: iso(NOW - 1 * DAY),
+  },
+])
+
+export async function mockFetchDonations(limit = 50, offset = 0): Promise<Donation[]> {
+  await delay(120)
+  return [...MOCK_DONATIONS].slice(offset, offset + limit)
 }

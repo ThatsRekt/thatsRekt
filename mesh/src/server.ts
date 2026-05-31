@@ -28,6 +28,7 @@ import {
 } from './comments.js'
 import { assertTurnstileSecretForProd, buildGuardianResolvers, guardianTypeDefs } from './guardian.js'
 import { ensureCommentsTable, ensureGuardianApplicationsTable } from './db.js'
+import { buildDonationsResolvers, donationsTypeDefs } from './donations.js'
 import {
   handleOgImageRoute,
   handleOgRoute,
@@ -683,13 +684,15 @@ const main = async () => {
   const additionalResolvers = buildAdditionalResolvers(chains)
   const commentsResolvers = buildCommentsResolvers({ chains, getExecutor })
   const guardianResolvers = buildGuardianResolvers()
+  const donationsResolvers = buildDonationsResolvers()
   const schema = stitchSchemas({
     subschemas,
-    typeDefs: [additionalTypeDefs, commentsTypeDefs, guardianTypeDefs],
+    typeDefs: [additionalTypeDefs, commentsTypeDefs, guardianTypeDefs, donationsTypeDefs],
     resolvers: {
       Query: {
         ...additionalResolvers.Query,
         ...commentsResolvers.Query,
+        ...donationsResolvers.Query,
       },
       Mutation: {
         ...commentsResolvers.Mutation,

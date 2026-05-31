@@ -1,5 +1,7 @@
 import { DonateAddress } from '../components/DonateAddress'
 import { useSafeBalances, ETH_PRICE_USD } from '../hooks/useSafeBalances'
+import { useDonations } from '../hooks/useDonations'
+import { DonationsTimeline } from '../components/DonationsTimeline'
 
 // ─── edit this to reflect the current yearly running cost ────────────────────
 const YEARLY_GOAL_USD = 1_500
@@ -7,6 +9,14 @@ const YEARLY_GOAL_USD = 1_500
 
 export function Donations() {
   const { data, isLoading, isError } = useSafeBalances()
+  const {
+    donations,
+    isLoading: donationsLoading,
+    isError: donationsError,
+    hasMore,
+    loadMore,
+    isFetchingMore,
+  } = useDonations()
 
   const totalUsd = data?.totalUsd ?? 0
   const rawPct = YEARLY_GOAL_USD > 0 ? (totalUsd / YEARLY_GOAL_USD) * 100 : 0
@@ -42,7 +52,7 @@ export function Donations() {
         </p>
       </section>
 
-      {/* Yearly goal progress bar */}
+      {/* Yearly goal progress bar — UNTOUCHED */}
       <section className="border-2 border-black p-4 sm:p-6 space-y-4">
         <div className="flex items-baseline justify-between gap-2 flex-wrap">
           <h2 className="font-black uppercase tracking-tighter text-xl leading-none">
@@ -132,6 +142,28 @@ export function Donations() {
         </p>
       </section>
 
+      {/* ------------------------------------------------------------------ */}
+      {/* Donations timeline — added below the existing section (untouched)  */}
+      {/* ------------------------------------------------------------------ */}
+      <section className="border-2 border-black p-4 sm:p-6 space-y-4">
+        <div className="flex items-baseline justify-between gap-2 flex-wrap">
+          <h2 className="font-black uppercase tracking-tighter text-xl leading-none">
+            donor timeline
+          </h2>
+          <span className="text-xs uppercase tracking-widest text-neutral-400">
+            [onchain donations, newest first]
+          </span>
+        </div>
+
+        <DonationsTimeline
+          donations={donations}
+          isLoading={donationsLoading}
+          isError={donationsError}
+          hasMore={hasMore}
+          onLoadMore={loadMore}
+          isFetchingMore={isFetchingMore}
+        />
+      </section>
     </article>
   )
 }
