@@ -20,7 +20,7 @@ mock.module('../hooks/useEnsLookup', () => ({
 const { AddressLabel } = await import('./AddressLabel')
 
 const JERRY_ADDR = '0xe0396d6d738e726d39f96099b8f6a55d11184374'
-const JERRY_NAME = "JerryTheKid's Relayer"
+const JERRY_NAME = "JerryTheKid.eth's Relayer"
 
 function renderLabel(props: { addr: string; chainSlug?: string; full?: boolean; ens?: boolean }) {
   return render(
