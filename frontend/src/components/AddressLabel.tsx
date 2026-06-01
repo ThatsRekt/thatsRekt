@@ -1,185 +1,59 @@
-import { useState } from 'react'
-import { shortAddress } from '../lib/format'
-import { explorerAddressUrl, getChainBySlug } from '../lib/chains'
-import { useEnsLookup } from '../hooks/useEnsLookup'
-import { lookupContributor, lookupContributorGlobal } from '../lib/contributors'
+/**
+ * AddressLabel — wagmi-free public API component.
+ *
+ * On first paint the homepage renders immediately with contributor names
+ * (when registered) or truncated hex addresses. There is ZERO static wagmi
+ * import in this module — the ENS resolution lives in `AddressLabelEns.tsx`
+ * which is lazy-loaded only AFTER the wallet runtime is ready.
+ *
+ * ENS swap-in: once `walletReady` is true (WalletRuntime mounted + WagmiProvider
+ * in scope), the lazy `AddressLabelEns` chunk loads and addresses in the feed
+ * that are still on screen show their ENS primary names with no second click
+ * required.
+ *
+ * The Suspense fallback is the wagmi-free `AddressLabelCore` (same as the
+ * initial render), so there is no layout shift.
+ */
 
-interface AddressLabelProps {
-  addr: string
-  /** When set, the explorer icon links to this chain's block explorer. */
-  chainSlug?: string
-  full?: boolean
-  /**
-   * When true (default), show the ENS primary name (if one resolves on
-   * mainnet) instead of the hex address. Copy + explorer link still
-   * operate on the underlying address. Set false for contexts where
-   * the literal hex IS the point — e.g. the /docs deployments table
-   * for the canonical proxy, or low-level governance role displays.
-   */
-  ens?: boolean
-}
+import { lazy, Suspense } from 'react'
+import { useWalletReady } from '../wallet/WalletContext'
+import { AddressLabelCore, type AddressLabelCoreProps } from './AddressLabelCore'
+
+// AddressLabelEns is the ONLY module in this import graph that references wagmi.
+// React.lazy ensures rollup places it in the async wagmi chunk, not in the
+// homepage entry chunk.
+const LazyAddressLabelEns = lazy(() => import('./AddressLabelEns'))
+
+export type { AddressLabelCoreProps as AddressLabelProps }
 
 /**
  * Address with mobile-friendly affordances:
- *   - ENS-aware text — shows `vitalik.eth` instead of the hex address
- *     when one resolves on mainnet (caching handled by `useEnsLookup`).
+ *   - ENS-aware text — shows `vitalik.eth` instead of the hex address once
+ *     the wallet runtime loads (async, no first-paint delay). Contributor
+ *     aliases always show immediately (no wagmi dependency).
  *   - Copy icon button — always copies the *raw address*, even when an
- *     ENS name is shown. Tap target ≥ 28px.
+ *     ENS name is shown. Tap target >= 28px.
  *   - Explorer icon link — always points to the *raw address* on the
  *     chain's block explorer.
- *   - The displayed text is tappable too (also copies the address) for
- *     convenience.
+ *   - The displayed text is tappable too (also copies the address).
  *
  * Icons are inline SVG so the component has no asset dependency.
  */
-export function AddressLabel({ addr, chainSlug, full = false, ens = true }: AddressLabelProps) {
-  const [copied, setCopied] = useState(false)
-  const chain = chainSlug ? getChainBySlug(chainSlug) : undefined
-  const explorerUrl = chain ? explorerAddressUrl(chain, addr) : null
+export function AddressLabel(props: AddressLabelCoreProps) {
+  const walletReady = useWalletReady()
 
-  // Cast safe: any string starting with "0x" passed in is operationally
-  // a 20-byte hex; the type is loose because callers pass strings from
-  // GraphQL responses without runtime parsing.
-  const { name: ensName } = useEnsLookup(
-    /^0x[0-9a-fA-F]{40}$/.test(addr) ? (addr as `0x${string}`) : undefined,
-  )
-
-  // Resolve contributor alias. The lookup helpers lowercase the address
-  // internally, so callers can pass any-case hex.
-  const contributor = chainSlug
-    ? lookupContributor(chainSlug, addr)
-    : lookupContributorGlobal(addr)
-
-  // What text to display in the primary tappable button. Priority:
-  //   1. Contributor name (human-readable alias) when registered.
-  //   2. ENS name when present + opted in.
-  //   3. Full hex when explicitly requested (e.g. inside modals).
-  //   4. Truncated hex (default for inline usage).
-  //
-  // Copy + explorer always operate on the raw `addr` regardless of which
-  // display form is active.
-  const displayText = contributor
-    ? contributor.name
-    : ensName && ens
-      ? ensName
-      : full
-        ? addr
-        : shortAddress(addr)
-
-  const onCopy = async () => {
-    try {
-      await navigator.clipboard.writeText(addr)
-      setCopied(true)
-      setTimeout(() => setCopied(false), 1200)
-    } catch {
-      // older browsers / non-secure contexts: no-op (user can long-press to select)
-    }
+  // Before the wagmi chunk loads: render immediately with ensName=null.
+  // Contributor names and truncated hex are shown at once.
+  if (!walletReady) {
+    return <AddressLabelCore {...props} ensName={null} />
   }
 
+  // After wallet runtime loads: swap in the ENS-resolving version.
+  // Suspense fallback is the plain core so there is no layout shift
+  // during the brief async chunk fetch.
   return (
-    // flex-wrap so the address text can wrap to a second line on narrow
-    // viewports while the icons stay grouped at the end. Without this,
-    // a 42-char full address would force horizontal scroll on phones.
-    <span className="inline-flex flex-wrap items-center gap-1.5 align-middle max-w-full">
-      <button
-        type="button"
-        onClick={onCopy}
-        title={copied ? 'copied!' : `copy ${addr}`}
-        aria-label={`Copy address ${addr}`}
-        className={
-          'font-mono text-sm hover:bg-yellow-100 active:bg-yellow-200 px-1 -mx-0.5 rounded transition-colors cursor-pointer touch-manipulation min-w-0 ' +
-          // break-all only when showing the full hex with no alias.
-          // Contributor names, ENS names, and short addresses are short
-          // enough not to need wrapping.
-          (full && !contributor && !ensName ? 'break-all text-left' : 'whitespace-nowrap')
-        }
-      >
-        {displayText}
-      </button>
-      {/* Icons sit in a single nested flex row so they ALWAYS wrap as
-          a unit. Without this nesting, the outer flex-wrap could put
-          the copy icon on one line and the explorer icon on another. */}
-      <span className="inline-flex items-center gap-1.5 shrink-0 whitespace-nowrap">
-        <button
-          type="button"
-          onClick={onCopy}
-          title={copied ? 'copied!' : 'copy address'}
-          aria-label="Copy address"
-          className="inline-flex items-center justify-center w-7 h-7 -my-1 text-neutral-500 hover:text-black active:text-red-600 active:bg-yellow-200 rounded transition-colors touch-manipulation"
-        >
-          {copied ? <CheckIcon /> : <CopyIcon />}
-        </button>
-        {explorerUrl && (
-          <a
-            href={explorerUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            title={`open on ${chain?.name ?? 'block explorer'}`}
-            aria-label="Open in block explorer"
-            className="inline-flex items-center justify-center w-7 h-7 -my-1 text-neutral-500 hover:text-red-600 active:text-red-700 rounded transition-colors touch-manipulation"
-          >
-            <ExternalLinkIcon />
-          </a>
-        )}
-      </span>
-    </span>
-  )
-}
-
-// --- icons (heroicons mini, inlined) ----------------------------------------
-
-function CopyIcon() {
-  return (
-    <svg
-      xmlns="http://www.w3.org/2000/svg"
-      viewBox="0 0 20 20"
-      fill="currentColor"
-      className="w-4 h-4"
-      aria-hidden="true"
-    >
-      <path d="M7 3.5A1.5 1.5 0 018.5 2h3.879a1.5 1.5 0 011.06.44l3.122 3.12A1.5 1.5 0 0117 6.622V12.5a1.5 1.5 0 01-1.5 1.5h-1v-3.379a3 3 0 00-.879-2.121L10.5 5.379A3 3 0 008.379 4.5H7v-1z" />
-      <path d="M4.5 6A1.5 1.5 0 003 7.5v9A1.5 1.5 0 004.5 18h7a1.5 1.5 0 001.5-1.5v-5.879a1.5 1.5 0 00-.44-1.06L9.44 6.439A1.5 1.5 0 008.378 6H4.5z" />
-    </svg>
-  )
-}
-
-function CheckIcon() {
-  return (
-    <svg
-      xmlns="http://www.w3.org/2000/svg"
-      viewBox="0 0 20 20"
-      fill="currentColor"
-      className="w-4 h-4 text-emerald-600"
-      aria-hidden="true"
-    >
-      <path
-        fillRule="evenodd"
-        d="M16.704 4.153a.75.75 0 01.143 1.052l-8 10.5a.75.75 0 01-1.127.075l-4.5-4.5a.75.75 0 011.06-1.06l3.894 3.893 7.48-9.817a.75.75 0 011.05-.143z"
-        clipRule="evenodd"
-      />
-    </svg>
-  )
-}
-
-function ExternalLinkIcon() {
-  return (
-    <svg
-      xmlns="http://www.w3.org/2000/svg"
-      viewBox="0 0 20 20"
-      fill="currentColor"
-      className="w-4 h-4"
-      aria-hidden="true"
-    >
-      <path
-        fillRule="evenodd"
-        d="M4.25 5.5a.75.75 0 00-.75.75v8.5c0 .414.336.75.75.75h8.5a.75.75 0 00.75-.75v-4a.75.75 0 011.5 0v4A2.25 2.25 0 0112.75 17h-8.5A2.25 2.25 0 012 14.75v-8.5A2.25 2.25 0 014.25 4h5a.75.75 0 010 1.5h-5z"
-        clipRule="evenodd"
-      />
-      <path
-        fillRule="evenodd"
-        d="M6.194 12.753a.75.75 0 001.06.053L16.5 4.44v2.81a.75.75 0 001.5 0v-4.5a.75.75 0 00-.75-.75h-4.5a.75.75 0 000 1.5h2.553l-9.056 8.194a.75.75 0 00-.053 1.06z"
-        clipRule="evenodd"
-      />
-    </svg>
+    <Suspense fallback={<AddressLabelCore {...props} ensName={null} />}>
+      <LazyAddressLabelEns {...props} />
+    </Suspense>
   )
 }

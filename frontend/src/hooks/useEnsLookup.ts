@@ -10,23 +10,23 @@ import { mainnet } from 'wagmi/chains'
  * chain the address is actually active on (so the same address on Base
  * still gets its mainnet ENS name).
  *
+ * **Import constraint**: this hook is only ever imported from modules that
+ * live behind the wagmi lazy boundary (AddressLabelEns, PostAlertButtonLive,
+ * AccountChipLive, etc.). Never import this hook from a module that is
+ * reachable from the homepage entry chunk — it would anchor the entire wagmi
+ * import graph to the critical path.
+ *
+ * WagmiProvider is guaranteed to be mounted whenever this hook is called,
+ * so no `useWalletReady` guard is needed here.
+ *
  * Caching strategy:
  *   - `staleTime: Infinity` — once resolved, never re-query for this
  *     address during the session. ENS primary names change rarely
  *     (manual `setName` tx on mainnet) and the cost of stale data is
- *     just showing the prior name briefly. A re-render of an
- *     AddressLabel won't trigger any RPC call after the first.
+ *     just showing the prior name briefly.
  *   - `gcTime: 1 day` — keep entries alive for 24h of inactivity so a
  *     user navigating between pages doesn't re-resolve familiar
- *     addresses. After 24h idle, the entry is GC'd and re-fetched on
- *     next view.
- *
- * Cross-session persistence (ie. survives a hard reload) is NOT enabled
- * here. ENS lookups via the routeme.sh load balancer are fast (~100ms
- * cold) and adding `localStorage`-backed persistence for the whole
- * TanStack Query cache is a bigger change than this PR warrants. If the
- * cold path becomes a problem, swap in `@tanstack/query-sync-storage-persister`
- * later.
+ *     addresses.
  */
 export function useEnsLookup(address: `0x${string}` | undefined | null) {
   const { data: name, isLoading } = useEnsName({

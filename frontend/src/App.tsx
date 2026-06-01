@@ -30,7 +30,11 @@ const Donations = lazy(() =>
   import('./pages/Donations').then((m) => ({ default: m.Donations })),
 )
 import { useHasPosts } from './hooks/useHasPosts'
-import { useDisconnectIfNotWhitelisted } from './hooks/useDisconnectIfNotWhitelisted'
+// NOTE: useDisconnectIfNotWhitelisted has been moved to WalletRuntime.tsx.
+// It requires WagmiProvider in its ancestor tree, so it must live inside
+// the lazy WalletBoundary, not at the App root which may render before the
+// WagmiProvider mounts. App.tsx is still inside WalletBoundary (via main.tsx),
+// but keeping the guard close to the provider makes the dependency explicit.
 import { PostAlertButton, AccountChip } from './components/PostAlertButton'
 import { GetAlertsButton } from './components/TgChannelCTA'
 import { Footer } from './components/Footer'
@@ -59,11 +63,6 @@ const LEADERBOARD_ENABLED = false
 const HARD_DISABLED_ROUTES = new Set(LEADERBOARD_ENABLED ? [] : ['/leaderboard'])
 
 export function App() {
-  // Security UX: if a connected wallet isn't whitelisted on any chain,
-  // disconnect it. Mounted once at the App root so it covers every
-  // entry path (gate modals, AccountChip auto-reconnect, deeplinks).
-  useDisconnectIfNotWhitelisted()
-
   return (
     <>
       <ScrollManager />

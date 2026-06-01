@@ -1,205 +1,98 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
-import { useEnsLookup } from '../hooks/useEnsLookup'
-import { useAccount, useDisconnect } from 'wagmi'
-import { useIsWhitelisted } from '../hooks/useIsWhitelisted'
-import { WhitelistGateModal } from './WhitelistGateModal'
-import { PostFormModal } from './PostFormModal'
-import { chainsWithRegistry } from '../lib/contracts'
+/**
+ * PostAlertButton + AccountChip — lazy wrappers for the wagmi-dependent
+ * header wallet UI.
+ *
+ * On first paint the wallet runtime (wagmi + viem + connectors) is not yet
+ * loaded. These wrappers show stub UI (a disabled "report" button, nothing
+ * for the account chip) until WalletRuntime resolves, then swap in the full
+ * interactive versions from PostAlertButtonLive.tsx.
+ *
+ * The Live module contains all wagmi imports (useAccount, useDisconnect,
+ * useIsWhitelisted, useConnect, useEnsLookup) — they land in the wagmi
+ * async chunk, NOT the homepage-critical bundle.
+ */
+
+import { lazy, Suspense } from 'react'
+import { useWalletReady } from '../wallet/WalletContext'
+
+// React.lazy requires a default export.
+// We create two separate lazy loaders, each re-exporting one named export
+// as the default.  Both reference the same module so rollup merges them.
+const PostAlertButtonLiveComponent = lazy(
+  () => import('./PostAlertButtonLive').then((m) => ({ default: m.PostAlertButtonLive })),
+)
+const AccountChipLiveComponent = lazy(
+  () => import('./PostAlertButtonLive').then((m) => ({ default: m.AccountChipLive })),
+)
+
+// ---------------------------------------------------------------------------
+// PostAlertButton
+// ---------------------------------------------------------------------------
+
+/** Stub shown while the wallet runtime is loading. */
+function PostAlertButtonStub({
+  variant = 'desktop',
+}: {
+  variant?: 'desktop' | 'mobile'
+}) {
+  return (
+    <button
+      type="button"
+      disabled
+      aria-label="report attack"
+      className={
+        variant === 'desktop'
+          ? 'inline-flex items-center gap-1 whitespace-nowrap border-2 border-red-600 bg-red-600 text-white px-3 py-1 text-[11px] uppercase tracking-widest font-black opacity-70 cursor-not-allowed'
+          : 'block w-full text-left px-4 py-3 text-sm uppercase tracking-widest font-black bg-red-600 text-white opacity-70 cursor-not-allowed'
+      }
+    >
+      report
+    </button>
+  )
+}
 
 /**
- * Header-mounted "Post" CTA. Two-modal flow:
- *
- *   - **Gate modal** (`WhitelistGateModal`) handles connect + the
- *     "not whitelisted, here's how to apply" panel.
- *   - **Composer modal** (`PostFormModal`) is the actual onchain post
- *     form, scoped to the chains the user is whitelisted on.
- *
- * Click matrix:
- *
- *   1. **Disconnected.** → opens gate (connector picker). Once a
- *      connector succeeds AND the per-chain whitelist read settles in
- *      the user's favor, the gate auto-closes and the composer auto-
- *      opens — operator requirement: no second click.
- *   2. **Connected, whitelisted.** → opens composer directly.
- *   3. **Connected, not whitelisted.** → opens gate; the gate's own
- *      panel logic shows the "become a guardian" /apply link.
- *
- * Visual: red-fill button, matches the `REKT` brand accent.
+ * Header "report attack" button.
+ * Shows a disabled stub until wagmi loads, then swaps to the interactive
+ * version (PostAlertButtonLive) which handles connect → whitelist → compose.
  */
 export function PostAlertButton({
   variant = 'desktop',
   onAfterClick,
 }: {
-  /** `desktop` for the header strip; `mobile` for inside the mobile menu */
-  variant?: 'desktop' | 'mobile'
-  /** invoked after the button is clicked — used by mobile menu to close itself */
-  onAfterClick?: () => void
+  readonly variant?: 'desktop' | 'mobile'
+  readonly onAfterClick?: () => void
 }) {
-  // Single state machine for the two-modal flow. Encoding mutual
-  // exclusion at the type level (rather than as two booleans we promise
-  // never to both set true) means there is no representable state with
-  // both modals open — closes the L-2 audit finding about relying on
-  // React 18's automatic batching for the gate→composer transition.
-  type ModalMode = 'closed' | 'gate' | 'composer'
-  const [mode, setMode] = useState<ModalMode>('closed')
-  const gateOpen = mode === 'gate'
-  const composerOpen = mode === 'composer'
+  const walletReady = useWalletReady()
 
-  const { address, isConnected } = useAccount()
-  const {
-    isWhitelisted,
-    isLoading: isCheckingWhitelist,
-    perChain,
-  } = useIsWhitelisted(address)
-
-  // Chains the user is currently whitelisted on. Filtering on `=== true`
-  // (not truthy) deliberately excludes `undefined` (read still in flight)
-  // and `false`. Recomputed on every render — `perChain` is a small
-  // record (2 entries today), so the cost is negligible.
-  const chainsAvailable = useMemo(
-    () => chainsWithRegistry().filter((id) => perChain[id] === true),
-    [perChain],
-  )
-
-  // Auto-promote from gate → composer once the post-connect whitelist
-  // read resolves true. This replaces the old "silent close" effect:
-  // the gate goes away AND the composer opens in the same tick (single
-  // setState call now, not two), so the user clicks "post" once and
-  // sees the form (operator requirement).
-  useEffect(() => {
-    if (
-      mode === 'gate' &&
-      isConnected &&
-      !isCheckingWhitelist &&
-      isWhitelisted &&
-      chainsAvailable.length > 0
-    ) {
-      setMode('composer')
-    }
-  }, [mode, isConnected, isCheckingWhitelist, isWhitelisted, chainsAvailable.length])
-
-  const handleClick = () => {
-    onAfterClick?.()
-    // Fast path: already connected + whitelisted + we know which chain(s)
-    // → straight to the composer, no gate flash.
-    if (isConnected && isWhitelisted && chainsAvailable.length > 0) {
-      setMode('composer')
-      return
-    }
-    // Otherwise route through the gate. The gate handles connect AND the
-    // not-whitelisted panel; the auto-promote effect above will swap to
-    // the composer once the read settles in our favor (e.g. user just
-    // connected and the per-chain reads are still in flight).
-    setMode('gate')
+  if (!walletReady) {
+    return <PostAlertButtonStub variant={variant} />
   }
 
   return (
-    <>
-      <button
-        type="button"
-        onClick={handleClick}
-        className={
-          variant === 'desktop'
-            ? 'inline-flex items-center gap-1 whitespace-nowrap border-2 border-red-600 bg-red-600 text-white px-3 py-1 text-[11px] uppercase tracking-widest font-black hover:bg-red-700 hover:border-red-700 transition-colors focus:outline-none focus:ring-2 focus:ring-red-600 focus:ring-offset-1'
-            : 'block w-full text-left px-4 py-3 text-sm uppercase tracking-widest font-black bg-red-600 text-white hover:bg-red-700 active:bg-red-800 transition-colors'
-        }
-        aria-label="report attack"
-      >
-        report
-      </button>
-      <WhitelistGateModal
-        open={gateOpen}
-        onClose={() => setMode('closed')}
-        isConnected={isConnected}
-        address={address}
-        isCheckingWhitelist={isCheckingWhitelist}
-        isWhitelisted={isWhitelisted}
-        title="[report attack]"
-        // No `whenWhitelisted` slot: the auto-promote effect above does
-        // the work — gate closes, composer opens — so the user never
-        // needs an interstitial "ready to post" panel.
-      />
-      <PostFormModal
-        open={composerOpen}
-        onClose={() => setMode('closed')}
-        whitelistedChains={chainsAvailable}
-      />
-    </>
+    <Suspense fallback={<PostAlertButtonStub variant={variant} />}>
+      <PostAlertButtonLiveComponent variant={variant} onAfterClick={onAfterClick} />
+    </Suspense>
   )
 }
+
+// ---------------------------------------------------------------------------
+// AccountChip
+// ---------------------------------------------------------------------------
 
 /**
- * Compact account display + disconnect dropdown for the header.
- * Visible only when a wallet is connected; replaces nothing — sits
- * next to the Post button and the nav.
- *
- * Shows the ENS primary name when one resolves on mainnet (cached via
- * `useEnsLookup`), otherwise truncated hex. The disconnect dropdown
- * always uses the underlying address so users can still verify they're
- * disconnecting the right account.
+ * Connected-wallet display chip for the header.
+ * Returns null while wagmi is loading (AccountChipLive already returns null
+ * when disconnected, so the visual effect is identical — nothing shown).
  */
 export function AccountChip() {
-  const { address, isConnected } = useAccount()
-  const { disconnect } = useDisconnect()
-  const { name: ensName } = useEnsLookup(address)
-  const [open, setOpen] = useState(false)
-  const wrapperRef = useRef<HTMLDivElement>(null)
+  const walletReady = useWalletReady()
 
-  // Close on click outside / Escape.
-  useEffect(() => {
-    if (!open) return
-    const onPointer = (e: PointerEvent) => {
-      if (wrapperRef.current && !wrapperRef.current.contains(e.target as Node)) {
-        setOpen(false)
-      }
-    }
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setOpen(false)
-    }
-    document.addEventListener('pointerdown', onPointer)
-    document.addEventListener('keydown', onKey)
-    return () => {
-      document.removeEventListener('pointerdown', onPointer)
-      document.removeEventListener('keydown', onKey)
-    }
-  }, [open])
-
-  if (!isConnected || !address) return null
+  if (!walletReady) return null
 
   return (
-    <div ref={wrapperRef} className="relative">
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        aria-haspopup="menu"
-        aria-expanded={open}
-        title={address}
-        className="inline-flex items-center gap-1 border-2 border-black bg-[#f5f4ee] px-2 py-1 text-[10px] uppercase tracking-widest font-mono hover:bg-yellow-100 transition-colors"
-      >
-        {ensName ?? truncate(address)}
-        <span aria-hidden="true" className="text-[9px]">▾</span>
-      </button>
-      {open && (
-        <div
-          role="menu"
-          className="absolute right-0 top-full z-30 mt-1 w-44 border-2 border-black bg-[#f5f4ee] shadow-[4px_4px_0_0_#000]"
-        >
-          <button
-            type="button"
-            onClick={() => {
-              disconnect()
-              setOpen(false)
-            }}
-            className="block w-full text-left px-3 py-2 text-xs uppercase tracking-widest font-black hover:bg-yellow-100"
-          >
-            disconnect
-          </button>
-        </div>
-      )}
-    </div>
+    <Suspense fallback={null}>
+      <AccountChipLiveComponent />
+    </Suspense>
   )
-}
-
-function truncate(addr: `0x${string}`): string {
-  return `${addr.slice(0, 6)}…${addr.slice(-4)}`
 }

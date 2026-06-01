@@ -73,16 +73,20 @@ mock.module('../src/components/WhitelistGateModal', () => ({
 // ---------------------------------------------------------------------------
 // Import component AFTER mocks are registered.
 // ---------------------------------------------------------------------------
+// Import ConfirmVoteButtonsLive directly (bypasses the lazy wrapper) — this
+// is the component that owns the error display we're testing. The lazy
+// wrapper (ConfirmVoteButtons) conditionally renders a read-only stub when
+// walletReady=false; tests for that boundary live in WalletBoundary.test.tsx.
 // eslint-disable-next-line import/first
-import { ConfirmVoteButtons } from '../src/components/ConfirmVoteButtons'
+import { ConfirmVoteButtonsLive } from '../src/components/ConfirmVoteButtonsLive'
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-function renderButtons(props: Partial<Parameters<typeof ConfirmVoteButtons>[0]> = {}) {
+function renderButtons(props: Partial<Parameters<typeof ConfirmVoteButtonsLive>[0]> = {}) {
   return render(
-    React.createElement(ConfirmVoteButtons, {
+    React.createElement(ConfirmVoteButtonsLive, {
       chainId: 1,
       postId: 7n,
       upCount: 3,

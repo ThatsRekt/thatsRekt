@@ -102,14 +102,18 @@ export default defineConfig({
           react: ['react', 'react-dom', 'react-router-dom'],
           // Data-fetching layer — needed everywhere.
           query: ['@tanstack/react-query', 'graphql-request'],
-          // Wallet / chain interaction — heavy but only needed for
-          // the connect + vote / post flows. Deferred from main chunk
-          // via this explicit split so it doesn't inflate first load.
-          wagmi: ['wagmi', 'viem'],
           // Markdown rendering — pulled into a separate async chunk.
           // React.lazy in LazyMarkdown.tsx ensures this never rides
           // the homepage-critical JS path.
           markdown: ['react-markdown', 'remark-gfm'],
+          // NOTE: wagmi/viem are intentionally NOT in manualChunks.
+          // They are only reachable via React.lazy dynamic imports
+          // (WalletRuntime, AddressLabelEns, PostAlertButtonLive, etc.)
+          // so rollup naturally places them in async chunks. Declaring
+          // them in manualChunks would anchor Vite's module-preload helper
+          // to that chunk, causing the browser to modulepreload the entire
+          // wagmi/viem bundle (~97 KB gzip) on first paint — defeating the
+          // deferral. Natural code-split = async-only, no preload.
         },
       },
     },
