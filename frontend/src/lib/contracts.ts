@@ -1,3 +1,5 @@
+import { visibleChains } from './chains'
+
 /**
  * Onchain registry contract handles.
  *
@@ -44,6 +46,31 @@ export const registryAddress = (
 /** Chain IDs with a deployed registry, in display order. */
 export const chainsWithRegistry = (): readonly SupportedChainId[] =>
   [1, 8453, 42161, 10, 84532] as const
+
+/**
+ * Chains the "report attack" composer may post to *right now*. Pure —
+ * derives the chain-picker list from three AND-ed filters:
+ *
+ *   1. **deployed registry** — `chainsWithRegistry()`. Can't post where
+ *      there's no contract.
+ *   2. **build-visible** — `visibleChains()`. Reuses the FE-wide testnet
+ *      gate (`VITE_SHOW_TESTNETS`): Base Sepolia is hidden in production
+ *      and surfaced only in dev/staging, exactly as the chain selector,
+ *      live feed, etc. already behave. A testnet "report attack" option
+ *      in prod is noise.
+ *   3. **whitelisted** — `perChain[id] === true`. Strict `=== true` so an
+ *      in-flight read (`undefined`) or an explicit `false` both drop out.
+ *
+ * Display order follows `chainsWithRegistry()`.
+ */
+export const postableChainIds = (
+  perChain: Readonly<Record<number, boolean | undefined>>,
+): readonly SupportedChainId[] => {
+  const visible = new Set(visibleChains().map((c) => c.chainId))
+  return chainsWithRegistry().filter(
+    (id) => visible.has(id) && perChain[id] === true,
+  )
+}
 
 /**
  * @deprecated Use `registryAddress(chainId)` instead. This still resolves to
