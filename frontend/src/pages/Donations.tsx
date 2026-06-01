@@ -181,6 +181,10 @@ export function Donations() {
           sortState={sortState}
           onSort={handleSort}
         />
+
+        <p className="text-[10px] uppercase tracking-widest text-neutral-400 border-t border-neutral-200 pt-3">
+          indexed onchain every ~30 min · new donations may take up to 30 minutes to appear here
+        </p>
       </section>
     </article>
   )
