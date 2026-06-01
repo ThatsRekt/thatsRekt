@@ -13,7 +13,7 @@ import {
 import { AddressLabel } from './AddressLabel'
 import { ChainBadge } from './ChainBadge'
 import { ConfirmVoteButtons } from './ConfirmVoteButtons'
-import { Markdown } from './Markdown'
+import { LazyMarkdown } from './LazyMarkdown'
 import { ShareButton } from './ShareButton'
 
 /**
@@ -245,7 +245,7 @@ function ArchiveChip() {
 function NotePreview({ body }: { body: string }) {
   return (
     <div className="relative max-h-24 overflow-hidden">
-      <Markdown source={body} compact />
+      <LazyMarkdown source={body} compact />
       <div
         aria-hidden="true"
         className="pointer-events-none absolute inset-x-0 bottom-0 h-3 bg-gradient-to-t from-[#f5f4ee] to-transparent"

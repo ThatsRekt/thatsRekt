@@ -8,7 +8,7 @@ import { AddressLabel } from '../components/AddressLabel'
 import { ArchiveDetail } from '../components/ArchiveDetail'
 import { ChainBadge } from '../components/ChainBadge'
 import { CommentThread } from '../components/CommentThread'
-import { Markdown } from '../components/Markdown'
+import { LazyMarkdown } from '../components/LazyMarkdown'
 import { ShareButton } from '../components/ShareButton'
 import { ConfirmVoteButtons } from '../components/ConfirmVoteButtons'
 import { Timeline } from '../components/Timeline'
@@ -263,7 +263,7 @@ function LivePostDetail({ postId }: { postId: string }) {
         <section>
           <SectionLabel>note</SectionLabel>
           <div className="mt-3">
-            <Markdown source={data.note} />
+            <LazyMarkdown source={data.note} />
           </div>
         </section>
       )}

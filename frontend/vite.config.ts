@@ -1,5 +1,8 @@
 import { defineConfig, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
+// Visualizer is a devDependency only; import unconditionally but gate
+// its activation on the ANALYZE env var at runtime.
+import { visualizer } from 'rollup-plugin-visualizer'
 
 // Build config:
 //   - base: '/'  absolute asset URLs. Required because the SPA uses
@@ -63,9 +66,31 @@ const prodTurnstileSiteKeyGuard = (): Plugin => ({
   },
 })
 
+// ---------------------------------------------------------------------------
+// Bundle visualizer (ANALYZE=1 bun run build)
+//
+// Emits dist/stats.html — an interactive treemap showing which modules
+// land in which chunks. Gated on ANALYZE so normal builds are unaffected.
+// Usage: ANALYZE=1 bun run build && open dist/stats.html
+// ---------------------------------------------------------------------------
+const maybeVisualizer = (): Plugin | null => {
+  if (!process.env.ANALYZE) return null
+  return visualizer({
+    filename: 'dist/stats.html',
+    open: false,
+    gzipSize: true,
+    brotliSize: false,
+    template: 'treemap',
+  }) as Plugin
+}
+
 export default defineConfig({
   base: '/',
-  plugins: [react(), prodTurnstileSiteKeyGuard()],
+  plugins: [
+    react(),
+    prodTurnstileSiteKeyGuard(),
+    ...(maybeVisualizer() ? [maybeVisualizer() as Plugin] : []),
+  ],
   build: {
     outDir: 'dist',
     sourcemap: false,
@@ -73,8 +98,18 @@ export default defineConfig({
     rollupOptions: {
       output: {
         manualChunks: {
+          // Core React runtime — loaded on every page.
           react: ['react', 'react-dom', 'react-router-dom'],
+          // Data-fetching layer — needed everywhere.
           query: ['@tanstack/react-query', 'graphql-request'],
+          // Wallet / chain interaction — heavy but only needed for
+          // the connect + vote / post flows. Deferred from main chunk
+          // via this explicit split so it doesn't inflate first load.
+          wagmi: ['wagmi', 'viem'],
+          // Markdown rendering — pulled into a separate async chunk.
+          // React.lazy in LazyMarkdown.tsx ensures this never rides
+          // the homepage-critical JS path.
+          markdown: ['react-markdown', 'remark-gfm'],
         },
       },
     },

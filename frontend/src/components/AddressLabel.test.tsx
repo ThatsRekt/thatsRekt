@@ -2,7 +2,7 @@
  * Tests for AddressLabel contributor-name resolution (issue #151 change 3).
  *
  * AddressLabel must:
- *   1. Display the contributor name for a known address (JerryTheKid's Relayer).
+ *   1. Display the contributor name for a known address (JerryTheKid.eth's Relayer).
  *   2. Copy aria-label references the raw hex address so copy still operates on hex.
  *   3. Lookup is case-insensitive.
  *   4. Unknown address falls back to short hex (no contributor label).
@@ -31,7 +31,7 @@ function renderLabel(props: { addr: string; chainSlug?: string; full?: boolean; 
 }
 
 describe('AddressLabel — contributor name resolution', () => {
-  it("displays JerryTheKid's Relayer for the known guardian address", () => {
+  it("displays JerryTheKid.eth's Relayer for the known guardian address", () => {
     const { container } = renderLabel({ addr: JERRY_ADDR })
     expect(container.textContent).toContain(JERRY_NAME)
   })
