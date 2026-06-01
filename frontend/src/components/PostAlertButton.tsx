@@ -4,7 +4,7 @@ import { useAccount, useDisconnect } from 'wagmi'
 import { useIsWhitelisted } from '../hooks/useIsWhitelisted'
 import { WhitelistGateModal } from './WhitelistGateModal'
 import { PostFormModal } from './PostFormModal'
-import { chainsWithRegistry } from '../lib/contracts'
+import { postableChainIds } from '../lib/contracts'
 
 /**
  * Header-mounted "Post" CTA. Two-modal flow:
@@ -52,12 +52,12 @@ export function PostAlertButton({
     perChain,
   } = useIsWhitelisted(address)
 
-  // Chains the user is currently whitelisted on. Filtering on `=== true`
-  // (not truthy) deliberately excludes `undefined` (read still in flight)
-  // and `false`. Recomputed on every render — `perChain` is a small
-  // record (2 entries today), so the cost is negligible.
+  // Chains the composer may post to: deployed registry ∩ build-visible
+  // (testnets gated by VITE_SHOW_TESTNETS, mirroring the rest of the FE) ∩
+  // whitelisted (`=== true`, so an in-flight `undefined` read drops out).
+  // `postableChainIds` is pure; recomputing per `perChain` change is cheap.
   const chainsAvailable = useMemo(
-    () => chainsWithRegistry().filter((id) => perChain[id] === true),
+    () => postableChainIds(perChain),
     [perChain],
   )
 
