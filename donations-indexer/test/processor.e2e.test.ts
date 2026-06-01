@@ -98,9 +98,13 @@ const runCommand = (cmd: string, args: string[]): Promise<string> =>
   })
 
 /**
- * Run the processor as a child process, kill after timeoutMs.
- * The processor is a long-running service; we terminate it with SIGTERM
- * after giving it time to index all finalized blocks.
+ * Run the processor as a child process.
+ *
+ * The processor exits 0 on its own when it reaches head (bounded range).
+ * This helper asserts a clean self-exit (code 0). A SIGTERM fallback fires
+ * at timeoutMs as a safety net only — the test should NOT rely on it; if it
+ * fires and the process exits 143 it means the processor did not self-exit
+ * cleanly within the allotted time (a failure worth investigating).
  */
 const runProcessor = (env: Record<string, string>, timeoutMs: number): Promise<void> =>
   new Promise((resolve, reject) => {
@@ -120,19 +124,20 @@ const runProcessor = (env: Record<string, string>, timeoutMs: number): Promise<v
       stderrLines.push(chunk.toString())
     })
 
+    // Safety-net SIGTERM — should not fire in normal operation.
     const timer = setTimeout(() => {
       proc.kill('SIGTERM')
     }, timeoutMs)
 
     proc.on('close', (code) => {
       clearTimeout(timer)
-      // SIGTERM results in code null or 143 — both acceptable.
-      if (code === null || code === 0 || code === 143) {
+      // Processor self-exits with code 0 at head.
+      if (code === 0) {
         resolve()
       } else {
         reject(
           new Error(
-            `Processor exited unexpectedly with code ${code}\n` +
+            `Processor exited with code ${code} (expected 0 — clean self-exit at head).\n` +
               `stdout: ${stdoutLines.join('')}\n` +
               `stderr: ${stderrLines.join('')}`,
           ),
@@ -238,10 +243,11 @@ describe('processor e2e — anvil + real Postgres', () => {
       donationTxHash = hashMatch[1]!
 
       // Run the processor. It will ingest from startBlock, index the donation,
-      // write the cursor, then be killed by the timeout.
+      // write the cursor, then self-exit with code 0 at head.
       // FINALITY_CONFIRMATION=0: treat all blocks as final so the processor
       // does not enter hot-block mode (which requires HotDatabase). Safe for
       // local anvil testing — no reorgs, instant finality.
+      // DONEE_OVERRIDE: bypass ENS resolution — use the funded Safe directly.
       await runProcessor(
         {
           CHAIN_SLUG: 'ethereum',
@@ -249,6 +255,7 @@ describe('processor e2e — anvil + real Postgres', () => {
           DONATIONS_DB_URL: TEST_DB_URL,
           START_BLOCK_ETHEREUM: String(startBlock),
           FINALITY_CONFIRMATION: '0',
+          DONEE_OVERRIDE: DONATION_SAFE,
           // No GATEWAY_URL — RPC-only mode (Subsquid falls back to RPC).
         },
         15_000,
@@ -298,6 +305,7 @@ describe('processor e2e — anvil + real Postgres', () => {
           DONATIONS_DB_URL: TEST_DB_URL,
           START_BLOCK_ETHEREUM: String(startBlock),
           FINALITY_CONFIRMATION: '0',
+          DONEE_OVERRIDE: DONATION_SAFE,
         },
         10_000,
       )

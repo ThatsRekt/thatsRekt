@@ -247,7 +247,7 @@ const OPTIMISM_ERC20: Readonly<Record<string, TokenMeta>> = Object.freeze({
 // USDT  | 0x55d398326f99059ff775485246999027b3197955 |   18     | USDT
 // WBNB  | 0xbb4cdb9cbd36b01bd1cbaebf2de08d9173bc095c |   18     | WBNB
 // DAI   | 0x1af3f329e8be154074d8769d1ffa4ee058b1dbc3 |   18     | DAI
-// ETH   | 0x2170ed0880ac9a755fd29b2688956bd959f933f8 |   18     | ETH
+// WETH  | 0x2170ed0880ac9a755fd29b2688956bd959f933f8 |   18     | WETH (Binance-pegged; no canonical WETH on BSC)
 // BTCB  | 0x7130d2a12b9bcbfae4f2634d864a1ee1ce3ead9c |   18     | BTCB
 // LINK  | 0xf8a0bf9cf54bb92f17374d9e9a321e6a111a51bd |   18     | LINK
 // AAVE  | 0xfb6115445bff7b52feb98650c87f44907e58f802 |   18     | AAVE
@@ -268,8 +268,10 @@ const BSC_ERC20: Readonly<Record<string, TokenMeta>> = Object.freeze({
   '0xbb4cdb9cbd36b01bd1cbaebf2de08d9173bc095c': Object.freeze({ symbol: 'WBNB', decimals: 18 }),
   // DAI — 18 decimals (verified on-chain)
   '0x1af3f329e8be154074d8769d1ffa4ee058b1dbc3': Object.freeze({ symbol: 'DAI', decimals: 18 }),
-  // ETH (Binance-pegged Ether BEP20) — 18 decimals (verified on-chain)
-  '0x2170ed0880ac9a755fd29b2688956bd959f933f8': Object.freeze({ symbol: 'ETH', decimals: 18 }),
+  // WETH (Binance-pegged Ether BEP20) — 18 decimals (verified on-chain)
+  // Relabelled ETH→WETH: BSC has no canonical WETH; this token is a BEP20 wrapper,
+  // not native BNB, so WETH is more accurate than ETH here.
+  '0x2170ed0880ac9a755fd29b2688956bd959f933f8': Object.freeze({ symbol: 'WETH', decimals: 18 }),
   // BTCB (Binance-pegged Bitcoin BEP20) — 18 decimals (verified on-chain; NOT 8 like WBTC)
   '0x7130d2a12b9bcbfae4f2634d864a1ee1ce3ead9c': Object.freeze({ symbol: 'BTCB', decimals: 18 }),
   // LINK — 18 decimals (verified on-chain)

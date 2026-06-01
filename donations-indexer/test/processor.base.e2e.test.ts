@@ -146,19 +146,20 @@ const runProcessor = (env: Record<string, string>, timeoutMs: number): Promise<v
       stderrLines.push(chunk.toString())
     })
 
+    // Safety-net SIGTERM — should not fire in normal operation.
     const timer = setTimeout(() => {
       proc.kill('SIGTERM')
     }, timeoutMs)
 
     proc.on('close', (code) => {
       clearTimeout(timer)
-      // SIGTERM results in code null or 143 — both acceptable.
-      if (code === null || code === 0 || code === 143) {
+      // Processor self-exits with code 0 at head.
+      if (code === 0) {
         resolve()
       } else {
         reject(
           new Error(
-            `Processor exited unexpectedly with code ${code}\n` +
+            `Processor exited with code ${code} (expected 0 — clean self-exit at head).\n` +
               `stdout: ${stdoutLines.join('')}\n` +
               `stderr: ${stderrLines.join('')}`,
           ),
@@ -303,6 +304,7 @@ describe('processor Base e2e — anvil Base fork + real Postgres', () => {
   test(
     'run processor with CHAIN_SLUG=base — native ETH and USDC donation rows land',
     async () => {
+      // DONEE_OVERRIDE: bypass ENS resolution — use the funded Safe directly.
       await runProcessor(
         {
           CHAIN_SLUG: 'base',
@@ -310,6 +312,7 @@ describe('processor Base e2e — anvil Base fork + real Postgres', () => {
           DONATIONS_DB_URL: TEST_DB_URL,
           START_BLOCK_BASE: String(startBlock),
           FINALITY_CONFIRMATION: '0',
+          DONEE_OVERRIDE: DONATION_SAFE,
           // No GATEWAY_URL — RPC-only mode.
         },
         30_000,
@@ -424,6 +427,7 @@ describe('processor Base e2e — anvil Base fork + real Postgres', () => {
           DONATIONS_DB_URL: TEST_DB_URL,
           START_BLOCK_BASE: String(startBlock),
           FINALITY_CONFIRMATION: '0',
+          DONEE_OVERRIDE: DONATION_SAFE,
         },
         20_000,
       )

@@ -16,6 +16,9 @@
  * Slice #207: ERC20 Transfer log subscriptions added.
  * Slice #209: Multi-chain parameterization. Per-chain cursor isolation.
  *             Base, Arbitrum, Optimism, BSC, Polygon added.
+ * Slice #222: Dynamic ENS donee resolution via AddrChanged logs (mainnet).
+ *             Stop-at-head: bounded range → processor exits 0 after run.
+ *             DONEE_OVERRIDE env: deterministic donee for tests / ops.
  */
 
 import 'dotenv/config'
@@ -32,6 +35,7 @@ import { ensureDonationTable, upsertDonation } from './donationStore.js'
 import { mapNativeTransfer, mapErc20Transfer } from './donationMapper.js'
 import { erc20Addresses, TRANSFER_TOPIC0 } from './tokenAllowlist.js'
 import { chainConfigFor } from './chainConfig.js'
+import { resolveCurrentDonee } from './doneeResolver.js'
 
 const { Pool } = pkg
 
@@ -67,8 +71,12 @@ const { chainId: CHAIN_ID, slug: CHAIN_SLUG, rpcEnvKey, startBlockEnvKey } = cha
 const RPC_URL = requireEnv(rpcEnvKey)
 const DB_URL = requireEnv('DONATIONS_DB_URL')
 
-// The thatsrekt.eth Safe — canonical donation address on every supported chain.
-const DONATION_SAFE = '0x59E4DBc95BD312A882Bb36b7f3E8298682340679'.toLowerCase()
+// The thatsrekt.eth Safe — canonical seed donee address on every supported chain.
+// Resolved dynamically from ENS AddrChanged logs at startup; falls back to this.
+// DONEE_OVERRIDE bypasses ENS resolution entirely (tests / ops escape hatch).
+const DONEE_SEED = '0x59E4DBc95BD312A882Bb36b7f3E8298682340679'.toLowerCase()
+const ENS_RPC_URL = process.env.ENS_RPC_URL ?? ''
+const DONEE_OVERRIDE = process.env.DONEE_OVERRIDE
 
 // Start block: override via per-chain env var (used in tests), else pinned default.
 const START_BLOCK = parseInt(
@@ -98,71 +106,37 @@ pool.on('error', (err) => {
 })
 
 // ---------------------------------------------------------------------------
-// Subsquid processor.
-//
-// Subscriptions:
-//   - addTransaction({to:[Safe]}) — native value transfers to the Safe.
-//   - addLog({address:[token], topic0:[Transfer], topic2:[Safe]}) per ERC20
-//     — Transfer events directed to the Safe from each allowlisted token.
-//     topic2 = recipient (second indexed arg of Transfer(from,to,amount)).
-//
-// The `topic2` filter is Subsquid's server-side filter: only logs where
-// topics[2] matches the Safe address padded to 32 bytes are returned.
-// We still verify `to` defensively in the handler.
-//
-// No gateway for local Anvil forks — falls back to RPC-only.
+// Helpers
 // ---------------------------------------------------------------------------
 
 // Pad an address to a 32-byte topic (0x + 64 hex chars, address in lower 20 bytes).
 const addressToTopic = (addr: string): string =>
   '0x' + addr.replace(/^0x/, '').toLowerCase().padStart(64, '0')
 
-const DONATION_SAFE_TOPIC = addressToTopic(DONATION_SAFE)
-
-// Retrieve all allowlisted ERC20 addresses for this chain.
-const ERC20_ADDRESSES = erc20Addresses(CHAIN_ID)
-
-let base = new EvmBatchProcessor()
-  .setRpcEndpoint({
-    url: RPC_URL,
-    rateLimit: 10,
+/**
+ * Fetch the current head block number from the chain RPC.
+ * Returns the parsed integer block number.
+ * Throws on network or RPC error — caller handles.
+ */
+const fetchHeadHeight = async (rpcUrl: string): Promise<number> => {
+  const response = await fetch(rpcUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'eth_blockNumber',
+      params: [],
+    }),
   })
-  .setFinalityConfirmation(FINALITY_CONFIRMATION)
-  .setFields({
-    transaction: {
-      to: true,
-      from: true,
-      value: true,
-      hash: true,
-    },
-    log: {
-      address: true,
-      topics: true,
-      data: true,
-      transactionHash: true,
-    },
-  })
-  .setBlockRange({ from: START_BLOCK })
-  .addTransaction({
-    to: [DONATION_SAFE],
-  })
-
-// Register one addLog subscription per allowlisted ERC20.
-// Filter: Transfer topic0 + Safe as recipient (topic2).
-for (const tokenAddr of ERC20_ADDRESSES) {
-  base = base.addLog({
-    address: [tokenAddr],
-    topic0: [TRANSFER_TOPIC0],
-    topic2: [DONATION_SAFE_TOPIC],
-    transaction: true,
-  })
+  if (!response.ok) {
+    throw new Error(`eth_blockNumber HTTP ${response.status} ${response.statusText}`)
+  }
+  const json = (await response.json()) as { result?: string; error?: { message: string } }
+  if (json.error) throw new Error(`eth_blockNumber RPC error: ${json.error.message}`)
+  if (typeof json.result !== 'string') throw new Error(`eth_blockNumber: unexpected result type`)
+  return parseInt(json.result, 16)
 }
-
-// Subsquid Network archive — only for production chains, not local anvil forks.
-// Set GATEWAY_URL to the chain-specific Subsquid Network gateway URL to enable.
-// Omit it (or leave it empty) for RPC-only mode (used in tests and local setups).
-const GATEWAY_URL = process.env.GATEWAY_URL
-const processor = GATEWAY_URL ? base.setGateway(GATEWAY_URL) : base
 
 // ---------------------------------------------------------------------------
 // Boot.
@@ -171,17 +145,94 @@ const processor = GATEWAY_URL ? base.setGateway(GATEWAY_URL) : base
 const main = async () => {
   console.log(`[donations-indexer] starting for chain=${CHAIN_SLUG} (id=${CHAIN_ID})`)
 
+  // Resolve the current donee from ENS AddrChanged logs (mainnet).
+  // DONEE_OVERRIDE bypasses ENS — deterministic for tests / ops.
+  const donee = DONEE_OVERRIDE?.toLowerCase() ??
+    (await resolveCurrentDonee({ rpcUrl: ENS_RPC_URL, fallback: DONEE_SEED }))
+
+  console.log(`[donations-indexer] donee resolved: ${donee}`)
+
+  const doneeTopic = addressToTopic(donee)
+  const ERC20_ADDRESSES = erc20Addresses(CHAIN_ID)
+
+  // Fetch head height to set the bounded block range.
+  // Bounded to ≥ FINALITY_CONFIRMATION blocks behind head so we only process
+  // finalized blocks. Bounded `to` ⇒ the processor run promise resolves at
+  // end of range rather than looping forever.
+  const head = await fetchHeadHeight(RPC_URL)
+  const toBlock = Math.max(START_BLOCK, head - FINALITY_CONFIRMATION)
+  console.log(
+    `[donations-indexer] block range: from=${START_BLOCK} to=${toBlock} (head=${head}, finality=${FINALITY_CONFIRMATION})`,
+  )
+
+  // Build the processor inside main() so we can use the resolved donee.
+  // This is async-safe — the processor construction is pure (no I/O).
+  let base = new EvmBatchProcessor()
+    .setRpcEndpoint({
+      url: RPC_URL,
+      rateLimit: 10,
+    })
+    .setFinalityConfirmation(FINALITY_CONFIRMATION)
+    .setFields({
+      transaction: {
+        to: true,
+        from: true,
+        value: true,
+        hash: true,
+      },
+      log: {
+        address: true,
+        topics: true,
+        data: true,
+        transactionHash: true,
+      },
+    })
+    .setBlockRange({ from: START_BLOCK, to: toBlock })
+    .addTransaction({
+      to: [donee],
+    })
+
+  // Register one addLog subscription per allowlisted ERC20.
+  // Filter: Transfer topic0 + donee as recipient (topic2).
+  for (const tokenAddr of ERC20_ADDRESSES) {
+    base = base.addLog({
+      address: [tokenAddr],
+      topic0: [TRANSFER_TOPIC0],
+      topic2: [doneeTopic],
+      transaction: true,
+    })
+  }
+
+  // Subsquid Network archive — only for production chains, not local anvil forks.
+  // Set GATEWAY_URL to the chain-specific Subsquid Network gateway URL to enable.
+  // Omit it (or leave it empty) for RPC-only mode (used in tests and local setups).
+  const GATEWAY_URL = process.env.GATEWAY_URL
+  const processor = GATEWAY_URL ? base.setGateway(GATEWAY_URL) : base
+
   // Ensure schema before starting the processor loop.
   await ensureDonationTable(pool)
   console.log('[donations-indexer] donation table ensured')
 
+  // Log a "reached head" message on clean exit so tests can assert it.
+  // Subsquid's runProgram calls process.exit(0) when the bounded range is
+  // exhausted — we hook process.on('exit') to log after the work is done.
+  process.on('exit', (code) => {
+    if (code === 0) {
+      console.log(`[donations-indexer] reached head (block ${toBlock}), shutting down cleanly`)
+    }
+  })
+
+  // Start the processor. processor.run() fires Subsquid's internal runProgram
+  // which drives the event loop and calls process.exit(0) when the bounded
+  // block range (from=START_BLOCK, to=toBlock) is exhausted. We do NOT await
+  // it — it returns void and manages its own exit.
   processor.run(
     buildHotDatabase(pool, CHAIN_ID),
     async (ctx) => {
       for (const block of ctx.blocks) {
         // Native value transfers.
         for (const tx of block.transactions) {
-          if (!tx.to || tx.to.toLowerCase() !== DONATION_SAFE) continue
+          if (!tx.to || tx.to.toLowerCase() !== donee) continue
           if (!tx.value || tx.value === 0n) continue
 
           const row = mapNativeTransfer({
@@ -213,7 +264,7 @@ const main = async () => {
           const fromAddress = '0x' + (topics[1] ?? '').slice(-40)
           const toAddress = '0x' + (topics[2] ?? '').slice(-40)
 
-          if (toAddress.toLowerCase() !== DONATION_SAFE) continue
+          if (toAddress.toLowerCase() !== donee) continue
 
           const amount = log.data && log.data !== '0x' ? BigInt(log.data) : 0n
           const txHash = log.transactionHash
