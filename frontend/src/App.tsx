@@ -29,6 +29,9 @@ const Docs = lazy(() =>
 const Donations = lazy(() =>
   import('./pages/Donations').then((m) => ({ default: m.Donations })),
 )
+const Brand = lazy(() =>
+  import('./pages/Brand').then((m) => ({ default: m.Brand })),
+)
 import { useHasPosts } from './hooks/useHasPosts'
 import { useDisconnectIfNotWhitelisted } from './hooks/useDisconnectIfNotWhitelisted'
 import { PostAlertButton, AccountChip } from './components/PostAlertButton'
@@ -104,6 +107,7 @@ export function App() {
             <Route path="/leaderboard" element={<LeaderboardGate />} />
             <Route path="/donate" element={<Donations />} />
             <Route path="/docs" element={<Docs />} />
+            <Route path="/brand" element={<Brand />} />
             <Route path="*" element={<NotFound />} />
           </Routes>
         </Suspense>
