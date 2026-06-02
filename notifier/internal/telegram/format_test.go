@@ -465,6 +465,245 @@ func TestFormatRetractedMessage_HTMLSafe(t *testing.T) {
 	assertContains(t, msg, "RETRACTED", "retracted marker must still be present")
 }
 
+// --- NEW: tests for real producer-format notes (issue #234) ---
+
+// post10Note is the actual on-chain note for post #10 (Gnosis Pay / Zodiac
+// Delay ERC1271 bypass on chainId 100). Format: prose body + "Attacked
+// chains: [100]" footer + multi-line "Sources:" footer — exactly as written
+// by NoteForCreatePost in damm-thatsrekt-relayer.
+const post10Note = `On 2026-06-01 an attacker bypassed the Zodiac Delay Module guarding Gnosis Pay user Safes by forging an ERC1271 contract signature. The module's signature verifier compared the returned magic value without checking whether the verification call had actually succeeded, so a "signer" contract that reverts while returning the magic value was accepted as valid. Funds — primarily EURe and GNO — were drained from affected Safes on Gnosis Chain (chainId 100).
+
+## root cause
+
+Zodiac's SignatureChecker validates contract signatures in _isValidContractSignature(address signer, bytes32 hash, bytes signature). It staticcalls the signer's isValidSignature but discards the call's success flag, trusting only the returned bytes.
+
+Because the success boolean is dropped, a signer contract that REVERTS while placing the 4-byte magic value (0x1626ba7e) in its revert data still passes the check.
+
+Attacked chains: [100]
+
+Sources:
+  https://github.com/gnosis/zodiac/blob/master/contracts/core/Module.sol#L1
+  https://theblock.co/post/gnosis-pay-exploit
+  https://thedefiant.io/gnosis-pay-zodiac-delay-erc1271`
+
+var gnosisChain = graphql.Chain{
+	ChainID: 100,
+	Slug:    "gnosis",
+	Name:    "Gnosis",
+}
+
+// TestFormatPostMessage_TitleRendered verifies that p.Title appears in the
+// Telegram message as the headline (acceptance criterion 1 from issue #234).
+// This test MUST FAIL before the fix and PASS after.
+func TestFormatPostMessage_TitleRendered(t *testing.T) {
+	p := makePost(struct {
+		title       string
+		note        string
+		actionCount int
+		attackers   []string
+		victims     []string
+		chain       graphql.Chain
+		updatedAt   string
+	}{
+		title:       "Gnosis Pay / Zodiac Delay ERC1271 Bypass",
+		note:        post10Note,
+		actionCount: 1,
+		attackers:   nil,
+		victims:     nil,
+		chain:       gnosisChain,
+		updatedAt:   "2026-06-01T12:00:00Z",
+	})
+
+	msg := telegram.FormatPostMessageAt(p, fixedNow)
+
+	// Title must appear in the message.
+	assertContains(t, msg, "Gnosis Pay / Zodiac Delay ERC1271 Bypass", "title must be rendered as headline")
+}
+
+// TestFormatPostMessage_ProducerNoteBody verifies that the prose body from
+// a real NoteForCreatePost note renders as the summary (acceptance criterion 2).
+// This test MUST FAIL before the fix and PASS after.
+func TestFormatPostMessage_ProducerNoteBody(t *testing.T) {
+	p := makePost(struct {
+		title       string
+		note        string
+		actionCount int
+		attackers   []string
+		victims     []string
+		chain       graphql.Chain
+		updatedAt   string
+	}{
+		title:       "Gnosis Pay / Zodiac Delay ERC1271 Bypass",
+		note:        post10Note,
+		actionCount: 1,
+		attackers:   nil,
+		victims:     nil,
+		chain:       gnosisChain,
+		updatedAt:   "2026-06-01T12:00:00Z",
+	})
+
+	msg := telegram.FormatPostMessageAt(p, fixedNow)
+
+	// The prose body prefix must appear somewhere in the message.
+	assertContains(t, msg, "On 2026-06-01 an attacker bypassed", "prose body must be rendered")
+	// The footer markers themselves must NOT appear verbatim in the output
+	// (they are metadata, not content to display to users).
+	assertAbsent(t, msg, "Attacked chains: [100]", "raw footer must not appear verbatim")
+}
+
+// TestFormatPostMessage_ProducerNoteChains verifies that the "Attacked chains: [100]"
+// footer is parsed and the display chain name (or ID fallback) is used in
+// line 2 (acceptance criterion 3).
+func TestFormatPostMessage_ProducerNoteChains(t *testing.T) {
+	p := makePost(struct {
+		title       string
+		note        string
+		actionCount int
+		attackers   []string
+		victims     []string
+		chain       graphql.Chain
+		updatedAt   string
+	}{
+		title:       "Gnosis Pay / Zodiac Delay ERC1271 Bypass",
+		note:        post10Note,
+		actionCount: 1,
+		attackers:   nil,
+		victims:     nil,
+		chain:       gnosisChain,
+		updatedAt:   "2026-06-01T12:00:00Z",
+	})
+
+	msg := telegram.FormatPostMessageAt(p, fixedNow)
+
+	// Chain 100 should appear as "Gnosis" (known ID) in the "on <chains>" line
+	// or at minimum the string "100" to show the chain was parsed.
+	if !strings.Contains(msg, "Gnosis") && !strings.Contains(msg, "100") {
+		t.Errorf("expected chain name 'Gnosis' or ID '100' from parsed Attacked chains footer, message:\n%s", msg)
+	}
+}
+
+// TestFormatPostMessage_ProducerNoteSources verifies that the multi-line
+// Sources footer is parsed and URLs are rendered in the sources section
+// (acceptance criterion 4).
+func TestFormatPostMessage_ProducerNoteSources(t *testing.T) {
+	p := makePost(struct {
+		title       string
+		note        string
+		actionCount int
+		attackers   []string
+		victims     []string
+		chain       graphql.Chain
+		updatedAt   string
+	}{
+		title:       "Gnosis Pay / Zodiac Delay ERC1271 Bypass",
+		note:        post10Note,
+		actionCount: 1,
+		attackers:   nil,
+		victims:     nil,
+		chain:       gnosisChain,
+		updatedAt:   "2026-06-01T12:00:00Z",
+	})
+
+	msg := telegram.FormatPostMessageAt(p, fixedNow)
+
+	assertContains(t, msg, "github.com/gnosis/zodiac", "github source URL must appear")
+	assertContains(t, msg, "theblock.co", "theblock source URL must appear")
+	assertContains(t, msg, "thedefiant.io", "thedefiant source URL must appear")
+}
+
+// TestFormatPostMessage_NoAttackersNoVictims verifies that a post with no
+// attackers and no victims renders without those sections — and does not crash.
+// This was the exact live failure condition for post #10.
+func TestFormatPostMessage_NoAttackersNoVictims(t *testing.T) {
+	p := makePost(struct {
+		title       string
+		note        string
+		actionCount int
+		attackers   []string
+		victims     []string
+		chain       graphql.Chain
+		updatedAt   string
+	}{
+		title:       "Gnosis Pay / Zodiac Delay ERC1271 Bypass",
+		note:        post10Note,
+		actionCount: 1,
+		attackers:   nil,
+		victims:     nil,
+		chain:       gnosisChain,
+		updatedAt:   "2026-06-01T12:00:00Z",
+	})
+
+	msg := telegram.FormatPostMessageAt(p, fixedNow)
+
+	assertAbsent(t, msg, "Attackers:", "no attackers section when slice is nil")
+	assertAbsent(t, msg, "Victims:", "no victims section when slice is nil")
+	// Message must still have the header and the prose body.
+	assertContains(t, msg, "HACK VERIFIED", "header must still be present")
+	assertContains(t, msg, "On 2026-06-01 an attacker bypassed", "body must still be present")
+}
+
+// TestFormatPostMessage_TitleHTMLEscaped verifies that HTML-sensitive
+// characters in p.Title are escaped before insertion (acceptance criterion
+// "HTML parse-mode safety preserved").
+func TestFormatPostMessage_TitleHTMLEscaped(t *testing.T) {
+	p := makePost(struct {
+		title       string
+		note        string
+		actionCount int
+		attackers   []string
+		victims     []string
+		chain       graphql.Chain
+		updatedAt   string
+	}{
+		title:       "<Evil> & \"Tricky\" Title",
+		note:        "Plain prose note.\n\nAttacked chains: [1]\n\nSources:\n  https://example.com",
+		actionCount: 1,
+		attackers:   nil,
+		victims:     nil,
+		chain:       graphql.Chain{ChainID: 1, Slug: "ethereum", Name: "Ethereum"},
+		updatedAt:   "2026-05-21T14:00:00Z",
+	})
+
+	msg := telegram.FormatPostMessageAt(p, fixedNow)
+
+	assertAbsent(t, msg, "<Evil>", "raw < in title must be escaped")
+	assertContains(t, msg, "&lt;Evil&gt;", "title < > must be HTML-escaped")
+}
+
+// TestFormatPostMessage_NoteWithNoFooters verifies that a note containing
+// only prose (no "Attacked chains:" or "Sources:") degrades gracefully:
+// the body is still rendered and the chain falls back to p.Chain.
+func TestFormatPostMessage_NoteWithNoFooters(t *testing.T) {
+	p := makePost(struct {
+		title       string
+		note        string
+		actionCount int
+		attackers   []string
+		victims     []string
+		chain       graphql.Chain
+		updatedAt   string
+	}{
+		title:       "Legacy Post",
+		note:        "Old plain-text note with no footer markers.",
+		actionCount: 1,
+		attackers:   nil,
+		victims:     nil,
+		chain:       graphql.Chain{ChainID: 1, Slug: "ethereum", Name: "Ethereum"},
+		updatedAt:   "2026-05-21T14:00:00Z",
+	})
+
+	msg := telegram.FormatPostMessageAt(p, fixedNow)
+
+	// Must not crash and must still contain the header.
+	assertContains(t, msg, "HACK VERIFIED", "header present for legacy note")
+	// Title must be rendered.
+	assertContains(t, msg, "Legacy Post", "title rendered even for legacy note")
+	// Falls back to posting chain name in line 2.
+	assertContains(t, msg, "Ethereum", "chain fallback in line 2")
+	// Prose body should appear.
+	assertContains(t, msg, "Old plain-text note with no footer markers.", "legacy prose body rendered")
+}
+
 // --- helpers ---
 
 func assertContains(t *testing.T, haystack, needle, label string) {

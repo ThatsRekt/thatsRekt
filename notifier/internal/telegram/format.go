@@ -26,7 +26,9 @@ func FormatPostMessage(p graphql.Post) string {
 //	<relative time> on <attacked-chain set>
 //	updated · rev <N>
 //
-//	<summary>
+//	<title>
+//
+//	<body / summary>
 //
 //	Attackers:
 //	  <addr> (<explorer link>)
@@ -42,9 +44,14 @@ func FormatPostMessage(p graphql.Post) string {
 //	<source url>
 //
 // Rules:
-//   - All content is sourced from the self-describing on-chain note. The
-//     formatter parses the note for summary, attacked-chain set, exploit tx
-//     hashes, and sources.
+//   - p.Title is rendered as the bold headline after the header block.
+//   - The body text is drawn from the parsed note: ParsedNote.Body for
+//     producer-format and plain-prose notes; ParsedNote.Summary for legacy
+//     key:value notes.
+//   - The "on <chains>" part uses the attacked-chain set from the parsed note.
+//     For producer-format notes AttackedChainIDs are mapped to display names;
+//     for legacy notes AttackedChains slugs are used. Falls back to the posting
+//     chain when neither is present.
 //   - Line 2 renders the relative time from p.LastUpdatedAt (e.g. "2h ago").
 //     Falls back to "just now" when the timestamp is absent or unparseable.
 //   - `rev N` is derived from p.ActionCount (1 createPost + N-1 amendments).
@@ -70,13 +77,10 @@ func FormatPostMessageAt(p graphql.Post, now time.Time) string {
 	// Line 2: relative time computed from LastUpdatedAt relative to now.
 	relTime := relativeTime(p.LastUpdatedAt, now)
 
-	// The "on <chains>" part uses the full attacked-chain set from the
-	// self-describing note (which may span multiple chains). Fall back to
-	// the posting chain when the note carries no chains.
-	chains := strings.Join(parsed.AttackedChains, ", ")
-	if chains == "" {
-		chains = chainName
-	}
+	// The "on <chains>" part prefers the attacked-chain set from the parsed
+	// note. Producer-format notes carry integer chain IDs mapped to display
+	// names; legacy notes carry slug strings. Falls back to the posting chain.
+	chains := attackedChainsDisplay(parsed, chainName)
 
 	var b strings.Builder
 
@@ -85,9 +89,19 @@ func FormatPostMessageAt(p graphql.Post, now time.Time) string {
 	fmt.Fprintf(&b, "%s on %s\n", html(relTime), html(chains))
 	fmt.Fprintf(&b, "updated · rev %d\n", rev)
 
-	// Summary from parsed note
-	if summary := strings.TrimSpace(parsed.Summary); summary != "" {
-		fmt.Fprintf(&b, "\n%s\n", html(summary))
+	// Title (p.Title is the structured on-chain field; HTML-escaped).
+	if title := strings.TrimSpace(p.Title); title != "" {
+		fmt.Fprintf(&b, "\n<b>%s</b>\n", html(title))
+	}
+
+	// Body text: prefer ParsedNote.Body (producer format or plain prose),
+	// fall back to ParsedNote.Summary (legacy key:value format).
+	body := strings.TrimSpace(parsed.Body)
+	if body == "" {
+		body = strings.TrimSpace(parsed.Summary)
+	}
+	if body != "" {
+		fmt.Fprintf(&b, "\n%s\n", html(body))
 	}
 
 	// Attackers
@@ -108,7 +122,7 @@ func FormatPostMessageAt(p graphql.Post, now time.Time) string {
 		}
 	}
 
-	// Exploit tx hashes from parsed note
+	// Exploit tx hashes from parsed note (legacy key:value format only).
 	if len(parsed.ExploitTxHashes) > 0 {
 		fmt.Fprintf(&b, "\nTx:\n")
 		for _, txHash := range parsed.ExploitTxHashes {
@@ -132,6 +146,50 @@ func FormatPostMessageAt(p graphql.Post, now time.Time) string {
 	}
 
 	return strings.TrimRight(b.String(), "\n")
+}
+
+// attackedChainsDisplay derives the "on <chains>" display string from the
+// parsed note. Producer-format notes populate AttackedChainIDs (integers)
+// which are mapped to human names; legacy notes populate AttackedChains
+// (slugs). Falls back to chainFallback (the post's own chain display name).
+func attackedChainsDisplay(parsed note.ParsedNote, chainFallback string) string {
+	if len(parsed.AttackedChainIDs) > 0 {
+		names := make([]string, 0, len(parsed.AttackedChainIDs))
+		for _, id := range parsed.AttackedChainIDs {
+			names = append(names, chainIDToName(id))
+		}
+		return strings.Join(names, ", ")
+	}
+	if len(parsed.AttackedChains) > 0 {
+		return strings.Join(parsed.AttackedChains, ", ")
+	}
+	return chainFallback
+}
+
+// chainIDToName maps a well-known integer chain ID to a human-readable name.
+// Falls back to "chain <id>" for unknown IDs so the message is always
+// informative rather than silently omitting the chain.
+func chainIDToName(id int) string {
+	switch id {
+	case 1:
+		return "Ethereum"
+	case 10:
+		return "Optimism"
+	case 56:
+		return "BSC"
+	case 100:
+		return "Gnosis"
+	case 137:
+		return "Polygon"
+	case 8453:
+		return "Base"
+	case 42161:
+		return "Arbitrum"
+	case 43114:
+		return "Avalanche"
+	default:
+		return fmt.Sprintf("chain %d", id)
+	}
 }
 
 // FormatRetractedMessage renders the struck-through RETRACTED state for a post
