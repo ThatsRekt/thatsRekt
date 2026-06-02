@@ -60,6 +60,12 @@ const GLOBAL: GlobalLabels = {
     twitter: 'jerrythekid',
     github: 'JeronimoHoulin',
   },
+  // DAMM Capital's automated detector — a KMS-signed relayer that submits
+  // onchain alerts on the firm's behalf. Same signer address across chains.
+  '0xfe6b4dff18d741e725c7c6922ccf69121b2fffdb': {
+    name: "DAMM Capital's Detector",
+    tagline: "automated detector — submits alerts on DAMM Capital's behalf",
+  },
 }
 
 const PER_CHAIN: PerChainLabels = {
