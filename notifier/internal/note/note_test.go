@@ -179,9 +179,12 @@ func TestParseNote_ProducerFormat_Sources(t *testing.T) {
 }
 
 // TestParseNote_ProducerFormat_MultipleChainIDs verifies parsing of multiple
-// chain IDs in the footer (e.g. "Attacked chains: [1, 42161]").
+// chain IDs in the footer using the REAL Go %v rendering: "[1 8453]"
+// (space-separated, no commas). This is the exact output of
+// fmt.Sprintf("%v", []uint64{1, 8453}) in NoteForCreatePost.
 func TestParseNote_ProducerFormat_MultipleChainIDs(t *testing.T) {
-	raw := "Cross-chain bridge exploit.\n\nAttacked chains: [1, 42161]\n\nSources:\n  https://rekt.news/bridge"
+	// Use the exact %v form: "[1 8453]" — NOT "[1, 8453]".
+	raw := "Cross-chain bridge exploit.\n\nAttacked chains: [1 8453]\n\nSources:\n  https://rekt.news/bridge"
 	got := note.ParseNote(raw)
 
 	if got.Body == "" {
@@ -190,11 +193,34 @@ func TestParseNote_ProducerFormat_MultipleChainIDs(t *testing.T) {
 	if len(got.AttackedChainIDs) != 2 {
 		t.Fatalf("expected 2 attacked chain IDs, got %v", got.AttackedChainIDs)
 	}
-	if got.AttackedChainIDs[0] != 1 || got.AttackedChainIDs[1] != 42161 {
-		t.Errorf("chain IDs mismatch: %v", got.AttackedChainIDs)
+	if got.AttackedChainIDs[0] != 1 || got.AttackedChainIDs[1] != 8453 {
+		t.Errorf("chain IDs mismatch: got %v, want [1 8453]", got.AttackedChainIDs)
 	}
 	if len(got.Sources) != 1 || got.Sources[0] != "https://rekt.news/bridge" {
 		t.Errorf("sources mismatch: %v", got.Sources)
+	}
+}
+
+// TestParseNote_ProducerFormat_ThreeChains_SpaceSeparated is a regression test
+// for the comma-split bug. The old parseChainIDs split on "," which silently
+// dropped all but the first token for space-separated slices like "[1 8453 42161]".
+// This test MUST assert the exact parsed slice — a substring check is not enough.
+func TestParseNote_ProducerFormat_ThreeChains_SpaceSeparated(t *testing.T) {
+	// Exact output of fmt.Sprintf("%v", []uint64{1, 8453, 42161}).
+	raw := "Multi-chain exploit.\n\nAttacked chains: [1 8453 42161]"
+	got := note.ParseNote(raw)
+
+	if got.Body == "" {
+		t.Fatal("expected non-empty Body")
+	}
+	wantIDs := []int{1, 8453, 42161}
+	if len(got.AttackedChainIDs) != len(wantIDs) {
+		t.Fatalf("expected %d chain IDs, got %v", len(wantIDs), got.AttackedChainIDs)
+	}
+	for i, want := range wantIDs {
+		if got.AttackedChainIDs[i] != want {
+			t.Errorf("chain ID[%d]: got %d, want %d", i, got.AttackedChainIDs[i], want)
+		}
 	}
 }
 
@@ -212,6 +238,39 @@ func TestParseNote_ProducerFormat_NoSources(t *testing.T) {
 	}
 	if len(got.Sources) != 0 {
 		t.Errorf("expected no sources, got %v", got.Sources)
+	}
+}
+
+// TestParseNote_ProducerFormat_SourcesOnlyNoChains verifies that a producer-
+// format note with a "Sources:" footer but WITHOUT an "Attacked chains:" footer
+// is still classified as producer-format. Without this, isProducerFormat returns
+// false, parseLegacyFormat is called, the raw "Sources:\n  <url>" block leaks
+// into Body, and Sources remains empty.
+func TestParseNote_ProducerFormat_SourcesOnlyNoChains(t *testing.T) {
+	raw := "Protocol drained via price manipulation.\n\nSources:\n  https://rekt.news/protocol\n  https://twitter.com/peckshield/status/123"
+	got := note.ParseNote(raw)
+
+	// Body must be clean prose only — no footer markers.
+	wantBody := "Protocol drained via price manipulation."
+	if got.Body != wantBody {
+		t.Errorf("Body mismatch.\nGot:  %q\nWant: %q", got.Body, wantBody)
+	}
+	if contains(got.Body, "Sources:") {
+		t.Errorf("Body must not contain 'Sources:' footer block, got: %q", got.Body)
+	}
+	// Sources must be parsed from the footer.
+	if len(got.Sources) != 2 {
+		t.Fatalf("expected 2 sources, got %d: %v", len(got.Sources), got.Sources)
+	}
+	if got.Sources[0] != "https://rekt.news/protocol" {
+		t.Errorf("sources[0] mismatch: %q", got.Sources[0])
+	}
+	if got.Sources[1] != "https://twitter.com/peckshield/status/123" {
+		t.Errorf("sources[1] mismatch: %q", got.Sources[1])
+	}
+	// No chains in this note.
+	if len(got.AttackedChainIDs) != 0 {
+		t.Errorf("expected no chain IDs, got %v", got.AttackedChainIDs)
 	}
 }
 

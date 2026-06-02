@@ -18,11 +18,14 @@
 //
 //	<prose body — one or more paragraphs>
 //
-//	Attacked chains: [<chainId1>, <chainId2>, ...]
+//	Attacked chains: [<chainId1> <chainId2> ...]
 //
 //	Sources:
 //	  <url1>
 //	  <url2>
+//
+// The chain-ID list uses Go's %v rendering of a []uint64 — space-separated
+// inside brackets (e.g. "[1 8453]"), NOT comma-separated.
 //
 // Parsing is deliberately lenient. Unknown keys and malformed lines are
 // silently ignored. The parser never returns an error — callers always get a
@@ -83,37 +86,64 @@ func ParseNote(raw string) ParsedNote {
 	return parseLegacyFormat(raw)
 }
 
-// isProducerFormat returns true when the note contains the "Attacked chains:"
-// marker that NoteForCreatePost always writes. This is the distinguishing
-// signal between the two formats.
+// isProducerFormat returns true when the note was written by NoteForCreatePost.
+// Detection keys on either footer marker:
+//   - "Attacked chains:" — always written when AttackedChainIDs is non-empty.
+//   - "\n\nSources:\n" — written when Sources is non-empty (can appear without the
+//     chains footer if AttackedChainIDs was empty).
+//
+// A note that carries a "Sources:" footer but no "Attacked chains:" footer is
+// still producer-format; classifying it as legacy would leave the raw
+// "Sources:\n  <url>" block in the body and drop the source URLs.
 func isProducerFormat(raw string) bool {
-	return strings.Contains(raw, "\nAttacked chains:") || strings.HasPrefix(raw, "Attacked chains:")
+	hasChains := strings.Contains(raw, "\nAttacked chains:") || strings.HasPrefix(raw, "Attacked chains:")
+	hasSources := strings.Contains(raw, "\n\nSources:\n") || strings.HasPrefix(raw, "Sources:\n")
+	return hasChains || hasSources
 }
 
 // parseProducerFormat handles notes written by NoteForCreatePost:
 //
 //	<prose body>
 //
-//	Attacked chains: [chainId, ...]
+//	Attacked chains: [chainId1 chainId2 ...]
 //
 //	Sources:
 //	  url1
 //	  url2
+//
+// Either footer section is optional. The prose body is everything before the
+// first footer marker ("Attacked chains:" or "\n\nSources:").
 func parseProducerFormat(raw string) ParsedNote {
 	var out ParsedNote
 
-	// Locate the "Attacked chains:" line — everything before it (trimmed) is
-	// the prose body; everything at and after it is the footer block.
+	// Find the earliest footer marker to determine where the prose body ends.
+	// NoteForCreatePost always separates footers from the body with "\n\n", so
+	// we look for both possible first-footer positions and pick the earliest.
 	attackedIdx := strings.Index(raw, "Attacked chains:")
-	if attackedIdx < 0 {
-		// Should not happen after isProducerFormat, but be defensive.
+	sourcesIdx := strings.Index(raw, "\n\nSources:\n")
+
+	footerStart := -1
+	switch {
+	case attackedIdx >= 0 && sourcesIdx >= 0:
+		if attackedIdx <= sourcesIdx {
+			footerStart = attackedIdx
+		} else {
+			footerStart = sourcesIdx + 2 // skip the leading "\n\n"
+		}
+	case attackedIdx >= 0:
+		footerStart = attackedIdx
+	case sourcesIdx >= 0:
+		footerStart = sourcesIdx + 2 // skip the leading "\n\n"
+	}
+
+	if footerStart < 0 {
+		// No recognised footer — body is the full note.
 		out.Body = strings.TrimSpace(raw)
 		return out
 	}
 
-	out.Body = strings.TrimSpace(raw[:attackedIdx])
-
-	footer := raw[attackedIdx:]
+	out.Body = strings.TrimSpace(raw[:footerStart])
+	footer := raw[footerStart:]
 
 	// Parse each footer line.
 	lines := strings.Split(footer, "\n")
@@ -123,7 +153,8 @@ func parseProducerFormat(raw string) ParsedNote {
 
 		if strings.HasPrefix(trimmed, "Attacked chains:") {
 			inSources = false
-			// Extract chain IDs from the bracketed list: "Attacked chains: [1, 42161]"
+			// Extract chain IDs from the bracketed list produced by Go %v:
+			// "Attacked chains: [1 8453 42161]"
 			rest := strings.TrimPrefix(trimmed, "Attacked chains:")
 			rest = strings.TrimSpace(rest)
 			out.AttackedChainIDs = parseChainIDs(rest)
@@ -152,8 +183,13 @@ func parseProducerFormat(raw string) ParsedNote {
 	return out
 }
 
-// parseChainIDs parses a bracketed integer list such as "[1, 42161, 100]"
-// into a []int. Non-integer tokens are silently skipped.
+// parseChainIDs parses a bracketed integer list into a []int.
+//
+// The authoritative producer format is Go's %v rendering of a []uint64 slice,
+// which is space-separated inside brackets: "[1 8453 42161]". Commas are also
+// accepted as separators so that hand-written notes remain valid.
+//
+// Non-integer tokens are silently skipped. Surrounding brackets are stripped.
 func parseChainIDs(s string) []int {
 	// Strip surrounding brackets if present.
 	s = strings.TrimSpace(s)
@@ -163,7 +199,11 @@ func parseChainIDs(s string) []int {
 	if s == "" {
 		return nil
 	}
-	parts := strings.Split(s, ",")
+	// Split on any run of whitespace and/or commas so both the canonical
+	// Go %v form ("[1 8453]") and hand-written comma form ("[1, 8453]") work.
+	parts := strings.FieldsFunc(s, func(r rune) bool {
+		return r == ' ' || r == '\t' || r == ','
+	})
 	ids := make([]int, 0, len(parts))
 	for _, p := range parts {
 		p = strings.TrimSpace(p)
