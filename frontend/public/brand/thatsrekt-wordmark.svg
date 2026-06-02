@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 700 140" width="700" height="140" role="img" aria-label="thatsrekt">
+  <title>thatsrekt</title>
+  <!--
+    thatsRekt wordmark lockup. Mirrors the live header wordmark:
+    heavy weight, uppercase, tight tracking; "thats" in ink, "rekt"
+    in the rekt-red accent. Rendered as <text> (not outlined paths) to
+    stay consistent with how the brand exists on-site — a styled
+    string, not a frozen logotype.
+  -->
+  <text x="0" y="105"
+        font-family="Inter, ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif"
+        font-weight="900"
+        font-size="110"
+        letter-spacing="-5"
+        style="text-transform:uppercase">
+    <tspan fill="#0a0a0a">THATS</tspan><tspan fill="#dc2626">REKT</tspan>
+  </text>
+</svg>

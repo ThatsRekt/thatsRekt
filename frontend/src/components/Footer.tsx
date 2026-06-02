@@ -75,6 +75,11 @@ function BrandColumn() {
             docs
           </Link>
         </li>
+        <li>
+          <Link to="/brand" className="text-[11px] uppercase tracking-widest font-mono rekt-link">
+            brand
+          </Link>
+        </li>
       </ul>
     </div>
   )
