@@ -66,11 +66,14 @@ describe('Brand page — colors', () => {
 
 describe('Brand page — downloads', () => {
   // href -> must be a real file served from frontend/public.
+  // Assets live at the web ROOT (not under /brand) so the physical asset
+  // path can't shadow the /brand SPA route — a directory named `brand`
+  // makes nginx 301 /brand → /brand/ → 403 instead of serving index.html.
   const DOWNLOADS = [
     '/logo.png',
     '/favicon.svg',
     '/og-image-default.png',
-    '/brand/thatsrekt-wordmark.svg',
+    '/thatsrekt-wordmark.svg',
   ]
 
   for (const href of DOWNLOADS) {
