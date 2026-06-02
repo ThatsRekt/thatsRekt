@@ -28,7 +28,7 @@ const PALETTE: { name: string; role: string; hex: string }[] = [
 /** Downloadable assets. Every href resolves to a file in /public. */
 const DOWNLOADS: { href: string; label: string; note: string }[] = [
   { href: '/logo.png', label: 'mark (PNG)', note: 'pixel-art mark · 1008×1046 · transparent' },
-  { href: '/brand/thatsrekt-wordmark.svg', label: 'wordmark (SVG)', note: 'vector lockup · scalable' },
+  { href: '/thatsrekt-wordmark.svg', label: 'wordmark (SVG)', note: 'vector lockup · scalable' },
   { href: '/favicon.svg', label: 'favicon (SVG)', note: 'browser tab icon · vector' },
   { href: '/og-image-default.png', label: 'social card (PNG)', note: 'default open-graph · 1200×630' },
 ]
