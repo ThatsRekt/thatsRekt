@@ -1,5 +1,5 @@
-// Package notifier_test — service-level tests for amendment handling (N2) and
-// retract handling (N3).
+// Package notifier_test — service-level tests for amendment handling (N2),
+// retract handling (N3), and the isNew numeric-compare fix (issue #236).
 //
 // These tests exercise the poll loop through stub implementations of the
 // Telegram bot and GraphQL client. No network, no S3.
@@ -22,6 +22,15 @@
 //     trigger additional edits.
 //   - The retract edit sends an explicitly empty keyboard (not nil) to clear any
 //     legacy keyboard — passing nil would leave an existing keyboard intact.
+//
+// Covered acceptance criteria (issue #236, isNew numeric compare):
+//   - isNew returns true for post #10 when last-seen is post #9 (single→double
+//     digit boundary — the broken case with lexicographic compare).
+//   - isNew returns false for post #9 when last-seen is post #10.
+//   - Multi-digit ordering is correct across -9 / -10 / -11 / -100.
+//   - Non-numeric / malformed id portions fall back to string compare without
+//     panicking.
+//   - Per-chain isolation is preserved (last-seen is per chain slug).
 package notifier_test
 
 import (
@@ -786,5 +795,318 @@ func TestPollOnce_RetractClearsKeyboard(t *testing.T) {
 	// The keyboard must have zero rows — an explicit empty InlineKeyboardMarkup.
 	if len(kb.InlineKeyboard) != 0 {
 		t.Errorf("retract keyboard: expected 0 keyboard rows (empty), got %d", len(kb.InlineKeyboard))
+	}
+}
+
+// ---- issue #236: isNew numeric compare tests --------------------------------
+//
+// These tests are driven through PollOnce because isNew is unexported. The
+// load-bearing assertion in each case is the send/edit count: a correct numeric
+// compare means post #10 IS new when last-seen is #9 (→ 1 send); a broken lex
+// compare means post #10 is NOT new (→ 0 sends, falls into State-5 fallback).
+//
+// We explicitly check that the send count is 1 AND that SetLastSeen advanced the
+// high-water mark, because the fallback path (State 5) would also produce 1 send
+// but would NOT advance the high-water mark. That distinction is how we prove
+// isNew returned true (State 1) versus the fallback (State 5).
+
+// makeEthPost builds a minimal graphql.Post on the "ethereum" chain with the
+// given composite id (e.g. "ethereum-10").
+func makeEthPost(id string) graphql.Post {
+	return graphql.Post{
+		ID:                 id,
+		Chain:              graphql.Chain{ChainID: 1, Slug: "ethereum", Name: "Ethereum"},
+		Poster:             "0xbbbb",
+		Title:              "Test Hack",
+		Note:               "summary: test\nchains: ethereum\ntxs: 0x1\nsources: @rekt",
+		ActionCount:        1,
+		LastUpdatedAt:      "2026-06-01T00:00:00Z",
+		CreatedAtTimestamp: "2026-06-01T00:00:00Z",
+		Attackers:          []string{"0x2222222222222222222222222222222222222222"},
+	}
+}
+
+// makeSvc returns a Service configured with an in-memory store pre-seeded with
+// the given last-seen id for the "ethereum" chain.
+func makeSvc(t *testing.T, lastSeenID string, postToServe graphql.Post) (*notifier.Service, *stubBot, *store.Store) {
+	t.Helper()
+	st := store.NewInMemory()
+	if lastSeenID != "" {
+		st.SetLastSeen("ethereum", lastSeenID)
+	}
+	bot := &stubBot{}
+	gql := &stubGQL{posts: []graphql.Post{postToServe}}
+	svc := &notifier.Service{
+		GQL:       gql,
+		Bot:       bot,
+		Store:     st,
+		ChannelID: "@testchan",
+		SiteURL:   "https://thatsrekt.com",
+		Logger:    makeTestLogger(),
+	}
+	return svc, bot, st
+}
+
+// TestIsNew_SingleToDoubleDigitBoundary_IsNew is the load-bearing regression
+// test for issue #236. Post #10 with last-seen #9 MUST be treated as new
+// (numeric 10 > 9). With the old lexicographic compare "10" > "9" is false,
+// so this test fails against the unfixed code.
+func TestIsNew_SingleToDoubleDigitBoundary_IsNew(t *testing.T) {
+	post := makeEthPost("ethereum-10")
+	svc, bot, st := makeSvc(t, "ethereum-9", post)
+
+	svc.PollOnce(context.Background())
+
+	bot.mu.Lock()
+	sends := len(bot.sends)
+	bot.mu.Unlock()
+
+	// Must have published exactly one new message (State 1, not State 5 fallback).
+	if sends != 1 {
+		t.Errorf("isNew boundary: expected 1 send for ethereum-10 > ethereum-9, got %d (lex compare bug?)", sends)
+	}
+
+	// High-water mark must have advanced to ethereum-10 (State 1 path).
+	// State-5 fallback also sends but does NOT call SetLastSeen.
+	if got := st.LastSeen("ethereum"); got != "ethereum-10" {
+		t.Errorf("isNew boundary: expected lastSeen to advance to ethereum-10, got %q", got)
+	}
+}
+
+// TestIsNew_SingleToDoubleDigitBoundary_NotNew is the inverse: post #9 with
+// last-seen #10 must NOT be treated as new (9 < 10 numerically).
+func TestIsNew_SingleToDoubleDigitBoundary_NotNew(t *testing.T) {
+	// We need a mapped post for State 3 (not new, mapped, unchanged) so that
+	// PollOnce doesn't fall through to the State-5 fallback and send anyway.
+	st := store.NewInMemory()
+	st.SetLastSeen("ethereum", "ethereum-10")
+	post9 := makeEthPost("ethereum-9")
+	// Register the post in the store so PollOnce reaches State 3 (skip).
+	st.RegisterPost("ethereum-9", 99, "ethereum")
+	st.UpdatePostSnapshot("ethereum-9", post9.ActionCount, post9.LastUpdatedAt)
+
+	bot := &stubBot{}
+	gql := &stubGQL{posts: []graphql.Post{post9}}
+	svc := &notifier.Service{
+		GQL:       gql,
+		Bot:       bot,
+		Store:     st,
+		ChannelID: "@testchan",
+		SiteURL:   "https://thatsrekt.com",
+		Logger:    makeTestLogger(),
+	}
+
+	svc.PollOnce(context.Background())
+
+	bot.mu.Lock()
+	sends := len(bot.sends)
+	edits := len(bot.edits)
+	bot.mu.Unlock()
+
+	if sends != 0 {
+		t.Errorf("isNew inverse: expected 0 sends for ethereum-9 when last-seen is ethereum-10, got %d", sends)
+	}
+	if edits != 0 {
+		t.Errorf("isNew inverse: expected 0 edits (post is unchanged), got %d", edits)
+	}
+}
+
+// TestIsNew_MultiDigitOrdering exercises the full single→double→triple digit
+// range. Each step: poll a post whose id is one step ahead of last-seen and
+// assert it is treated as new. This catches regressions where numeric ordering
+// is correct for 9→10 but breaks for 10→11, 11→100, etc.
+func TestIsNew_MultiDigitOrdering(t *testing.T) {
+	cases := []struct {
+		lastSeen string
+		postID   string
+	}{
+		{"ethereum-9", "ethereum-10"},
+		{"ethereum-10", "ethereum-11"},
+		{"ethereum-11", "ethereum-100"},
+		{"ethereum-99", "ethereum-100"},
+		{"ethereum-100", "ethereum-101"},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.lastSeen+"_to_"+tc.postID, func(t *testing.T) {
+			post := makeEthPost(tc.postID)
+			svc, bot, st := makeSvc(t, tc.lastSeen, post)
+
+			svc.PollOnce(context.Background())
+
+			bot.mu.Lock()
+			sends := len(bot.sends)
+			bot.mu.Unlock()
+
+			if sends != 1 {
+				t.Errorf("multi-digit: expected 1 send (%s > %s), got %d", tc.postID, tc.lastSeen, sends)
+			}
+			if got := st.LastSeen("ethereum"); got != tc.postID {
+				t.Errorf("multi-digit: expected lastSeen=%s, got %q", tc.postID, got)
+			}
+		})
+	}
+}
+
+// TestIsNew_MalformedIDFallbackNoPanic verifies that malformed / non-numeric id
+// portions do not panic and fall back gracefully to string compare. A malformed
+// id is any id whose trailing part (after the last "-") is not a base-10 int.
+func TestIsNew_MalformedIDFallbackNoPanic(t *testing.T) {
+	cases := []struct {
+		name     string
+		lastSeen string
+		postID   string
+		wantNew  bool
+	}{
+		// Lexicographic: "z" > "a" → true. Both non-numeric → string fallback.
+		{
+			name:     "both_non_numeric_greater",
+			lastSeen: "ethereum-abc",
+			postID:   "ethereum-xyz",
+			wantNew:  true,
+		},
+		// Lexicographic: "a" > "z" → false. Both non-numeric → string fallback.
+		{
+			name:     "both_non_numeric_lesser",
+			lastSeen: "ethereum-xyz",
+			postID:   "ethereum-abc",
+			wantNew:  false,
+		},
+		// postID has no "-" separator → onchainPart returns whole id.
+		// Both onchainParts are non-numeric: "malformedid" vs "1" (numeric, but
+		// postID part is non-numeric). Falls back to string compare. Should not panic.
+		// "malformedid" > "1" is true lex ('m' > '1'), so isNew → true → 1 send.
+		{
+			name:     "no_separator_in_post_id",
+			lastSeen: "ethereum-1",
+			postID:   "malformedid",
+			wantNew:  true, // "malformedid" > "1" lex; primary check is no panic
+		},
+		// lastSeen has no separator. onchainPart returns the whole id. No panic.
+		// "2" > "malformed" is false lex ('2' < 'm'), so isNew → false → 0 sends.
+		{
+			name:     "no_separator_in_last_seen",
+			lastSeen: "malformed",
+			postID:   "ethereum-2",
+			wantNew:  false, // "2" < "malformed" lex; primary check is no panic
+		},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			// For the "not new" cases we need the post in the store to avoid
+			// the State-5 fallback sending unconditionally.
+			st := store.NewInMemory()
+			if tc.lastSeen != "" {
+				st.SetLastSeen("ethereum", tc.lastSeen)
+			}
+			post := makeEthPost(tc.postID)
+			if !tc.wantNew {
+				// Register the post so State-3 (skip) fires instead of State-5 send.
+				st.RegisterPost(tc.postID, 1, "ethereum")
+				st.UpdatePostSnapshot(tc.postID, post.ActionCount, post.LastUpdatedAt)
+			}
+
+			bot := &stubBot{}
+			gql := &stubGQL{posts: []graphql.Post{post}}
+			svc := &notifier.Service{
+				GQL:       gql,
+				Bot:       bot,
+				Store:     st,
+				ChannelID: "@testchan",
+				SiteURL:   "https://thatsrekt.com",
+				Logger:    makeTestLogger(),
+			}
+
+			// The primary assertion is "does not panic". We also check send
+			// count for cases where the expected behaviour is deterministic.
+			svc.PollOnce(context.Background())
+
+			bot.mu.Lock()
+			sends := len(bot.sends)
+			bot.mu.Unlock()
+
+			if tc.wantNew && sends == 0 {
+				t.Errorf("malformed fallback %s: expected a send (isNew=true), got 0", tc.name)
+			}
+			if !tc.wantNew && sends != 0 {
+				t.Errorf("malformed fallback %s: expected 0 sends (isNew=false), got %d", tc.name, sends)
+			}
+		})
+	}
+}
+
+// TestIsNew_PerChainIsolation verifies that the last-seen high-water mark is
+// per chain: ethereum-9 as last-seen for "ethereum" must not affect the
+// "base" chain, and vice versa. A post on "base-10" is new regardless of
+// what ethereum's last-seen value is.
+func TestIsNew_PerChainIsolation(t *testing.T) {
+	st := store.NewInMemory()
+	// Seed ethereum with a high-water mark of ethereum-100.
+	st.SetLastSeen("ethereum", "ethereum-100")
+	// base chain has no entry — first post should be treated as new.
+
+	post := graphql.Post{
+		ID:                 "base-1",
+		Chain:              graphql.Chain{ChainID: 8453, Slug: "base", Name: "Base"},
+		Poster:             "0xcccc",
+		Title:              "Base Chain Post",
+		Note:               "summary: test\nchains: base\ntxs: 0x2\nsources: @rekt",
+		ActionCount:        1,
+		LastUpdatedAt:      "2026-06-01T00:00:00Z",
+		CreatedAtTimestamp: "2026-06-01T00:00:00Z",
+		Attackers:          []string{"0x3333333333333333333333333333333333333333"},
+	}
+
+	bot := &stubBot{}
+	gql := &stubGQL{posts: []graphql.Post{post}}
+	svc := &notifier.Service{
+		GQL:       gql,
+		Bot:       bot,
+		Store:     st,
+		ChannelID: "@testchan",
+		SiteURL:   "https://thatsrekt.com",
+		Logger:    makeTestLogger(),
+	}
+
+	svc.PollOnce(context.Background())
+
+	bot.mu.Lock()
+	sends := len(bot.sends)
+	bot.mu.Unlock()
+
+	// base-1 is new for the base chain (no prior last-seen entry).
+	if sends != 1 {
+		t.Errorf("per-chain isolation: expected 1 send for base-1 (base chain fresh), got %d", sends)
+	}
+	// ethereum high-water mark must be unchanged.
+	if got := st.LastSeen("ethereum"); got != "ethereum-100" {
+		t.Errorf("per-chain isolation: ethereum last-seen should be unchanged, got %q", got)
+	}
+	// base high-water mark must have advanced to base-1.
+	if got := st.LastSeen("base"); got != "base-1" {
+		t.Errorf("per-chain isolation: base last-seen should be base-1, got %q", got)
+	}
+}
+
+// TestIsNew_EmptyLastSeen verifies the unchanged behaviour: when no last-seen
+// exists for a chain, every post on that chain is treated as new.
+func TestIsNew_EmptyLastSeen(t *testing.T) {
+	post := makeEthPost("ethereum-1")
+	svc, bot, st := makeSvc(t, "", post)
+
+	svc.PollOnce(context.Background())
+
+	bot.mu.Lock()
+	sends := len(bot.sends)
+	bot.mu.Unlock()
+
+	if sends != 1 {
+		t.Errorf("empty last-seen: expected 1 send for first post on fresh chain, got %d", sends)
+	}
+	if got := st.LastSeen("ethereum"); got != "ethereum-1" {
+		t.Errorf("empty last-seen: expected lastSeen=ethereum-1, got %q", got)
 	}
 }
