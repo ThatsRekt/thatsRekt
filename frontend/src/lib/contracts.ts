@@ -33,6 +33,12 @@ export const REGISTRY_PROXIES = {
   10: '0xBfaEEE9662b4c037De24e5Caa65815350d57b89A',
   // Arbitrum One — v1.2.0 deploy 2026-05-07. Block 460487986.
   42161: '0xBfaEEE9662b4c037De24e5Caa65815350d57b89A',
+  // BSC — v1.2.0 deploy at the canonical CREATE2 proxy. Verified on-chain
+  // via eth_getCode (EIP-1967 proxy bytecode present at this address on 56).
+  56: '0xBfaEEE9662b4c037De24e5Caa65815350d57b89A',
+  // Polygon PoS — v1.2.0 deploy at the canonical CREATE2 proxy. Verified
+  // on-chain via eth_getCode (EIP-1967 proxy bytecode present on 137).
+  137: '0xBfaEEE9662b4c037De24e5Caa65815350d57b89A',
 } as const satisfies Record<number, `0x${string}`>
 
 /** Chain IDs that have a deployed registry. Literal-narrowed for wagmi. */
@@ -43,9 +49,17 @@ export const registryAddress = (
 ): `0x${string}` | undefined =>
   (REGISTRY_PROXIES as Record<number, `0x${string}`>)[chainId]
 
-/** Chain IDs with a deployed registry, in display order. */
+/**
+ * Chain IDs with a deployed registry, in display order (mirrors the
+ * `visibleChains()` relevance order: live mainnets, then testnet last).
+ *
+ * INVARIANT: this set must equal the keys of `REGISTRY_PROXIES`. The two
+ * lists are kept explicit (not derived) only to control display order — a
+ * drift guard in `contracts.test.ts` fails loudly if they diverge, which is
+ * the regression that silently hid BSC posts' vote bar before this change.
+ */
 export const chainsWithRegistry = (): readonly SupportedChainId[] =>
-  [1, 8453, 42161, 10, 84532] as const
+  [1, 8453, 42161, 10, 56, 137, 84532] as const
 
 /**
  * Chains the "report attack" composer may post to *right now*. Pure —

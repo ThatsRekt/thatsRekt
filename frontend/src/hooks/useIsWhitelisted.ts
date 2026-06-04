@@ -6,9 +6,10 @@ import { registryAddress, registryAbi } from '../lib/contracts'
  * Onchain whitelist gate, multi-chain.
  *
  * Reads `isWhitelisted(address)` on every registry proxy we have deployed:
- * the four v1.2.0 mainnets — Ethereum [1], Base [8453], Arbitrum [42161],
- * Optimism [10] — plus Base Sepolia [84532] (dev/staging testnet). The user
- * is considered whitelisted if AT LEAST ONE chain returns `true`; the post
+ * the six v1.2.0 mainnets — Ethereum [1], Base [8453], Arbitrum [42161],
+ * Optimism [10], BSC [56], Polygon [137] — plus Base Sepolia [84532]
+ * (dev/staging testnet).
+ * The user is considered whitelisted if AT LEAST ONE chain returns `true`; the post
  * form gates the chain selector on per-chain status separately
  * (`postableChainIds`), which also applies the prod testnet gate.
  *
@@ -127,6 +128,24 @@ export function useIsWhitelisted(address: `0x${string}` | undefined): {
     query: { enabled, ...COMMON_QUERY_OPTS },
   })
 
+  const bscQuery = useReadContract({
+    address: registryAddress(56),
+    abi: registryAbi,
+    functionName: 'isWhitelisted',
+    args,
+    chainId: 56,
+    query: { enabled, ...COMMON_QUERY_OPTS },
+  })
+
+  const polygonQuery = useReadContract({
+    address: registryAddress(137),
+    abi: registryAbi,
+    functionName: 'isWhitelisted',
+    args,
+    chainId: 137,
+    query: { enabled, ...COMMON_QUERY_OPTS },
+  })
+
   const baseSepoliaQuery = useReadContract({
     address: registryAddress(84532),
     abi: registryAbi,
@@ -145,6 +164,8 @@ export function useIsWhitelisted(address: `0x${string}` | undefined): {
       { chainId: 8453, ...baseQuery },
       { chainId: 42161, ...arbitrumQuery },
       { chainId: 10, ...optimismQuery },
+      { chainId: 56, ...bscQuery },
+      { chainId: 137, ...polygonQuery },
       { chainId: 84532, ...baseSepoliaQuery },
     ])
 
@@ -156,12 +177,16 @@ export function useIsWhitelisted(address: `0x${string}` | undefined): {
     void baseQuery.refetch()
     void arbitrumQuery.refetch()
     void optimismQuery.refetch()
+    void bscQuery.refetch()
+    void polygonQuery.refetch()
     void baseSepoliaQuery.refetch()
   }, [
     mainnetQuery.refetch,
     baseQuery.refetch,
     arbitrumQuery.refetch,
     optimismQuery.refetch,
+    bscQuery.refetch,
+    polygonQuery.refetch,
     baseSepoliaQuery.refetch,
   ])
 

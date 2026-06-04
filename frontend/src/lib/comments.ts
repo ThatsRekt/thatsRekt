@@ -15,7 +15,7 @@
 
 import { gqlClient } from './client'
 import { REGISTRY_PROXIES } from './contracts'
-import { getChainBySlug } from './chains'
+import { CHAINS, getChainBySlug } from './chains'
 
 // ---- types (mirror the GraphQL `Comment` type exactly) ----------------------
 
@@ -147,18 +147,12 @@ export const COMMENT_TYPES = {
 // `base-sepolia-7`. We have to match the *longest* slug first so
 // `base-sepolia-7` doesn't get parsed as `base` + `sepolia-7`.
 
-const KNOWN_SLUGS = [
-  'anvil-eth',
-  'anvil-base',
-  'sepolia',
-  'base-sepolia',
-  'base',
-  'optimism',
-  'ethereum',
-  'arbitrum',
-  'bsc',
-  'blast',
-] as const
+// Every configured chain slug, derived from the chain registry (CHAINS) so
+// this list CANNOT drift when a new chain is wired in. A hand-maintained copy
+// here is exactly what left Polygon comments throwing `cannot derive chain
+// slug` while BSC happened to be listed. The parser sorts longest-first, so
+// the source order here is irrelevant.
+const KNOWN_SLUGS: readonly string[] = Object.keys(CHAINS)
 
 const chainSlugFromPostId = (postId: string): string => {
   // Sort longest-first to avoid `base-sepolia` matching as `base`.
