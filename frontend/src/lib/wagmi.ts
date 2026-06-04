@@ -1,5 +1,5 @@
 import { http, createConfig, fallback } from 'wagmi'
-import { arbitrum, base, baseSepolia, mainnet, optimism } from 'wagmi/chains'
+import { arbitrum, base, baseSepolia, bsc, mainnet, optimism, polygon } from 'wagmi/chains'
 import { injected, coinbaseWallet, safe } from 'wagmi/connectors'
 
 /**
@@ -56,13 +56,35 @@ const arbitrumTransport = fallback([
 ])
 
 /**
+ * BSC mainnet transport — registry is deployed here at the same canonical
+ * cross-chain CREATE2 address as the other v1.2.0 chains. Same fallback
+ * shape: routeme.sh primary, official public BSC dataseed as fallback.
+ */
+const bscTransport = fallback([
+  http('https://lb.routeme.sh/rpc/56/3bd2e340-f97c-46b3-80ed-17975de5af89'),
+  http('https://bsc-dataseed.binance.org'),
+])
+
+/**
+ * Polygon PoS transport — registry is deployed here at the same canonical
+ * cross-chain CREATE2 address as the other v1.2.0 chains. Same fallback
+ * shape: routeme.sh primary, official public Polygon RPC as fallback.
+ */
+const polygonTransport = fallback([
+  http('https://lb.routeme.sh/rpc/137/3bd2e340-f97c-46b3-80ed-17975de5af89'),
+  http('https://polygon-rpc.com'),
+])
+
+/**
  * wagmi v2 config.
  *
- * Chains (v1.2.0 — registry deployed at canonical 0xBfaEEE…b89A on all 4 mainnets):
+ * Chains (v1.2.0 — registry deployed at canonical 0xBfaEEE…b89A on all 6 mainnets):
  *   - `mainnet`      — registry deployed here; also used for ENS reverse resolution.
  *   - `base`         — registry deployed here.
  *   - `arbitrum`     — registry deployed here.
  *   - `optimism`     — registry deployed here.
+ *   - `bsc`          — registry deployed here.
+ *   - `polygon`      — registry deployed here.
  *   - `baseSepolia`  — testnet registry (separate dev-salt deploy).
  *
  * Connectors:
@@ -75,7 +97,7 @@ const arbitrumTransport = fallback([
  * `walletConnect({ projectId })` into the connectors array and it just works.
  */
 export const wagmiConfig = createConfig({
-  chains: [mainnet, base, arbitrum, optimism, baseSepolia],
+  chains: [mainnet, base, arbitrum, optimism, bsc, polygon, baseSepolia],
   connectors: [
     injected({ shimDisconnect: true }),
     coinbaseWallet({ appName: 'thatsRekt', appLogoUrl: 'https://thatsrekt.com/favicon.svg' }),
@@ -86,6 +108,8 @@ export const wagmiConfig = createConfig({
     [base.id]: baseTransport,
     [arbitrum.id]: arbitrumTransport,
     [optimism.id]: optimismTransport,
+    [bsc.id]: bscTransport,
+    [polygon.id]: polygonTransport,
     [baseSepolia.id]: baseSepoliaTransport,
   },
   // SSR: false — this is a Vite SPA, no server-rendered hydration step.
