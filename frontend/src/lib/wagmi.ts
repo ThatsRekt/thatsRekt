@@ -72,7 +72,7 @@ const bscTransport = fallback([
  */
 const polygonTransport = fallback([
   http('https://lb.routeme.sh/rpc/137/3bd2e340-f97c-46b3-80ed-17975de5af89'),
-  http('https://polygon-rpc.com'),
+  http('https://polygon-bor-rpc.publicnode.com'),
 ])
 
 /**
