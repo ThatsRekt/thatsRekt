@@ -11,6 +11,7 @@ import { CommentThread } from '../components/CommentThread'
 import { LazyMarkdown } from '../components/LazyMarkdown'
 import { ShareButton } from '../components/ShareButton'
 import { ConfirmVoteButtons } from '../components/ConfirmVoteButtons'
+import { RetractPostButton } from '../components/RetractPostButton'
 import { Timeline } from '../components/Timeline'
 import { EmptyState } from '../components/EmptyState'
 import { chainIdFromSlug, getChainBySlug } from '../lib/chains'
@@ -254,6 +255,12 @@ function LivePostDetail({ postId }: { postId: string }) {
               upCount={data.confirmations}
               downCount={data.disconfirmations}
               posterAddress={data.poster.id}
+            />
+            <RetractPostButton
+              chainId={voteChainId}
+              postId={numericPostId}
+              posterAddress={data.poster.id}
+              alreadyRemoved={data.removed}
             />
           </div>
         )
