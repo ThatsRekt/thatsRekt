@@ -1,14 +1,15 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useAccount } from 'wagmi'
-import { useQueryClient } from '@tanstack/react-query'
 import { useIsWhitelisted } from '../hooks/useIsWhitelisted'
 import { useUserVote } from '../hooks/useUserVote'
 import { useConfirmPost, type ConfirmAction } from '../hooks/useConfirmPost'
+import { usePostMutationPoll } from '../hooks/usePostMutationPoll'
 import {
   ConfirmDirection,
   type ConfirmDirectionValue,
   type SupportedChainId,
 } from '../lib/contracts'
+import { isSameAddress } from '../lib/address'
 import { WhitelistGateModal } from './WhitelistGateModal'
 
 /**
@@ -73,7 +74,6 @@ export function ConfirmVoteButtons({
    */
   posterAddress: string
 }) {
-  const queryClient = useQueryClient()
   const { address, isConnected } = useAccount()
   const { isWhitelisted, isLoading: isCheckingWhitelist } = useIsWhitelisted(address)
   const {
@@ -86,10 +86,9 @@ export function ConfirmVoteButtons({
     useConfirmPost(chainId)
 
   // Self-vote detection: connected + connected addr is the post author.
-  // Address comparison is case-insensitive (poster comes from the indexer
-  // lowercased; wagmi gives `0x` checksum form).
-  const isOwnPost =
-    !!address && address.toLowerCase() === posterAddress.toLowerCase()
+  // Delegates address normalization to isSameAddress (indexer lowercases,
+  // wagmi returns EIP-55 checksum form).
+  const isOwnPost = isSameAddress(address, posterAddress)
 
   const [modalOpen, setModalOpen] = useState(false)
 
@@ -121,68 +120,27 @@ export function ConfirmVoteButtons({
 
   // After a successful tx: kick off a polling loop that invalidates the
   // feed + post queries every 3s for up to 30s, until the indexer's
-  // observed counts match our optimistic prediction. The 30s ceiling is
-  // a defensive cutoff in case the indexer is unreachable or the tx
-  // hash never resolves through the upstream chain — at that point we
-  // give up and show whatever props say.
-  //
-  // The interval id lives in a ref (not a closure-local variable) so
-  // re-fires of this effect — triggered when callbacks like
-  // `refetchUserVote` get a new identity each render — can clear the
-  // PRIOR interval before starting a new one. Without this, the per-hash
-  // guard short-circuits and the prior interval keeps ticking alongside
-  // a brand new one, multiplying RPC load.
-  const lastSuccessHash = useRef<`0x${string}` | undefined>(undefined)
-  const pollIntervalRef = useRef<number | null>(null)
+  // observed counts match our optimistic prediction. On 30s cutoff, drop
+  // the overlay so the UI reflects real server state.
+  // The generic invalidation loop lives in usePostMutationPoll; vote-specific
+  // side effects (refetchUserVote, setPendingDirection(null)) stay here.
+  usePostMutationPoll({
+    hash,
+    isSuccess,
+    reset,
+    onCutoff: clearOptimistic,
+  })
+
+  // Vote-specific on-success side effects: clear the pending-direction spinner
+  // and kick a user-vote refetch so the active-vote highlight updates quickly.
+  // Runs once per unique success hash, guarded by the same hash ref pattern
+  // used inside usePostMutationPoll.
   useEffect(() => {
-    // Always clear any prior interval first — guarantees at most one
-    // poller is active regardless of how many times this effect re-fires.
-    if (pollIntervalRef.current !== null) {
-      window.clearInterval(pollIntervalRef.current)
-      pollIntervalRef.current = null
-    }
-
-    if (!isSuccess || !hash || lastSuccessHash.current === hash) return
-    lastSuccessHash.current = hash
+    if (!isSuccess || !hash) return
     setPendingDirection(null)
-
-    const startedAt = Date.now()
-    const POLL_INTERVAL_MS = 3_000
-    const POLL_CUTOFF_MS = 30_000
-
-    const tick = () => {
-      void queryClient.invalidateQueries({ queryKey: ['feed'] })
-      void queryClient.invalidateQueries({ queryKey: ['post'] })
-      void refetchUserVote()
-    }
-    tick() // immediate first tick
-
-    pollIntervalRef.current = window.setInterval(() => {
-      if (Date.now() - startedAt > POLL_CUTOFF_MS) {
-        if (pollIntervalRef.current !== null) {
-          window.clearInterval(pollIntervalRef.current)
-          pollIntervalRef.current = null
-        }
-        // Cutoff hit. Drop the overlay so the UI reflects whatever the
-        // server actually returned — even if it disagrees with our
-        // prediction. Better to show stale-but-real than a hopeful lie.
-        clearOptimistic()
-        return
-      }
-      tick()
-    }, POLL_INTERVAL_MS) as unknown as number
-
-    // Don't `reset()` synchronously — wagmi will surface `isSuccess: true`
-    // again next render if we did, fighting our guard. Defer.
-    const tReset = window.setTimeout(() => reset(), 0)
-    return () => {
-      if (pollIntervalRef.current !== null) {
-        window.clearInterval(pollIntervalRef.current)
-        pollIntervalRef.current = null
-      }
-      window.clearTimeout(tReset)
-    }
-  }, [isSuccess, hash, queryClient, refetchUserVote, reset])
+    void refetchUserVote()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isSuccess, hash])
 
   // Once props (counts) catch up to the optimistic prediction, clear
   // the overlay so subsequent renders are driven by props alone. Doing
