@@ -563,7 +563,7 @@ interface ProposerLeaderboardPage {
 
 /** Public Base mainnet RPC — same load-balanced endpoint used by other DAMM tooling. */
 const BASE_RPC_URL =
-  'https://lb.routeme.sh/rpc/8453/3bd2e340-f97c-46b3-80ed-17975de5af89'
+  'https://lb.routeme.sh/rpc/8453/f2c53b96-d37e-42b3-9c6f-47bb336e166e'
 
 /** Average Base mainnet block time, used for human-readable lag formatting. */
 export const BASE_BLOCK_TIME_SECONDS = 2
