@@ -12,7 +12,7 @@ import { injected, coinbaseWallet, safe } from 'wagmi/connectors'
  * fallback. Both no-key for browser-side reads.
  */
 const baseTransport = fallback([
-  http('https://lb.routeme.sh/rpc/8453/3bd2e340-f97c-46b3-80ed-17975de5af89'),
+  http('https://lb.routeme.sh/rpc/8453/f2c53b96-d37e-42b3-9c6f-47bb336e166e'),
   http('https://mainnet.base.org'),
 ])
 
@@ -31,7 +31,7 @@ const baseSepoliaTransport = fallback([
  * shape as `baseTransport`.
  */
 const optimismTransport = fallback([
-  http('https://lb.routeme.sh/rpc/10/3bd2e340-f97c-46b3-80ed-17975de5af89'),
+  http('https://lb.routeme.sh/rpc/10/f2c53b96-d37e-42b3-9c6f-47bb336e166e'),
   http('https://mainnet.optimism.io'),
 ])
 
@@ -42,7 +42,7 @@ const optimismTransport = fallback([
  * is active on, so any displayed address's ENS lookup always hits Ethereum.
  */
 const mainnetTransport = fallback([
-  http('https://lb.routeme.sh/rpc/1/3bd2e340-f97c-46b3-80ed-17975de5af89'),
+  http('https://lb.routeme.sh/rpc/1/f2c53b96-d37e-42b3-9c6f-47bb336e166e'),
   http('https://eth.llamarpc.com'),
 ])
 
@@ -51,7 +51,7 @@ const mainnetTransport = fallback([
  * canonical cross-chain CREATE2 address as the other v1.2.0 chains.
  */
 const arbitrumTransport = fallback([
-  http('https://lb.routeme.sh/rpc/42161/3bd2e340-f97c-46b3-80ed-17975de5af89'),
+  http('https://lb.routeme.sh/rpc/42161/f2c53b96-d37e-42b3-9c6f-47bb336e166e'),
   http('https://arb1.arbitrum.io/rpc'),
 ])
 
@@ -61,7 +61,7 @@ const arbitrumTransport = fallback([
  * shape: routeme.sh primary, official public BSC dataseed as fallback.
  */
 const bscTransport = fallback([
-  http('https://lb.routeme.sh/rpc/56/3bd2e340-f97c-46b3-80ed-17975de5af89'),
+  http('https://lb.routeme.sh/rpc/56/f2c53b96-d37e-42b3-9c6f-47bb336e166e'),
   http('https://bsc-dataseed.binance.org'),
 ])
 
@@ -71,7 +71,7 @@ const bscTransport = fallback([
  * shape: routeme.sh primary, official public Polygon RPC as fallback.
  */
 const polygonTransport = fallback([
-  http('https://lb.routeme.sh/rpc/137/3bd2e340-f97c-46b3-80ed-17975de5af89'),
+  http('https://lb.routeme.sh/rpc/137/f2c53b96-d37e-42b3-9c6f-47bb336e166e'),
   http('https://polygon-bor-rpc.publicnode.com'),
 ])
 
