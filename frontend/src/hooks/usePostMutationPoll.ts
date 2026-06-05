@@ -34,6 +34,17 @@ export interface UsePostMutationPollOptions {
   /** Wagmi's `reset()` for the write hook — deferred to avoid fighting the hash guard. */
   reset: () => void
   /**
+   * Optional callback fired on EVERY tick: the immediate first tick and each
+   * subsequent 3s interval tick, up to the 30s cutoff.
+   *
+   * Use this for per-tick side effects whose query key is NOT touched by the
+   * `['post']`/`['feed']` invalidations — e.g. `refetchUserVote`, which reads
+   * `confirmationOf` directly from chain on its own query key. Passing it here
+   * preserves the original ≤3s correction window instead of the one-shot
+   * semantics of a `useEffect([isSuccess, hash])`.
+   */
+  onTick?: () => void
+  /**
    * Optional callback fired when the 30s cutoff is reached.
    * Use this to clear any optimistic overlay so the UI reflects real server state.
    */
@@ -44,11 +55,12 @@ export function usePostMutationPoll({
   hash,
   isSuccess,
   reset,
+  onTick,
   onCutoff,
 }: UsePostMutationPollOptions): void {
   const queryClient = useQueryClient()
   const lastSuccessHash = useRef<`0x${string}` | undefined>(undefined)
-  const pollIntervalRef = useRef<ReturnType<typeof window.setInterval> | null>(null)
+  const pollIntervalRef = useRef<ReturnType<typeof globalThis.setInterval> | null>(null)
 
   useEffect(() => {
     // Always clear any prior interval first — guarantees at most one poller is
@@ -67,6 +79,7 @@ export function usePostMutationPoll({
     const tick = () => {
       void queryClient.invalidateQueries({ queryKey: ['post'] })
       void queryClient.invalidateQueries({ queryKey: ['feed'] })
+      onTick?.()
     }
 
     // Immediate first tick — surface indexer updates ASAP without waiting 3s.
@@ -96,5 +109,5 @@ export function usePostMutationPoll({
       globalThis.clearTimeout(tReset)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isSuccess, hash, queryClient, reset, onCutoff])
+  }, [isSuccess, hash, queryClient, reset, onTick, onCutoff])
 }

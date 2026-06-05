@@ -163,6 +163,54 @@ describe('usePostMutationPoll', () => {
     expect(_invalidateSpy.mock.calls.length).toBe(countAtCutoff)
   })
 
+  it('fires onTick on the immediate first tick AND on each 3s interval tick', () => {
+    // This test is RED against an impl that calls onTick only once (e.g. in a
+    // one-shot useEffect([isSuccess, hash])). The correct impl passes onTick
+    // into tick() so it runs on the immediate first call AND every interval.
+    const onTick = jest.fn()
+
+    renderHook(() =>
+      usePostMutationPoll({
+        hash: HASH_A,
+        isSuccess: true,
+        reset: () => {},
+        onTick,
+      }),
+    )
+
+    // Immediate first tick must have fired onTick once.
+    expect(onTick.mock.calls.length).toBe(1)
+
+    // Advance 3s → one interval tick → onTick a second time.
+    act(() => { jest.advanceTimersByTime(3_000) })
+    expect(onTick.mock.calls.length).toBe(2)
+
+    // Advance another 3s → third call.
+    act(() => { jest.advanceTimersByTime(3_000) })
+    expect(onTick.mock.calls.length).toBe(3)
+  })
+
+  it('stops calling onTick after the 30s cutoff', () => {
+    const onTick = jest.fn()
+
+    renderHook(() =>
+      usePostMutationPoll({
+        hash: HASH_A,
+        isSuccess: true,
+        reset: () => {},
+        onTick,
+      }),
+    )
+
+    // Run past cutoff (cutoff fires at ~33s; see timing note in onCutoff test).
+    act(() => { jest.advanceTimersByTime(34_000) })
+    const countAtCutoff = onTick.mock.calls.length
+
+    // Advancing further must NOT fire more onTick calls.
+    act(() => { jest.advanceTimersByTime(10_000) })
+    expect(onTick.mock.calls.length).toBe(countAtCutoff)
+  })
+
   it('maintains at most ONE active interval across re-renders (ref guard)', () => {
     // This is the load-bearing assertion. A naive implementation that creates
     // a new setInterval on every render (without a ref to clear the prior one)

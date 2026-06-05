@@ -122,23 +122,31 @@ export function ConfirmVoteButtons({
   // feed + post queries every 3s for up to 30s, until the indexer's
   // observed counts match our optimistic prediction. On 30s cutoff, drop
   // the overlay so the UI reflects real server state.
-  // The generic invalidation loop lives in usePostMutationPoll; vote-specific
-  // side effects (refetchUserVote, setPendingDirection(null)) stay here.
+  //
+  // `onTick` runs on the immediate first tick AND every 3s interval tick —
+  // the same cadence as the ['post']/['feed'] invalidations. This preserves
+  // the original behaviour where `refetchUserVote` polled at 3s granularity
+  // instead of firing only once. `useUserVote` reads `confirmationOf`
+  // directly from chain on its own query key, so without per-tick refetches
+  // a stale highlight could persist up to 30s rather than ≤3s.
+  //
+  // `setPendingDirection(null)` is a one-shot: it fires when the poll first
+  // starts (equivalent to the original's placement before the tick() call).
   usePostMutationPoll({
     hash,
     isSuccess,
     reset,
+    onTick: () => { void refetchUserVote() },
     onCutoff: clearOptimistic,
   })
 
-  // Vote-specific on-success side effects: clear the pending-direction spinner
-  // and kick a user-vote refetch so the active-vote highlight updates quickly.
-  // Runs once per unique success hash, guarded by the same hash ref pattern
-  // used inside usePostMutationPoll.
+  // Clear the pending-direction spinner once per tx confirmation (one-shot).
+  // This mirrors the original's `setPendingDirection(null)` placement at the
+  // start of the success branch — it runs exactly once when the hash guard
+  // first passes, not on every tick.
   useEffect(() => {
     if (!isSuccess || !hash) return
     setPendingDirection(null)
-    void refetchUserVote()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isSuccess, hash])
 
