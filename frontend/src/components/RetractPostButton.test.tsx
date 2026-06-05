@@ -9,25 +9,35 @@
  *      - renders when connected + poster + not removed
  *   2. Two-step confirm FSM:
  *      - First click arms the button (label becomes "confirm — permanent")
- *        and does NOT call submit.
- *      - Second click (while armed) calls submit with the correct postId.
+ *        and does NOT call writeContract.
+ *      - Second click (while armed) calls writeContract with the correct postId.
  *   3. Error → idle + error span shown; retry must re-arm.
  *
  * Following the bun:test + mock.module('wagmi') convention from PostCard.test.tsx.
+ *
+ * ISOLATION NOTE: This file deliberately does NOT call mock.module for
+ * '../hooks/useRetractPost' or '../hooks/usePostMutationPoll'. Those are
+ * real hooks that only depend on wagmi (mocked below) and @tanstack/react-query
+ * (real, via QueryClientProvider wrapper). Stubbing the hooks globally would
+ * contaminate useRetractPost.test.ts and usePostMutationPoll.test.ts when bun
+ * runs them after this file (mock.module is process-global with no per-file
+ * auto-restore in bun 1.3.x). We assert at the wagmi boundary instead, which
+ * is equally load-bearing: the component → hook → writeContract call chain is
+ * fully exercised.
  */
 import { describe, expect, it, mock, beforeEach, afterEach } from 'bun:test'
 import { render, screen, fireEvent, act, cleanup } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import React from 'react'
-import type { ReactNode } from 'react'
 
 // ---------------------------------------------------------------------------
 // Module-level mock state — mutated between tests to simulate different
 // connected/disconnected scenarios.
 // ---------------------------------------------------------------------------
 
-const mockSubmit = mock(async (_params: { postId: bigint }) => true)
+// Stable mock for writeContract — hoisted so tests can assert on it.
+const mockWriteContract = mock(() => undefined)
 const mockReset = mock(() => undefined)
 
 let mockAddress: `0x${string}` | undefined = '0xPoster0000000000000000000000000000000001' as `0x${string}`
@@ -41,18 +51,20 @@ mock.module('wagmi', () => ({
   useAccount: () => ({
     address: mockAddress,
     isConnected: mockIsConnected,
+    // chainId must match the CHAIN_ID used in tests so useRetractPost skips
+    // the chain-switch path.
     chainId: 8453,
     chain: undefined,
   }),
   useWriteContract: () => ({
-    writeContract: mock(() => undefined),
-    data: undefined,
-    isPending: false,
-    error: null,
+    writeContract: mockWriteContract,
+    data: undefined as `0x${string}` | undefined,
+    isPending: mockIsBroadcasting,
+    error: mockError,
     reset: mockReset,
   }),
   useWaitForTransactionReceipt: () => ({
-    isLoading: false,
+    isLoading: mockIsMining,
     isSuccess: mockIsSuccess,
     error: null,
   }),
@@ -66,28 +78,6 @@ mock.module('wagmi', () => ({
   useConnect: () => ({ connect: mock(() => undefined), connectors: [] }),
   useDisconnect: () => ({ disconnect: mock(() => undefined) }),
   useSignTypedData: () => ({ signTypedData: mock(async () => '0xsig') }),
-}))
-
-// Mock useRetractPost so we control its return value without the wagmi
-// internals interfering with the component-level FSM test.
-mock.module('../hooks/useRetractPost', () => ({
-  useRetractPost: (_chainId: number) => ({
-    submit: mockSubmit,
-    reset: mockReset,
-    hash: undefined as `0x${string}` | undefined,
-    isBroadcasting: mockIsBroadcasting,
-    isMining: mockIsMining,
-    isSwitching: false,
-    isSuccess: mockIsSuccess,
-    error: mockError,
-    isPending: mockIsBroadcasting || mockIsMining,
-  }),
-}))
-
-// Mock usePostMutationPoll — nothing to assert about it at the component
-// level other than it doesn't crash.
-mock.module('../hooks/usePostMutationPoll', () => ({
-  usePostMutationPoll: mock(() => undefined),
 }))
 
 // Import after all mocks are in place.
@@ -128,7 +118,7 @@ describe('RetractPostButton — visibility matrix', () => {
     mockError = null
     mockIsBroadcasting = false
     mockIsMining = false
-    mockSubmit.mockReset()
+    mockWriteContract.mockReset()
     mockReset.mockReset()
   })
 
@@ -177,24 +167,24 @@ describe('RetractPostButton — two-step confirm FSM', () => {
     mockError = null
     mockIsBroadcasting = false
     mockIsMining = false
-    mockSubmit.mockReset()
+    mockWriteContract.mockReset()
     mockReset.mockReset()
   })
 
   afterEach(() => { cleanup() })
 
-  it('first click arms the button with label "confirm — permanent" and does NOT call submit', () => {
+  it('first click arms the button with label "confirm — permanent" and does NOT call writeContract', () => {
     renderButton()
     const btn = screen.getByRole('button', { name: /retract/i })
     fireEvent.click(btn)
 
     // After arming, the button label must be "confirm — permanent"
     expect(screen.getByRole('button', { name: /confirm — permanent/i })).toBeDefined()
-    // submit must NOT have been called on the first click
-    expect(mockSubmit).not.toHaveBeenCalled()
+    // writeContract must NOT have been called on the first click
+    expect(mockWriteContract).not.toHaveBeenCalled()
   })
 
-  it('second click (while armed) calls submit with the correct postId', async () => {
+  it('second click (while armed) calls writeContract with the correct postId', async () => {
     renderButton()
 
     // First click → arm
@@ -205,8 +195,15 @@ describe('RetractPostButton — two-step confirm FSM', () => {
       fireEvent.click(screen.getByRole('button', { name: /confirm — permanent/i }))
     })
 
-    expect(mockSubmit).toHaveBeenCalledTimes(1)
-    expect(mockSubmit).toHaveBeenCalledWith({ postId: POST_ID })
+    expect(mockWriteContract).toHaveBeenCalledTimes(1)
+    // The call must carry the correct postId in the args array.
+    // This is the load-bearing assertion: the component passes POST_ID all the
+    // way through useRetractPost → writeContract.
+    const calls = mockWriteContract.mock.calls
+    expect(calls.length).toBeGreaterThan(0)
+    const firstArg = calls[0]?.[0] as { args?: bigint[]; functionName?: string } | undefined
+    expect(firstArg?.args).toEqual([POST_ID])
+    expect(firstArg?.functionName).toBe('retract')
   })
 
   it('armed button does not auto-revert after a delay (stays armed)', async () => {
@@ -227,7 +224,7 @@ describe('RetractPostButton — error → idle flow', () => {
     mockIsSuccess = false
     mockIsBroadcasting = false
     mockIsMining = false
-    mockSubmit.mockReset()
+    mockWriteContract.mockReset()
     mockReset.mockReset()
   })
 
@@ -265,7 +262,7 @@ describe('RetractPostButton — in-progress states', () => {
     mockIsConnected = true
     mockIsSuccess = false
     mockError = null
-    mockSubmit.mockReset()
+    mockWriteContract.mockReset()
   })
 
   afterEach(() => { cleanup() })

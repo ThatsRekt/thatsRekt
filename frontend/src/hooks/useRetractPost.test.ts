@@ -95,17 +95,21 @@ describe('useRetractPost', () => {
     expect(submitted).toBe(true)
     expect(mockWriteContract).toHaveBeenCalledTimes(1)
 
-    const call = mockWriteContract.mock.calls[0][0] as {
+    // Guard before indexing into calls to avoid TS2493 "Tuple has no element
+    // at index 0" and TS2352 unsafe casts when the mock was not called.
+    const calls = mockWriteContract.mock.calls
+    expect(calls.length).toBeGreaterThan(0)
+    const call = calls[0]?.[0] as {
       functionName: string
       args: bigint[]
       chainId: number
       address: string
-    }
-    expect(call.functionName).toBe('retract')
-    expect(call.args).toEqual([42n])
-    expect(call.chainId).toBe(8453)
+    } | undefined
+    expect(call?.functionName).toBe('retract')
+    expect(call?.args).toEqual([42n])
+    expect(call?.chainId).toBe(8453)
     // Canonical v1.2.0 proxy address on Base mainnet
-    expect(call.address).toBe('0xBfaEEE9662b4c037De24e5Caa65815350d57b89A')
+    expect(call?.address).toBe('0xBfaEEE9662b4c037De24e5Caa65815350d57b89A')
   })
 
   it('passes the correct postId in args when postId differs', async () => {
@@ -116,8 +120,11 @@ describe('useRetractPost', () => {
     })
 
     expect(mockWriteContract).toHaveBeenCalledTimes(1)
-    const call = mockWriteContract.mock.calls[0][0] as { args: bigint[] }
-    expect(call.args).toEqual([99n])
+    // Guard before indexing to avoid TS2493 when mock was not called.
+    const calls = mockWriteContract.mock.calls
+    expect(calls.length).toBeGreaterThan(0)
+    const call = calls[0]?.[0] as { args?: bigint[] } | undefined
+    expect(call?.args).toEqual([99n])
   })
 
   it('does NOT call switchChainAsync when connected chain matches target chain', async () => {
