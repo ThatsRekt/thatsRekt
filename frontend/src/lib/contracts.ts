@@ -206,4 +206,16 @@ export const registryAbi = [
     inputs: [],
     outputs: [{ name: '', type: 'uint256' }],
   },
+  // Poster self-removal. Reverts with `NotPoster` if msg.sender is not
+  // the original poster, `PostIsRemoved` if already retracted,
+  // `PostIsPurged` if purged, or `PostNotFound` if the id doesn't exist.
+  // A de-whitelisted poster CAN still retract their own post — no
+  // whitelist check is performed.
+  {
+    type: 'function',
+    name: 'retract',
+    stateMutability: 'nonpayable',
+    inputs: [{ name: 'postId', type: 'uint256' }],
+    outputs: [],
+  },
 ] as const
