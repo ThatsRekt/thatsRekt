@@ -14,12 +14,28 @@ import { ConfirmVoteButtons } from '../components/ConfirmVoteButtons'
 import { RetractPostButton } from '../components/RetractPostButton'
 import { Timeline } from '../components/Timeline'
 import { EmptyState } from '../components/EmptyState'
-import { chainIdFromSlug, getChainBySlug } from '../lib/chains'
+import { chainIdFromSlug, getChainBySlug, explorerTxUrl } from '../lib/chains'
 import {
   registryAddress,
   type SupportedChainId,
 } from '../lib/contracts'
 import { formatTimestamp, relativeTime, formatDateOnly } from '../lib/format'
+
+// Hardcoded tx links for posts indexed before `createdAtTxHash` was stored.
+// These will never be auto-populated by the indexer because the migration is
+// not retroactive. Future posts indexed after the migration will have
+// `createdAtTxHash` set by the processor and won't need an entry here.
+// Keyed by composite post id (`{chainSlug}-{onchainId}`).
+const HISTORICAL_TX_LINKS: Record<string, string> = {
+  'bsc-1':        'https://bscscan.com/tx/0x5340cf064a5508917e9d18fae70d965a6eb3e6dbe089ad7e65f92dbd91cf1449#eventlog',
+  'ethereum-7':   'https://etherscan.io/tx/0x02dcb07db2297099dfe9a6ea09f857da68534c6441e933e3e848ea2c9185abf2#eventlog',
+  'ethereum-8':   'https://etherscan.io/tx/0xab0f2bba6b00b82c367a69eefed57e6944cb1783d089b58f3c1953935e6d7930#eventlog',
+  'ethereum-9':   'https://etherscan.io/tx/0x5fca0e320a9d1c4442c2a4f8a5fae8d5e17b3c06aebb793e4a293762e71bb3f4#eventlog',
+  'ethereum-10':  'https://etherscan.io/tx/0x958a884326ee5a8c9dbb1f97cd507db30d267c2370c676cf7308b59eac1ee868#eventlog',
+  'arbitrum-1':   'https://arbiscan.io/tx/0x36707d55b3130ae6d1d9b3f4ab431cc7f33799092ab835957b8572f347a7f24d#eventlog',
+  'optimism-1':   'https://optimistic.etherscan.io/tx/0xe20bde1db21df1b21fd2c2a719c4b1ac2707ff0497c3ce64c68d82543a0e5443#eventlog',
+  'optimism-2':   'https://optimistic.etherscan.io/tx/0xc1a1d57eb6fd90d0ea9384f4e481f36f19f95e6dff168ab22f706c8408be4564#eventlog',
+}
 
 export function PostDetail() {
   // Two URL shapes hit this component:
@@ -198,6 +214,30 @@ function LivePostDetail({ postId }: { postId: string }) {
           <Field label="last updated" tooltip={formatTimestamp(data.lastUpdatedAt)}>
             {relativeTime(data.lastUpdatedAt)}
           </Field>
+          {(() => {
+            // Prefer the indexer-stored tx hash (set on all posts after the
+            // createdAtTxHash migration). Fall back to the hardcoded map for
+            // historical posts that were indexed before that field existed.
+            const txUrl = data.createdAtTxHash && chainSlug
+              ? (() => {
+                  const chain = getChainBySlug(chainSlug)
+                  return chain ? explorerTxUrl(chain, data.createdAtTxHash!) + '#eventlog' : null
+                })()
+              : HISTORICAL_TX_LINKS[data.id] ?? null
+            if (!txUrl) return null
+            return (
+              <Field label="view post onchain">
+                <a
+                  href={txUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="rekt-link"
+                >
+                  poster.thatsRekt.eth ↗
+                </a>
+              </Field>
+            )
+          })()}
           {data.removed && data.removedAtTimestamp && (
             <Field label="retracted" tooltip={formatTimestamp(data.removedAtTimestamp)}>
               {relativeTime(data.removedAtTimestamp)}

@@ -313,6 +313,7 @@ async function handlePostCreated(ctx: Ctx, caches: Caches, log: Log): Promise<vo
     purged: false,
     createdAtBlock: block.height,
     createdAtTimestamp: ts,
+    createdAtTxHash: log.transactionHash,
   })
   caches.posts.set(postId, post)
 

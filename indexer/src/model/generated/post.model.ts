@@ -76,6 +76,9 @@ export class Post {
     @DateTimeColumn_({nullable: false})
     createdAtTimestamp!: Date
 
+    @StringColumn_({nullable: true})
+    createdAtTxHash!: string | undefined | null
+
     @IntColumn_({nullable: true})
     removedAtBlock!: number | undefined | null
 
