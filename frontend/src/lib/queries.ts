@@ -89,6 +89,7 @@ export interface PostDetail {
   purged: boolean
   createdAtBlock: number
   createdAtTimestamp: string
+  createdAtTxHash: string | null
   removedAtTimestamp: string | null
   purgedAtTimestamp: string | null
   attackerLinks: PostAttackerLink[]
@@ -233,6 +234,7 @@ const buildPostDetailQuery = (prefix: string): string => /* GraphQL */ `
       purged
       createdAtBlock
       createdAtTimestamp
+      createdAtTxHash
       removedAtTimestamp
       purgedAtTimestamp
       attackerLinks {
