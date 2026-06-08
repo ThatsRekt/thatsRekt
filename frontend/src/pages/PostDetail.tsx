@@ -32,6 +32,7 @@ const HISTORICAL_TX_LINKS: Record<string, string> = {
   'ethereum-8':   'https://etherscan.io/tx/0xab0f2bba6b00b82c367a69eefed57e6944cb1783d089b58f3c1953935e6d7930#eventlog',
   'ethereum-9':   'https://etherscan.io/tx/0x5fca0e320a9d1c4442c2a4f8a5fae8d5e17b3c06aebb793e4a293762e71bb3f4#eventlog',
   'ethereum-10':  'https://etherscan.io/tx/0x958a884326ee5a8c9dbb1f97cd507db30d267c2370c676cf7308b59eac1ee868#eventlog',
+  'ethereum-13':  'https://etherscan.io/tx/0xb9232519e3990c4ed5db2d7511ac898b2873854ec03c27fb52dc3dc6f950b21a#eventlog',
   'arbitrum-1':   'https://arbiscan.io/tx/0x36707d55b3130ae6d1d9b3f4ab431cc7f33799092ab835957b8572f347a7f24d#eventlog',
   'optimism-1':   'https://optimistic.etherscan.io/tx/0xe20bde1db21df1b21fd2c2a719c4b1ac2707ff0497c3ce64c68d82543a0e5443#eventlog',
   'optimism-2':   'https://optimistic.etherscan.io/tx/0xc1a1d57eb6fd90d0ea9384f4e481f36f19f95e6dff168ab22f706c8408be4564#eventlog',
