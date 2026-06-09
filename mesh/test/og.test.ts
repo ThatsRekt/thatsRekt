@@ -19,6 +19,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { handleOgImageRoute } from '../src/og.js'
 import type { OgRouteDeps } from '../src/og.js'
 import type { ChainEntry } from '../src/chains.js'
+import { __internal } from '../src/og.js'
 
 // ---------------------------------------------------------------------------
 // PNG magic bytes: 8-byte signature that all valid PNG files start with.
@@ -268,5 +269,48 @@ describe('handleOgImageRoute — routing', () => {
   test('returns null for /graphql path', async () => {
     const result = await handleOgImageRoute('/graphql', DEPS)
     expect(result).toBeNull()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Font guard — assertFontsExist
+// ---------------------------------------------------------------------------
+//
+// Verifies the fail-loud guard that prevents silent blank-card rendering
+// when a bundled font is missing (e.g. Dockerfile COPY regression).
+//
+// The helper is pure: same inputs → same output, no side effects beyond
+// throwing. We test it directly via __internal so we never need to
+// invalidate the real FONT_FILES on disk.
+
+describe('assertFontsExist', () => {
+  const { assertFontsExist, FONT_FILES } = __internal
+
+  test('throws with the exact missing path when given a nonexistent path', () => {
+    const bogus = '/nonexistent/path/to/BogusFont.ttf'
+    expect(() => assertFontsExist([bogus])).toThrow(bogus)
+  })
+
+  test('thrown message mentions bundled-font / asset-copy problem', () => {
+    const bogus = '/no/such/BogusFont.ttf'
+    let message = ''
+    try {
+      assertFontsExist([bogus])
+    } catch (err) {
+      message = err instanceof Error ? err.message : String(err)
+    }
+    // The error message should guide the operator toward the root cause.
+    expect(message).toMatch(/font/i)
+  })
+
+  test('does not throw when all paths exist (real FONT_FILES)', () => {
+    expect(() => assertFontsExist(FONT_FILES)).not.toThrow()
+  })
+
+  test('throws on the first missing path even when others exist', () => {
+    const [firstReal] = FONT_FILES
+    const bogus = '/nonexistent/BogusFont.ttf'
+    // Mix a real path and a bogus one — guard must catch the missing one.
+    expect(() => assertFontsExist([firstReal!, bogus])).toThrow(bogus)
   })
 })

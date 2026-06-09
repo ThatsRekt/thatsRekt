@@ -35,6 +35,7 @@
 import { createRequire } from 'module'
 import { fileURLToPath } from 'url'
 import { join, dirname } from 'path'
+import { existsSync } from 'fs'
 import { z } from 'zod'
 
 import type { ChainEntry, ChainSlug } from './chains.js'
@@ -76,6 +77,34 @@ const FONT_FILES = Object.freeze([
   join(_assetsDir, 'JetBrainsMono-Bold.ttf'),
   join(_assetsDir, 'JetBrainsMono-ExtraBold.ttf'),
 ])
+
+/**
+ * Assert that every path in `paths` exists and is readable.
+ *
+ * Throws immediately on the first missing path, naming the exact file so
+ * the operator knows which asset is absent. This is a pure function of its
+ * input — safe to call in tests with arbitrary path lists.
+ *
+ * Called once at module load over FONT_FILES below so mesh crashes loudly
+ * at boot rather than silently serving blank/tofu OG cards when a bundled
+ * font is missing (e.g. a Dockerfile COPY regression).
+ */
+export const assertFontsExist = (paths: readonly string[]): void => {
+  for (const p of paths) {
+    if (!existsSync(p)) {
+      throw new Error(
+        `[mesh:og] Bundled font not found: "${p}". ` +
+          `This is a missing-asset / Dockerfile COPY problem — ` +
+          `ensure all fonts in assets/fonts/ are included in the image.`,
+      )
+    }
+  }
+}
+
+// Fail loud at module load: if any bundled font is absent, crash immediately
+// rather than serving blank cards. This is a one-time check — existsSync is
+// synchronous and the font directory is static for the lifetime of the process.
+assertFontsExist(FONT_FILES)
 
 /**
  * Rasterize an SVG string to PNG bytes.
@@ -1053,6 +1082,8 @@ export const __internal = Object.freeze({
   wrapLines,
   renderTombstoneSvg,
   CRAWLER_UA_FRAGMENTS,
+  assertFontsExist,
+  FONT_FILES,
 })
 
 // Type re-exports kept colocated so callers don't reach into chains.ts.
