@@ -32,9 +32,98 @@
  * chain from the URL and the squid's `postById` shape is stable across
  * chains.
  */
+import { createRequire } from 'module'
+import { fileURLToPath } from 'url'
+import { join, dirname } from 'path'
+import { existsSync } from 'fs'
 import { z } from 'zod'
 
 import type { ChainEntry, ChainSlug } from './chains.js'
+
+// ---------------------------------------------------------------------------
+// PNG rasterization via resvg-js
+//
+// Font strategy: we bundle JetBrains Mono (OFL-licensed) in
+// `assets/fonts/` so rendering is fully self-contained — Alpine's
+// node:20-alpine ships zero system fonts, so `loadSystemFonts: true`
+// would produce tofu glyphs on every text element. Loading only the
+// bundled font family guarantees identical output across dev (macOS)
+// and prod (Alpine/musl).
+//
+// The compiled output lives in `lib/`, one level above `assets/`. At
+// runtime we resolve relative to this file's location whether running
+// via `ts` (src/) or `node lib/og.js` (lib/).
+//
+// musl note: @resvg/resvg-js ships platform-specific optional deps
+// including `@resvg/resvg-js-linux-x64-musl`. npm resolves the correct
+// variant at install time based on libc detection, so the prod Dockerfile
+// (node:20-alpine with pnpm --prod install) naturally installs the musl
+// binary — no base-image change needed.
+// ---------------------------------------------------------------------------
+
+const _require = createRequire(import.meta.url)
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const { Resvg } = _require('@resvg/resvg-js') as { Resvg: new (svg: string, opts?: Record<string, unknown>) => { render(): { asPng(): Uint8Array } } }
+
+// Resolve the assets/ directory relative to this source file.
+// Works for both `src/og.ts` (via tsx/bun) and compiled `lib/og.js`
+// because assets/ is at the same depth as src/ and lib/.
+const _thisDir = dirname(fileURLToPath(import.meta.url))
+const _assetsDir = join(_thisDir, '..', 'assets', 'fonts')
+
+const FONT_FILES = Object.freeze([
+  join(_assetsDir, 'JetBrainsMono-Regular.ttf'),
+  join(_assetsDir, 'JetBrainsMono-Medium.ttf'),
+  join(_assetsDir, 'JetBrainsMono-Bold.ttf'),
+  join(_assetsDir, 'JetBrainsMono-ExtraBold.ttf'),
+])
+
+/**
+ * Assert that every path in `paths` exists and is readable.
+ *
+ * Throws immediately on the first missing path, naming the exact file so
+ * the operator knows which asset is absent. This is a pure function of its
+ * input — safe to call in tests with arbitrary path lists.
+ *
+ * Called once at module load over FONT_FILES below so mesh crashes loudly
+ * at boot rather than silently serving blank/tofu OG cards when a bundled
+ * font is missing (e.g. a Dockerfile COPY regression).
+ */
+export const assertFontsExist = (paths: readonly string[]): void => {
+  for (const p of paths) {
+    if (!existsSync(p)) {
+      throw new Error(
+        `[mesh:og] Bundled font not found: "${p}". ` +
+          `This is a missing-asset / Dockerfile COPY problem — ` +
+          `ensure all fonts in assets/fonts/ are included in the image.`,
+      )
+    }
+  }
+}
+
+// Fail loud at module load: if any bundled font is absent, crash immediately
+// rather than serving blank cards. This is a one-time check — existsSync is
+// synchronous and the font directory is static for the lifetime of the process.
+assertFontsExist(FONT_FILES)
+
+/**
+ * Rasterize an SVG string to PNG bytes.
+ *
+ * Renders at native SVG dimensions (1200×630 for all OG cards).
+ * Uses only bundled JetBrains Mono — system fonts are disabled so
+ * the output is deterministic on every platform (including Alpine).
+ */
+const svgToPng = (svg: string): Uint8Array => {
+  const resvg = new Resvg(svg, {
+    fitTo: { mode: 'original' },
+    font: {
+      fontFiles: [...FONT_FILES],
+      loadSystemFonts: false,
+      defaultFontFamily: 'JetBrains Mono',
+    },
+  })
+  return resvg.render().asPng()
+}
 
 // ---------------------------------------------------------------------------
 // Wire shapes — only what we actually render. Anything beyond this is
@@ -745,8 +834,8 @@ const fetchPostFromSquid = async (
 
 export interface OgRouteResult {
   readonly status: number
-  /** Response body. */
-  readonly body: string
+  /** Response body. String for HTML responses; Uint8Array for image responses. */
+  readonly body: string | Uint8Array
   /** Mime type for the response body. Drives the Content-Type header. */
   readonly contentType: string
 }
@@ -936,16 +1025,16 @@ export const handleOgImageRoute = async (
   if (!chain) {
     return {
       status: 404,
-      contentType: 'image/svg+xml; charset=utf-8',
-      body: renderGenericFallbackSvg(`[ UNKNOWN CHAIN ]`, `No chain "${chainSlug}".`),
+      contentType: 'image/png',
+      body: svgToPng(renderGenericFallbackSvg(`[ UNKNOWN CHAIN ]`, `No chain "${chainSlug}".`)),
     }
   }
 
   if (!/^\d+$/.test(onchainId)) {
     return {
       status: 404,
-      contentType: 'image/svg+xml; charset=utf-8',
-      body: renderGenericFallbackSvg(`[ INVALID ID ]`, `"${onchainId}" is not a valid post id.`),
+      contentType: 'image/png',
+      body: svgToPng(renderGenericFallbackSvg(`[ INVALID ID ]`, `"${onchainId}" is not a valid post id.`)),
     }
   }
 
@@ -959,23 +1048,23 @@ export const handleOgImageRoute = async (
   if (!post) {
     return {
       status: 404,
-      contentType: 'image/svg+xml; charset=utf-8',
-      body: renderGenericFallbackSvg(`[ NOT FOUND ]`, `No post #${onchainId} on ${chain.name}.`),
+      contentType: 'image/png',
+      body: svgToPng(renderGenericFallbackSvg(`[ NOT FOUND ]`, `No post #${onchainId} on ${chain.name}.`)),
     }
   }
 
   if (post.purged === true) {
     return {
       status: 200,
-      contentType: 'image/svg+xml; charset=utf-8',
-      body: renderTombstoneSvg(chain.name, post.id),
+      contentType: 'image/png',
+      body: svgToPng(renderTombstoneSvg(chain.name, post.id)),
     }
   }
 
   return {
     status: 200,
-    contentType: 'image/svg+xml; charset=utf-8',
-    body: renderOgImageSvg(post, chain),
+    contentType: 'image/png',
+    body: svgToPng(renderOgImageSvg(post, chain)),
   }
 }
 
@@ -993,6 +1082,8 @@ export const __internal = Object.freeze({
   wrapLines,
   renderTombstoneSvg,
   CRAWLER_UA_FRAGMENTS,
+  assertFontsExist,
+  FONT_FILES,
 })
 
 // Type re-exports kept colocated so callers don't reach into chains.ts.
