@@ -69,8 +69,28 @@ async function fetchSafeBalances(): Promise<{ tokens: TokenBalance[]; totalUsd: 
     })
     .filter((t) => t.balance > 0)
 
-  const totalUsd = tokens.reduce((sum, t) => sum + t.usdValue, 0)
-  return { tokens, totalUsd }
+  // Merge native ETH + WETH into a single "ETH" row using the WETH logo.
+  // Both price at $2,000 — summing balances and USD values is exact.
+  const WETH = '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2'
+  const ethEntry  = tokens.find(t => t.tokenAddress === null)
+  const wethEntry = tokens.find(t => t.tokenAddress?.toLowerCase() === WETH)
+  let merged = tokens.filter(t => t !== ethEntry && t !== wethEntry)
+  if (ethEntry || wethEntry) {
+    merged = [
+      {
+        symbol: 'ETH',
+        balance: (ethEntry?.balance ?? 0) + (wethEntry?.balance ?? 0),
+        usdValue: (ethEntry?.usdValue ?? 0) + (wethEntry?.usdValue ?? 0),
+        isKnown: true,
+        tokenAddress: null,
+        logoUri: wethEntry?.logoUri ?? ethEntry?.logoUri,
+      },
+      ...merged,
+    ]
+  }
+
+  const totalUsd = merged.reduce((sum, t) => sum + t.usdValue, 0)
+  return { tokens: merged, totalUsd }
 }
 
 export function useSafeBalances() {
