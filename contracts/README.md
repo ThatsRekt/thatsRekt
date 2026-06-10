@@ -142,7 +142,7 @@ Use the SAME `INITIAL_WHITELISTERS` set on every chain so the canonical proxy ad
 | `0xda1b9dFA299d655135C1ECdc4f0b4c9aED9a7f45` | bauti.eth |
 | `0x9E8680dbBcA1127add812abE209A10E621b385dF` | jerrythekid.eth |
 | `0x24C2167054A9A9e00F67233F1eBc4060501f54FA` | aux operator EOA |
-| `0xE0396d6d738e726D39f96099b8f6a55d11184374` | jerrythekid.eth's relayer bot — automated detector that submits alerts on Jerry's behalf |
+| `0xE0396d6d738e726D39f96099b8f6a55d11184374` | JerryTheKid's Detector — automated detector that submits alerts on Jerry's behalf |
 | `0xb5A6c8ca369e38050784e2A6793beE6447109340` | DAMM hot wallet — deployer EOA, also pre-whitelisted so the operator can submit posts directly without scheduling an `addWhitelisted` tx through the 3-day timelock |
 
 When you add a new chain, set `INITIAL_WHITELISTERS` to all six addresses joined by commas. **Adding a chain with a different set produces a different proxy address** (CREATE2 hashes the full init calldata).

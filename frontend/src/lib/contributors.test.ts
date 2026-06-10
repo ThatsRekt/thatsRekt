@@ -31,9 +31,9 @@ describe('contributors — DAMM Capital detector', () => {
 })
 
 describe('contributors — regression anchors', () => {
-  it("still labels Jerry's relayer", () => {
+  it("still labels Jerry's detector", () => {
     expect(lookupContributorGlobal(JERRY_RELAYER)?.name).toBe(
-      "JerryTheKid.eth's Relayer",
+      "JerryTheKid.eth's Detector",
     )
   })
 
