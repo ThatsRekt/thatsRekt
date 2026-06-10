@@ -58,7 +58,7 @@ const GLOBAL: GlobalLabels = {
     name: "JerryTheKid's Detector",
     tagline: "automated detector — submits alerts on jerrythekid.eth's behalf",
     twitter: 'jerrythekid',
-    github: 'JerryTheKid',
+    github: 'JeronimoHoulin',
   },
 }
 
