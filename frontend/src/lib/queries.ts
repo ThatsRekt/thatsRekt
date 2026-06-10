@@ -1,5 +1,5 @@
 import { gqlClient } from './client'
-import { mockFetchFeed, mockFetchPostDetail } from './mock'
+import { mockFetchFeed, mockFetchPostDetail, mockFetchDonations } from './mock'
 
 const USE_MOCK = import.meta.env.VITE_USE_MOCK_DATA === 'true'
 export const IS_MOCK_MODE = USE_MOCK
@@ -89,6 +89,7 @@ export interface PostDetail {
   purged: boolean
   createdAtBlock: number
   createdAtTimestamp: string
+  createdAtTxHash: string | null
   removedAtTimestamp: string | null
   purgedAtTimestamp: string | null
   attackerLinks: PostAttackerLink[]
@@ -233,6 +234,7 @@ const buildPostDetailQuery = (prefix: string): string => /* GraphQL */ `
       purged
       createdAtBlock
       createdAtTimestamp
+      createdAtTxHash
       removedAtTimestamp
       purgedAtTimestamp
       attackerLinks {
@@ -563,7 +565,7 @@ interface ProposerLeaderboardPage {
 
 /** Public Base mainnet RPC — same load-balanced endpoint used by other DAMM tooling. */
 const BASE_RPC_URL =
-  'https://lb.routeme.sh/rpc/8453/3bd2e340-f97c-46b3-80ed-17975de5af89'
+  'https://lb.routeme.sh/rpc/8453/f2c53b96-d37e-42b3-9c6f-47bb336e166e'
 
 /** Average Base mainnet block time, used for human-readable lag formatting. */
 export const BASE_BLOCK_TIME_SECONDS = 2
@@ -706,4 +708,74 @@ export async function fetchProposerLeaderboard(opts: {
     totalCount: data.proposerLeaderboard.totalCount,
     hasMore: data.proposerLeaderboard.hasMore,
   }
+}
+
+// =============================================================================
+// Donations
+// =============================================================================
+
+/** A single donation row as returned by the mesh `donations` query. */
+export interface Donation {
+  id: string
+  chainId: number
+  chainSlug: string
+  fromAddress: string
+  /** null for native-coin donations. */
+  tokenAddress: string | null
+  tokenSymbol: string
+  tokenDecimals: number
+  /** Base-unit amount as decimal string. */
+  amountRaw: string
+  /** Human-readable nominal amount (e.g. '0.5' for 0.5 ETH). */
+  amountNorm: string
+  txHash: string
+  /** null for native-coin donations. */
+  logIndex: number | null
+  blockNumber: number
+  /** ISO8601 UTC timestamp. */
+  blockTimestamp: string
+}
+
+const DONATIONS_QUERY = /* GraphQL */ `
+  query Donations($limit: Int!, $offset: Int!, $orderBy: String!, $direction: String!) {
+    donations(limit: $limit, offset: $offset, orderBy: $orderBy, direction: $direction) {
+      id
+      chainId
+      chainSlug
+      fromAddress
+      tokenAddress
+      tokenSymbol
+      tokenDecimals
+      amountRaw
+      amountNorm
+      txHash
+      logIndex
+      blockNumber
+      blockTimestamp
+    }
+  }
+`
+
+export async function fetchDonations(opts: {
+  limit?: number
+  offset?: number
+  /** Whitelisted column: date | amount | chain | token | donor. Defaults to 'date'. */
+  orderBy?: string
+  /** 'ASC' or 'DESC'. Defaults to 'DESC'. */
+  direction?: string
+}): Promise<Donation[]> {
+  const limit = opts.limit ?? 50
+  const offset = opts.offset ?? 0
+  const orderBy = opts.orderBy ?? 'date'
+  const direction = opts.direction ?? 'DESC'
+
+  if (USE_MOCK) {
+    return mockFetchDonations(limit, offset)
+  }
+
+  const data = await gqlClient.request<{ donations: Donation[] }>(
+    DONATIONS_QUERY,
+    { limit, offset, orderBy, direction },
+  )
+  return data.donations
 }

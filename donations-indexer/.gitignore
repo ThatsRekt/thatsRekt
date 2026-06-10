@@ -1,0 +1,12 @@
+# Dependencies
+node_modules/
+
+# Build output (regenerated via `bun run build`)
+lib/
+
+# Local env / secrets
+.env
+.env.local
+
+# Tasks / plans (never committed)
+tasks/

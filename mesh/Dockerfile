@@ -20,6 +20,9 @@ WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY package.json pnpm-lock.yaml tsconfig.json ./
 COPY src ./src
+# Copy bundled fonts so the build stage can verify the path at runtime.
+# (tsc does not copy non-TS assets; we carry them through explicitly.)
+COPY assets ./assets
 RUN node_modules/.bin/tsc
 
 # --- Stage 3: production-only deps ----------------------------------------
@@ -36,6 +39,9 @@ WORKDIR /app
 ENV NODE_ENV=production
 COPY --from=proddeps /app/node_modules ./node_modules
 COPY --from=builder /app/lib ./lib
+# Bundled fonts are resolved relative to lib/ at runtime (lib/../assets/fonts).
+# Must be present in the runtime image — tsc does not copy non-TS assets.
+COPY assets ./assets
 COPY package.json ./
 USER node
 CMD ["node", "lib/server.js"]

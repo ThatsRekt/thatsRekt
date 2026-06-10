@@ -1,5 +1,10 @@
+import { useState } from 'react'
 import { DonateAddress } from '../components/DonateAddress'
 import { useSafeBalances, ETH_PRICE_USD } from '../hooks/useSafeBalances'
+import { useDonations } from '../hooks/useDonations'
+import { DonationsTimeline } from '../components/DonationsTimeline'
+import { DEFAULT_SORT_STATE } from '../lib/sortState'
+import type { SortState } from '../lib/sortState'
 
 // ─── edit this to reflect the current yearly running cost ────────────────────
 const YEARLY_GOAL_USD = 1_500
@@ -7,6 +12,27 @@ const YEARLY_GOAL_USD = 1_500
 
 export function Donations() {
   const { data, isLoading, isError } = useSafeBalances()
+
+  // Sort state is owned here; useDonations re-fetches whenever it changes.
+  const [sortState, setSortState] = useState<SortState>(DEFAULT_SORT_STATE)
+
+  // SortHeader pre-computes the next {orderBy, direction} via sortStateReducer
+  // and passes both values here. We trust those values directly.
+  const handleSort = (orderBy: string, direction: string) => {
+    setSortState({
+      orderBy: orderBy as SortState['orderBy'],
+      direction: direction as SortState['direction'],
+    })
+  }
+
+  const {
+    donations,
+    isLoading: donationsLoading,
+    isError: donationsError,
+    hasMore,
+    loadMore,
+    isFetchingMore,
+  } = useDonations(sortState)
 
   const totalUsd = data?.totalUsd ?? 0
   const rawPct = YEARLY_GOAL_USD > 0 ? (totalUsd / YEARLY_GOAL_USD) * 100 : 0
@@ -42,7 +68,7 @@ export function Donations() {
         </p>
       </section>
 
-      {/* Yearly goal progress bar */}
+      {/* Yearly goal progress bar — UNTOUCHED */}
       <section className="border-2 border-black p-4 sm:p-6 space-y-4">
         <div className="flex items-baseline justify-between gap-2 flex-wrap">
           <h2 className="font-black uppercase tracking-tighter text-xl leading-none">
@@ -132,6 +158,34 @@ export function Donations() {
         </p>
       </section>
 
+      {/* ------------------------------------------------------------------ */}
+      {/* Donations timeline — orderable columns + paging (#208)             */}
+      {/* ------------------------------------------------------------------ */}
+      <section className="border-2 border-black p-4 sm:p-6 space-y-4">
+        <div className="flex items-baseline justify-between gap-2 flex-wrap">
+          <h2 className="font-black uppercase tracking-tighter text-xl leading-none">
+            donor timeline
+          </h2>
+          <span className="text-xs uppercase tracking-widest text-neutral-400">
+            [onchain donations]
+          </span>
+        </div>
+
+        <DonationsTimeline
+          donations={donations}
+          isLoading={donationsLoading}
+          isError={donationsError}
+          hasMore={hasMore}
+          onLoadMore={loadMore}
+          isFetchingMore={isFetchingMore}
+          sortState={sortState}
+          onSort={handleSort}
+        />
+
+        <p className="text-[10px] uppercase tracking-widest text-neutral-400 border-t border-neutral-200 pt-3">
+          indexed onchain every ~30 min · new donations may take up to 30 minutes to appear here
+        </p>
+      </section>
     </article>
   )
 }

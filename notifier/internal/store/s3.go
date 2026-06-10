@@ -32,11 +32,10 @@ import (
 // flush, which is fine at our scale.
 type State struct {
 	// Composite post id of the highest-numbered post we've already
-	// posted to Telegram. New posts have id strictly greater than this
-	// (lexicographic — fine because all current ids are
-	// `{chainSlug}-{base10-int}` and per-chain ids are monotonic).
-	// Tracked per chain so we don't get whipsawed when a different
-	// chain catches up.
+	// posted to Telegram. Post ids are `{chainSlug}-{base10-int}` and
+	// are NOT zero-padded; the Service.isNew comparison is numeric, not
+	// lexicographic (see service.go:compareOnchainParts). Tracked per
+	// chain so we don't get whipsawed when a different chain catches up.
 	LastSeenByChain map[string]string `json:"lastSeenByChain"`
 
 	// Per-post Telegram-side metadata: which message id is the bot's

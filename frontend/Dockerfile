@@ -49,7 +49,21 @@ ENV VITE_TURNSTILE_SITE_KEY=${VITE_TURNSTILE_SITE_KEY}
 RUN pnpm build
 
 # --- Stage 2: nginx runtime -------------------------------------------------
-FROM nginx:alpine AS runtime
+# georgjung/nginx-brotli is a drop-in for nginx:alpine that ships the same
+# nginx version (1.31.1) and OpenSSL version (3.5.6) as the official image but
+# includes ngx_http_brotli_filter_module.so + ngx_http_brotli_static_module.so
+# as dynamic modules. Pinned to an exact digest for reproducibility; update
+# when a new nginx minor is released.
+#
+# Source: https://github.com/georg-jung/nginx-brotli
+# Image: https://hub.docker.com/r/georgjung/nginx-brotli
+FROM georgjung/nginx-brotli:mainline-alpine@sha256:4a64a66d6f2c669f73d82ae0a2efdf5c7aeffea1a9ba434e43e5606a57836542 AS runtime
+
+# Enable brotli dynamic modules. `load_module` must appear in the main nginx
+# context (outside http {}); the conf.d/ include only covers http-context
+# directives. Prepend both module lines to the base image's nginx.conf.
+RUN sed -i '1s|^|load_module modules/ngx_http_brotli_filter_module.so;\nload_module modules/ngx_http_brotli_static_module.so;\n|' \
+    /etc/nginx/nginx.conf
 
 # Static bundle.
 COPY --from=builder /app/dist /usr/share/nginx/html
@@ -61,7 +75,8 @@ COPY --from=builder /app/dist /usr/share/nginx/html
 #   docker run -v ./public.conf:/etc/nginx/conf.d/default.conf:ro ...
 #
 # The damm-cloud prod compose mounts a config that adds /graphql ->
-# mesh:4350 reverse-proxy, so the SPA and the GraphQL gateway share an
-# origin and the bundle's relative-path fetches just work.
+# mesh:4350 reverse-proxy + brotli/gzip compression directives, so the SPA
+# and the GraphQL gateway share an origin and the bundle's relative-path
+# fetches just work.
 
 EXPOSE 80

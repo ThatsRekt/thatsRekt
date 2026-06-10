@@ -141,7 +141,7 @@ grown. Reconcile by:
 ```bash
 # Scan WhitelistUpdated events on mainnet (or any already-integrated chain)
 cast logs \
-  --rpc-url https://lb.routeme.sh/rpc/1/3bd2e340-f97c-46b3-80ed-17975de5af89 \
+  --rpc-url https://lb.routeme.sh/rpc/1/<api-key> \
   --address 0xBfaEEE9662b4c037De24e5Caa65815350d57b89A \
   --from-block <mainnet_deploy_block> \
   "WhitelistUpdated(address,bool)"

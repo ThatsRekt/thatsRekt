@@ -1,3 +1,5 @@
+import { visibleChains } from './chains'
+
 /**
  * Onchain registry contract handles.
  *
@@ -31,6 +33,12 @@ export const REGISTRY_PROXIES = {
   10: '0xBfaEEE9662b4c037De24e5Caa65815350d57b89A',
   // Arbitrum One — v1.2.0 deploy 2026-05-07. Block 460487986.
   42161: '0xBfaEEE9662b4c037De24e5Caa65815350d57b89A',
+  // BSC — v1.2.0 deploy at the canonical CREATE2 proxy. Verified on-chain
+  // via eth_getCode (EIP-1967 proxy bytecode present at this address on 56).
+  56: '0xBfaEEE9662b4c037De24e5Caa65815350d57b89A',
+  // Polygon PoS — v1.2.0 deploy at the canonical CREATE2 proxy. Verified
+  // on-chain via eth_getCode (EIP-1967 proxy bytecode present on 137).
+  137: '0xBfaEEE9662b4c037De24e5Caa65815350d57b89A',
 } as const satisfies Record<number, `0x${string}`>
 
 /** Chain IDs that have a deployed registry. Literal-narrowed for wagmi. */
@@ -41,9 +49,42 @@ export const registryAddress = (
 ): `0x${string}` | undefined =>
   (REGISTRY_PROXIES as Record<number, `0x${string}`>)[chainId]
 
-/** Chain IDs with a deployed registry, in display order. */
+/**
+ * Chain IDs with a deployed registry, in display order (mirrors the
+ * `visibleChains()` relevance order: live mainnets, then testnet last).
+ *
+ * INVARIANT: this set must equal the keys of `REGISTRY_PROXIES`. The two
+ * lists are kept explicit (not derived) only to control display order — a
+ * drift guard in `contracts.test.ts` fails loudly if they diverge, which is
+ * the regression that silently hid BSC posts' vote bar before this change.
+ */
 export const chainsWithRegistry = (): readonly SupportedChainId[] =>
-  [1, 8453, 42161, 10, 84532] as const
+  [1, 8453, 42161, 10, 56, 137, 84532] as const
+
+/**
+ * Chains the "report attack" composer may post to *right now*. Pure —
+ * derives the chain-picker list from three AND-ed filters:
+ *
+ *   1. **deployed registry** — `chainsWithRegistry()`. Can't post where
+ *      there's no contract.
+ *   2. **build-visible** — `visibleChains()`. Reuses the FE-wide testnet
+ *      gate (`VITE_SHOW_TESTNETS`): Base Sepolia is hidden in production
+ *      and surfaced only in dev/staging, exactly as the chain selector,
+ *      live feed, etc. already behave. A testnet "report attack" option
+ *      in prod is noise.
+ *   3. **whitelisted** — `perChain[id] === true`. Strict `=== true` so an
+ *      in-flight read (`undefined`) or an explicit `false` both drop out.
+ *
+ * Display order follows `chainsWithRegistry()`.
+ */
+export const postableChainIds = (
+  perChain: Readonly<Record<number, boolean | undefined>>,
+): readonly SupportedChainId[] => {
+  const visible = new Set(visibleChains().map((c) => c.chainId))
+  return chainsWithRegistry().filter(
+    (id) => visible.has(id) && perChain[id] === true,
+  )
+}
 
 /**
  * @deprecated Use `registryAddress(chainId)` instead. This still resolves to
@@ -164,5 +205,17 @@ export const registryAbi = [
     stateMutability: 'view',
     inputs: [],
     outputs: [{ name: '', type: 'uint256' }],
+  },
+  // Poster self-removal. Reverts with `NotPoster` if msg.sender is not
+  // the original poster, `PostIsRemoved` if already retracted,
+  // `PostIsPurged` if purged, or `PostNotFound` if the id doesn't exist.
+  // A de-whitelisted poster CAN still retract their own post — no
+  // whitelist check is performed.
+  {
+    type: 'function',
+    name: 'retract',
+    stateMutability: 'nonpayable',
+    inputs: [{ name: 'postId', type: 'uint256' }],
+    outputs: [],
   },
 ] as const

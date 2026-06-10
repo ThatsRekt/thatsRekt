@@ -658,7 +658,7 @@ function Reference() {
               <tr>
                 <th className="px-3 py-2">chain</th>
                 <th className="px-3 py-2">chain id</th>
-                <th className="px-3 py-2">proxy</th>
+                <th className="px-3 py-2">proxy (poster.thatsRekt.eth)</th>
                 <th className="px-3 py-2">status</th>
               </tr>
             </thead>

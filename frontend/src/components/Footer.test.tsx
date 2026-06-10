@@ -40,3 +40,12 @@ describe('Footer — apply CTA (#176)', () => {
     expect(anchors.length).toBe(0)
   })
 })
+
+describe('Footer — brand kit link', () => {
+  it('links to the /brand kit page', () => {
+    const { container } = renderFooter()
+    const link = container.querySelector('a[href="/brand"]')
+    expect(link).not.toBeNull()
+    expect(link?.textContent?.toLowerCase()).toContain('brand')
+  })
+})

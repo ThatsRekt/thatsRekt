@@ -1,0 +1,157 @@
+name: Build donations-indexer
+
+# =============================================================================
+# Builds the donations-indexer image and pushes it to AWS ECR.
+# Also runs type-checking and unit/store tests on every push to master and
+# on pull requests.
+#
+# Trigger:
+#   - push to master (auto-build + push to ECR)
+#   - pull_request targeting master (type-check + tests only; no ECR push
+#     since forks/PRs don't have OIDC trust and the indexer is not yet deployed)
+#   - workflow_dispatch (manual run with optional git_ref override)
+#
+# Auth model: OIDC -> AWS (same as build.yml). The OIDC role trusts this
+# specific repo (ThatsRekt/thatsRekt); forks cannot push.
+#
+# Image pushed to:
+#   465910372065.dkr.ecr.us-west-2.amazonaws.com/thatsrekt/donations-indexer
+# Both :latest and :<sha> tags are pushed on every master push.
+# =============================================================================
+
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - "donations-indexer/**"
+      - ".github/workflows/build-donations-indexer.yml"
+  pull_request:
+    branches:
+      - master
+    paths:
+      - "donations-indexer/**"
+      - ".github/workflows/build-donations-indexer.yml"
+  workflow_dispatch:
+    inputs:
+      git_ref:
+        description: "Ref to build (branch, tag, or commit SHA). Defaults to current branch HEAD."
+        required: false
+        default: ""
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: us-west-2
+  AWS_ACCOUNT: "465910372065"
+  OIDC_ROLE_ARN: arn:aws:iam::465910372065:role/github-actions-oidc
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Job 1: type-check + unit/store tests
+  # Runs on every push and PR. Uses bun to match the project's runtime.
+  # ---------------------------------------------------------------------------
+  typecheck-and-test:
+    name: Type-check and test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: donations-indexer
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.git_ref || github.ref }}
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.1.14"
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Type-check (tsc --noEmit)
+        run: bunx tsc --noEmit
+
+      - name: Run unit and store tests
+        # Excludes e2e tests that require a live RPC or postgres (those run
+        # against real infrastructure in the developer's local environment).
+        # Unit tests (chainConfig, donationMapper, tokenAllowlist) and the
+        # store tests with an in-memory fixture run cleanly in CI.
+        run: bun test --timeout 30000 test/chainConfig.test.ts test/donationMapper.test.ts test/tokenAllowlist.test.ts
+
+  # ---------------------------------------------------------------------------
+  # Job 2: build and push Docker image to ECR
+  # Runs only on push to master (not on PRs — forks/PRs don't get OIDC creds).
+  # ---------------------------------------------------------------------------
+  build-and-push:
+    name: Build and push donations-indexer image
+    # Only run on push to master or manual dispatch, not on PRs from forks.
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    needs: typecheck-and-test
+    steps:
+      - name: Resolve SHA
+        id: sha
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REF: ${{ inputs.git_ref }}
+        run: |
+          if [[ -z "$REF" ]]; then
+            REF="${{ github.ref_name }}"
+          fi
+          SHA=$(gh api "repos/${{ github.repository }}/commits/$REF" --jq '.sha')
+          if [[ -z "$SHA" || "$SHA" == "null" ]]; then
+            if [[ "$REF" =~ ^[0-9a-f]{7,40}$ ]]; then
+              SHA="$REF"
+            else
+              echo "::error::could not resolve ref '$REF' to a SHA"
+              exit 1
+            fi
+          fi
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "-> resolved $REF -> $SHA"
+
+      - name: Checkout at resolved SHA
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.sha.outputs.sha }}
+
+      - name: Configure AWS via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.OIDC_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push donations-indexer
+        env:
+          IMAGE: ${{ env.AWS_ACCOUNT }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/thatsrekt/donations-indexer
+          SHA: ${{ steps.sha.outputs.sha }}
+        run: |
+          docker buildx build \
+            --platform linux/amd64 \
+            --tag "$IMAGE:$SHA" \
+            --tag "$IMAGE:latest" \
+            --push \
+            donations-indexer
+
+      - name: Image summary
+        env:
+          IMAGE: ${{ env.AWS_ACCOUNT }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/thatsrekt/donations-indexer
+          SHA: ${{ steps.sha.outputs.sha }}
+        run: |
+          echo "### thatsrekt/donations-indexer" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          echo "Pushed:" >> "$GITHUB_STEP_SUMMARY"
+          echo "  $IMAGE:$SHA" >> "$GITHUB_STEP_SUMMARY"
+          echo "  $IMAGE:latest" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"

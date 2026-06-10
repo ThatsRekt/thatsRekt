@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -285,20 +286,35 @@ func (s *Service) checkRetracts(ctx context.Context) {
 	}
 }
 
-// isNew is the dedup check. We use LEXICOGRAPHIC > because all current ids
-// are `{chainSlug}-{base10-int}` and per-chain ids are monotonically
-// increasing — within a chain, lex compare matches numeric compare for
-// uniformly-padded ints. Per-chain comparison guards against cross-chain
-// id collisions.
+// isNew is the dedup check. Post ids are `{chainSlug}-{base10-int}` and are
+// NOT zero-padded, so lexicographic comparison breaks at the single→double
+// digit boundary ("10" < "9" lexicographically). We compare the on-chain id
+// portion numerically. If either side is not a valid base-10 int (unexpected
+// format or future schema change) we fall back to string compare so the guard
+// never panics and existing behaviour for non-numeric ids is preserved.
+// Per-chain last-seen lookup guards against cross-chain id collisions.
 func (s *Service) isNew(p graphql.Post) bool {
 	last := s.Store.LastSeen(p.Chain.Slug)
 	if last == "" {
 		return true
 	}
 	// Compare via the on-chain id portion only (the part after the last
-	// "-") so prefix differences in chain slugs can't whipsaw us. We
-	// fall back to whole-id compare if the format is unexpected.
-	return onchainPart(p.ID) > onchainPart(last)
+	// "-") so prefix differences in chain slugs can't whipsaw us.
+	return compareOnchainParts(onchainPart(p.ID), onchainPart(last))
+}
+
+// compareOnchainParts returns true when a > b. Both are the numeric suffix
+// strings extracted by onchainPart. When both parse as base-10 ints the
+// comparison is numeric; when either is non-numeric it falls back to string
+// compare so malformed ids never panic and the function remains total.
+func compareOnchainParts(a, b string) bool {
+	ai, aerr := strconv.Atoi(a)
+	bi, berr := strconv.Atoi(b)
+	if aerr == nil && berr == nil {
+		return ai > bi
+	}
+	// Defensive fallback: at least one side is non-numeric.
+	return a > b
 }
 
 func onchainPart(id string) string {

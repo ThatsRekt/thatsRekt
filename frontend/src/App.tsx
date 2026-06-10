@@ -1,18 +1,41 @@
-import { useEffect, useRef, useState } from 'react'
+import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import { Routes, Route, Link, Navigate, useLocation } from 'react-router-dom'
+// Feed is the homepage first paint — keep it EAGER so there is no
+// Suspense waterfall on the critical path.
 import { Feed } from './pages/Feed'
-import { PostDetail } from './pages/PostDetail'
-import { About } from './pages/About'
-import { ApplyForm } from './pages/ApplyForm'
-import { Guardians } from './pages/Guardians'
-import { Leaderboard } from './pages/Leaderboard'
-import { Docs } from './pages/Docs'
-import { Donations } from './pages/Donations'
 import { IS_MOCK_MODE } from './lib/queries'
+
+// All non-home routes are lazy: they become async chunks that are NOT
+// included in the homepage-critical JS. Code is downloaded only when
+// the user navigates to that route.
+const PostDetail = lazy(() =>
+  import('./pages/PostDetail').then((m) => ({ default: m.PostDetail })),
+)
+const About = lazy(() =>
+  import('./pages/About').then((m) => ({ default: m.About })),
+)
+const ApplyForm = lazy(() =>
+  import('./pages/ApplyForm').then((m) => ({ default: m.ApplyForm })),
+)
+const Guardians = lazy(() =>
+  import('./pages/Guardians').then((m) => ({ default: m.Guardians })),
+)
+const Leaderboard = lazy(() =>
+  import('./pages/Leaderboard').then((m) => ({ default: m.Leaderboard })),
+)
+const Docs = lazy(() =>
+  import('./pages/Docs').then((m) => ({ default: m.Docs })),
+)
+const Donations = lazy(() =>
+  import('./pages/Donations').then((m) => ({ default: m.Donations })),
+)
+const Brand = lazy(() =>
+  import('./pages/Brand').then((m) => ({ default: m.Brand })),
+)
 import { useHasPosts } from './hooks/useHasPosts'
 import { useDisconnectIfNotWhitelisted } from './hooks/useDisconnectIfNotWhitelisted'
 import { PostAlertButton, AccountChip } from './components/PostAlertButton'
-import { TgChannelCTA, GetAlertsButton } from './components/TgChannelCTA'
+import { GetAlertsButton } from './components/TgChannelCTA'
 import { Footer } from './components/Footer'
 import { ScrollManager } from './components/ScrollManager'
 
@@ -51,34 +74,43 @@ export function App() {
       {IS_MOCK_MODE && <MockBanner />}
       <Header />
       <main className="flex-1 pt-6 sm:pt-10">
-        <Routes>
-          <Route path="/" element={<Feed />} />
-          {/*
-           * Two parallel post routes:
-           *   /post/:chainSlug/:postId  — clean path used by Mesh's SSR
-           *                              OG card route. Preferred for
-           *                              new shareable links.
-           *   /post/:id                  — legacy composite-id form
-           *                              (`base-42`). Kept so any
-           *                              previously shared URLs don't
-           *                              break. PostDetail handles
-           *                              both shapes by reconstructing
-           *                              the composite id when needed.
-           */}
-          <Route path="/post/:chainSlug/:postId" element={<PostDetail />} />
-          <Route path="/post/:id" element={<PostDetail />} />
-          <Route path="/about" element={<About />} />
-          <Route path="/apply" element={<ApplyForm />} />
-          <Route path="/guardians" element={<Guardians />} />
-          {/* Legacy `/posters` URL kept alive as a permanent redirect to
-              `/guardians` — the page rebranded but inbound shared links
-              from before the rename should still land somewhere useful. */}
-          <Route path="/posters" element={<Navigate to="/guardians" replace />} />
-          <Route path="/leaderboard" element={<LeaderboardGate />} />
-          <Route path="/donate" element={<Donations />} />
-          <Route path="/docs" element={<Docs />} />
-          <Route path="*" element={<NotFound />} />
-        </Routes>
+        {/*
+         * Suspense boundary for lazily-loaded non-home routes.
+         * Feed (/) is eager and never triggers this fallback.
+         * All other routes are React.lazy chunks; this spinner shows
+         * while their JS chunk downloads on first navigation.
+         */}
+        <Suspense fallback={<PageLoadingSpinner />}>
+          <Routes>
+            <Route path="/" element={<Feed />} />
+            {/*
+             * Two parallel post routes:
+             *   /post/:chainSlug/:postId  — clean path used by Mesh's SSR
+             *                              OG card route. Preferred for
+             *                              new shareable links.
+             *   /post/:id                  — legacy composite-id form
+             *                              (`base-42`). Kept so any
+             *                              previously shared URLs don't
+             *                              break. PostDetail handles
+             *                              both shapes by reconstructing
+             *                              the composite id when needed.
+             */}
+            <Route path="/post/:chainSlug/:postId" element={<PostDetail />} />
+            <Route path="/post/:id" element={<PostDetail />} />
+            <Route path="/about" element={<About />} />
+            <Route path="/apply" element={<ApplyForm />} />
+            <Route path="/guardians" element={<Guardians />} />
+            {/* Legacy `/posters` URL kept alive as a permanent redirect to
+                `/guardians` — the page rebranded but inbound shared links
+                from before the rename should still land somewhere useful. */}
+            <Route path="/posters" element={<Navigate to="/guardians" replace />} />
+            <Route path="/leaderboard" element={<LeaderboardGate />} />
+            <Route path="/donate" element={<Donations />} />
+            <Route path="/docs" element={<Docs />} />
+            <Route path="/brand" element={<Brand />} />
+            <Route path="*" element={<NotFound />} />
+          </Routes>
+        </Suspense>
       </main>
       <Footer />
     </div>
@@ -292,6 +324,25 @@ function CloseIcon() {
         clipRule="evenodd"
       />
     </svg>
+  )
+}
+
+/**
+ * Minimalist dark-theme spinner shown while a lazy route chunk is loading.
+ *
+ * Keeps the parchment layout stable — no layout shift. The spinner uses
+ * only a CSS border animation so it adds zero JS/CSS weight beyond what
+ * Tailwind already emits for the rest of the app.
+ */
+function PageLoadingSpinner() {
+  return (
+    <div className="flex items-center justify-center py-20">
+      <span
+        className="inline-block h-7 w-7 rounded-full border-2 border-neutral-300 border-t-black animate-spin"
+        role="status"
+        aria-label="loading"
+      />
+    </div>
   )
 }
 

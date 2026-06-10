@@ -55,10 +55,16 @@ const GLOBAL: GlobalLabels = {
   // JerryTheKid's automated detector — submits onchain alerts on
   // jerrythekid.eth's behalf via a KMS-signed relayer.
   '0xe0396d6d738e726d39f96099b8f6a55d11184374': {
-    name: "JerryTheKid's Detector",
+    name: "JerryTheKid.eth's Detector",
     tagline: "automated detector — submits alerts on jerrythekid.eth's behalf",
     twitter: 'jerrythekid',
     github: 'JeronimoHoulin',
+  },
+  // DAMM Capital's automated detector — a KMS-signed relayer that submits
+  // onchain alerts on the firm's behalf. Same signer address across chains.
+  '0xfe6b4dff18d741e725c7c6922ccf69121b2fffdb': {
+    name: "DAMM Capital's Detector",
+    tagline: "automated detector — submits alerts on DAMM Capital's behalf",
   },
 }
 
