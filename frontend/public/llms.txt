@@ -71,5 +71,5 @@ MIT.
 
 ## Maintainers
 
-- jerrythekid.eth — github.com/JeronimoHoulin, x.com/jerrythekid
+- jerrythekid.eth — github.com/JerryTheKid, x.com/jerrythekid
 - bauti.eth — x.com/BautiDeFi

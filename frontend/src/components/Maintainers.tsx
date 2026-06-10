@@ -15,7 +15,7 @@ export function Maintainers() {
         <Maintainer
           name="jerrythekid"
           twitter="jerrythekid"
-          github="JeronimoHoulin"
+          github="JerryTheKid"
           ens="jerrythekid.eth"
         />{' '}
         and{' '}
