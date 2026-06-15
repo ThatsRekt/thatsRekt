@@ -15,6 +15,7 @@ const SLUG_STYLES: Record<string, string> = {
   sepolia: 'border-purple-500 text-purple-700 bg-purple-50',
   base: 'border-blue-700 text-blue-900 bg-blue-100',
   optimism: 'border-red-500 text-red-700 bg-red-50',
+  polygon: 'border-[rgb(130,0,205)] text-[rgb(130,0,205)] bg-[rgba(130,0,205,0.08)]',
   // Archive-only chains (no live indexer yet — see chains.ts).
   ethereum: 'border-indigo-500 text-indigo-700 bg-indigo-50',
   arbitrum: 'border-sky-500 text-sky-700 bg-sky-50',
