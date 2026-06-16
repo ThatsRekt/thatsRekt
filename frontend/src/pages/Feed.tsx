@@ -355,8 +355,13 @@ function LiveSection({
     setShowAllLive(false)
   }, [showArchive])
 
+  // Hide posts that have been net-rejected by the community: 2+ downvotes
+  // and more downvotes than upvotes.
+  const visiblePosts = posts.filter(
+    (p) => !(p.disconfirmations >= 2 && p.disconfirmations > p.confirmations),
+  )
   const capped = showArchive && !showAllLive
-  const displayedPosts = capped ? posts.slice(0, LIVE_POSTS_WHEN_ARCHIVE) : posts
+  const displayedPosts = capped ? visiblePosts.slice(0, LIVE_POSTS_WHEN_ARCHIVE) : visiblePosts
 
   return (
     <div>
@@ -395,12 +400,12 @@ function LiveSection({
             {isFetchingNextPage ? 'loading…' : 'load more'}
           </button>
           <p className="text-[10px] uppercase tracking-widest text-neutral-500">
-            showing {posts.length} of {totalCount}
+            showing {visiblePosts.length} of {totalCount}
           </p>
         </div>
       ) : (
         <p className="mt-8 text-center text-xs uppercase tracking-widest text-neutral-700">
-          end of live feed · {posts.length} attack{posts.length === 1 ? '' : 's'}
+          end of live feed · {visiblePosts.length} attack{visiblePosts.length === 1 ? '' : 's'}
         </p>
       )}
     </div>
