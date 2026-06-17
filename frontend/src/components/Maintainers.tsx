@@ -1,7 +1,7 @@
 import { twitterUrl } from '../lib/format'
 
 /**
- * Static maintainer list. Hardcoded — there are two maintainers and they
+ * Static maintainer list. Hardcoded — there are three maintainers and they
  * change rarely; reading from a config file would be over-engineering.
  */
 export function Maintainers() {
@@ -17,13 +17,18 @@ export function Maintainers() {
           twitter="jerrythekid"
           github="JeronimoHoulin"
           ens="jerrythekid.eth"
-        />{' '}
-        and{' '}
+        />,{' '}
         <Maintainer
           name="bauti.eth"
           twitter="BautiDeFi"
           github="bauti-defi"
           ens="bauti.eth"
+        />, and{' '}
+        <Maintainer
+          name="ohdatskate.eth"
+          twitter="ohdatskate"
+          telegram="ohdatskate"
+          ens="ohdatskate.eth"
         />.
       </p>
     </section>
@@ -33,16 +38,19 @@ export function Maintainers() {
 function Maintainer({
   name,
   twitter,
+  telegram,
   github,
   ens,
 }: {
   name: string
   twitter?: string
+  telegram?: string
   github?: string
   ens?: string
 }) {
   const links: { label: string; href: string }[] = []
   if (twitter) links.push({ label: 'x', href: twitterUrl(twitter) })
+  if (telegram) links.push({ label: 'tg', href: `https://t.me/${telegram}` })
   if (github) links.push({ label: 'gh', href: `https://github.com/${github}` })
   if (ens) links.push({ label: 'ens', href: `https://app.ens.domains/${ens}` })
 
