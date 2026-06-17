@@ -10,6 +10,7 @@
 import { describe, expect, test } from 'bun:test'
 import {
   normalizeTitle,
+  stripChainSuffix,
   attackedAtBucket,
   groupKey,
   groupIntoIncidents,
@@ -85,6 +86,69 @@ describe('normalizeTitle', () => {
     // Only trailing parenthetical should be stripped; an embedded one should stay.
     // "Bridged (BSC) funds drained" — the parens are NOT trailing.
     expect(normalizeTitle('Bridged (BSC) funds drained')).toBe('bridged (bsc) funds drained')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// stripChainSuffix — display-only, preserves original casing
+// ---------------------------------------------------------------------------
+
+describe('stripChainSuffix', () => {
+  test('MILC/MLT spec example: strips chain suffix, preserves original casing', () => {
+    // The motivating example from the review spec.
+    expect(stripChainSuffix('MILC/MLT Cross-Chain Bridge Attack (BSC + ETH)')).toBe(
+      'MILC/MLT Cross-Chain Bridge Attack',
+    )
+  })
+
+  test('bZx spec example: preserves mixed-case casing without lowercasing', () => {
+    expect(stripChainSuffix('bZx iToken Duplication (ETH)')).toBe('bZx iToken Duplication')
+  })
+
+  test('USDC spec example: title without chain suffix passes through unchanged', () => {
+    expect(stripChainSuffix('USDC Depeg Exploit')).toBe('USDC Depeg Exploit')
+  })
+
+  test('strips trailing BSC-only parenthetical', () => {
+    expect(stripChainSuffix('MILC/MLT Bridge (BSC)')).toBe('MILC/MLT Bridge')
+  })
+
+  test('strips multi-chain parenthetical with / separator', () => {
+    expect(stripChainSuffix('Bridge (ETH / BSC / ARB)')).toBe('Bridge')
+  })
+
+  test('leaves real parentheticals intact (non-chain content)', () => {
+    expect(stripChainSuffix('Hack (via reentrancy)')).toBe('Hack (via reentrancy)')
+    expect(stripChainSuffix('Attack (price manipulation)')).toBe('Attack (price manipulation)')
+  })
+
+  test('does NOT lowercase — output matches on-chain casing exactly', () => {
+    const title = 'USDC Depeg Exploit (ETH)'
+    const result = stripChainSuffix(title)
+    // Exact-string check: must NOT be 'usdc depeg exploit'
+    expect(result).toBe('USDC Depeg Exploit')
+    expect(result).not.toBe('usdc depeg exploit')
+  })
+
+  test('trims surrounding whitespace but otherwise leaves title as-is', () => {
+    expect(stripChainSuffix('  Simple Hack Title  ')).toBe('Simple Hack Title')
+  })
+
+  test('normalizeTitle and stripChainSuffix agree on WHICH suffix is stripped', () => {
+    // Both functions must strip the same parentheticals — they share the
+    // same removeChainSuffix internal logic. The only difference is casing.
+    const titles = [
+      'MILC/MLT Bridge (BSC + ETH)',
+      'bZx Hack (ETH)',
+      'Plain Title',
+      'Hack (via reentrancy)',
+    ]
+    for (const t of titles) {
+      const normed = normalizeTitle(t)
+      const stripped = stripChainSuffix(t)
+      // Lowercased stripped must equal normed (both applied the same suffix rule).
+      expect(stripped.toLowerCase()).toBe(normed)
+    }
   })
 })
 

@@ -118,15 +118,25 @@ function renderCard(group: IncidentGroup) {
 // ---------------------------------------------------------------------------
 
 describe('IncidentCard — cross-chain group', () => {
-  it('renders the incident title once', () => {
+  it('renders the incident title once with exact on-chain casing', () => {
     const { container } = renderCard(makeCrossChainGroup())
-    // Should appear exactly once — the lead post's (normalized) title.
+    // The title must appear exactly once with the original casing intact —
+    // no lowercasing, no CSS-driven capitalize mangling.
     const headings = container.querySelectorAll('h2')
-    // Filter to the title heading (normalize lowercases, so check case-insensitively)
-    const titleHeadings = Array.from(headings).filter((h) =>
-      h.textContent?.toLowerCase().includes('milc/mlt cross-chain bridge'),
+    const titleHeadings = Array.from(headings).filter(
+      (h) => h.textContent === 'MILC/MLT Cross-Chain Bridge',
     )
     expect(titleHeadings.length).toBe(1)
+  })
+
+  it('does NOT lowercase the headline (original casing preserved)', () => {
+    const { container } = renderCard(makeCrossChainGroup())
+    const headings = container.querySelectorAll('h2')
+    // Exact match: must not be the lowercased form.
+    const lowercasedHeadings = Array.from(headings).filter(
+      (h) => h.textContent === 'milc/mlt cross-chain bridge',
+    )
+    expect(lowercasedHeadings.length).toBe(0)
   })
 
   it('renders one ConsensusRow per sibling post', () => {
@@ -166,6 +176,45 @@ describe('IncidentCard — cross-chain group', () => {
     const nonDisputedRows = container.querySelectorAll('[data-disputed="false"]')
     expect(nonDisputedRows.length).toBe(1)
   })
+})
+
+describe('IncidentCard — headline casing (regression guard)', () => {
+  const cases: Array<{ input: string; expected: string }> = [
+    {
+      input: 'MILC/MLT Cross-Chain Bridge Attack (BSC + ETH)',
+      expected: 'MILC/MLT Cross-Chain Bridge Attack',
+    },
+    {
+      input: 'bZx iToken Duplication',
+      expected: 'bZx iToken Duplication',
+    },
+    {
+      input: 'USDC Depeg Exploit',
+      expected: 'USDC Depeg Exploit',
+    },
+  ]
+
+  for (const { input, expected } of cases) {
+    it(`renders "${expected}" verbatim (input: "${input}")`, () => {
+      const post = makePost({ id: 'ethereum-1', chain: ETH_CHAIN, title: input })
+      const group: IncidentGroup = {
+        key: 'test',
+        posts: [post],
+        leadPost: post,
+        chains: [ETH_CHAIN],
+        isCrossChain: false,
+      }
+      const { container } = renderCard(group)
+      const headings = container.querySelectorAll('h2')
+      const match = Array.from(headings).filter((h) => h.textContent === expected)
+      expect(match.length).toBe(1)
+      // Also verify the lowercased form is NOT present.
+      const lowercased = Array.from(headings).filter(
+        (h) => h.textContent === expected.toLowerCase(),
+      )
+      expect(lowercased.length).toBe(0)
+    })
+  }
 })
 
 describe('IncidentCard — single-chain group', () => {

@@ -53,7 +53,7 @@ export interface IncidentGroup {
 export const BUCKET_WINDOW_MS = 48 * 3_600_000 // 48 hours
 
 // ---------------------------------------------------------------------------
-// Chain-token patterns used by normalizeTitle
+// Chain-token patterns used by normalizeTitle and stripChainSuffix
 // ---------------------------------------------------------------------------
 
 /**
@@ -75,11 +75,39 @@ const NON_CHAIN_WORDS =
   /\b(via|with|using|through|price|manipulation|reentrancy|exploit|attack|flash|loan|oracle|bug|overflow|drainer|missing|access|control)\b/i
 
 // ---------------------------------------------------------------------------
+// Internal helper — shared by normalizeTitle and stripChainSuffix
+// ---------------------------------------------------------------------------
+
+/**
+ * If `title` has a trailing parenthetical that contains ONLY chain-name
+ * tokens, return the title without that suffix (trimmed). Otherwise return
+ * `null`, meaning "nothing to strip".
+ *
+ * This is the single authoritative implementation of "is this paren
+ * chain-only?" so `normalizeTitle` (grouping) and `stripChainSuffix`
+ * (display) stay in sync without drift.
+ */
+function removeChainSuffix(title: string): string | null {
+  const trimmed = title.trim()
+  const match = trimmed.match(CHAIN_SUFFIX_REGEX)
+  if (!match) return null
+
+  // Paren contains real English — treat as content, not a chain label.
+  if (NON_CHAIN_WORDS.test(match[0])) return null
+
+  const withoutSuffix = trimmed.slice(0, trimmed.length - match[0].length).trim()
+  // Reject degenerate case where the entire title is the paren.
+  if (withoutSuffix.length === 0) return null
+
+  return withoutSuffix
+}
+
+// ---------------------------------------------------------------------------
 // Public pure functions
 // ---------------------------------------------------------------------------
 
 /**
- * Normalize a post title for grouping and display.
+ * Normalize a post title for **grouping** (groupKey).
  *
  * 1. Trim whitespace.
  * 2. Lowercase.
@@ -89,32 +117,30 @@ const NON_CHAIN_WORDS =
  *
  * A parenthetical that contains real content (e.g. "(via reentrancy)") is
  * left intact.
+ *
+ * Do NOT use this for display — it lowercases the title. Use
+ * `stripChainSuffix` instead.
  */
 export function normalizeTitle(title: string): string {
-  const trimmed = title.trim()
-  const match = trimmed.match(CHAIN_SUFFIX_REGEX)
-  if (!match) return trimmed.toLowerCase()
+  const stripped = removeChainSuffix(title)
+  return stripped !== null ? stripped.toLowerCase() : title.trim().toLowerCase()
+}
 
-  // Check whether the matched parenthetical contains any non-chain language.
-  if (NON_CHAIN_WORDS.test(match[0])) {
-    return trimmed.toLowerCase()
-  }
-
-  // Check that the paren is truly trailing: the match's position must be at
-  // the end of the string (the regex is anchored with $ so this holds, but
-  // we additionally verify that the portion before the paren isn't empty).
-  const withoutSuffix = trimmed.slice(0, trimmed.length - match[0].length).trim()
-  if (withoutSuffix.length === 0) return trimmed.toLowerCase()
-
-  // Also reject if the paren is embedded (appears before a space or other text).
-  // CHAIN_SUFFIX_REGEX already anchors to $, so if we found a match it IS at
-  // the end — no further check needed. But we must still reject the case where
-  // the title contains intermediate parens that look like chains:
-  //   "Bridged (BSC) funds drained" → the regex won't match because "funds drained"
-  //   follows the paren, so match[0] wouldn't hit $ in that case.
-  // Therefore this code path is only reached for truly trailing parens.
-
-  return withoutSuffix.toLowerCase()
+/**
+ * Strip a trailing chain-only parenthetical from a post title for
+ * **display** — preserving the original on-chain casing verbatim.
+ *
+ * Examples:
+ *   "MILC/MLT Cross-Chain Bridge Attack (BSC + ETH)" → "MILC/MLT Cross-Chain Bridge Attack"
+ *   "bZx iToken Duplication (ETH)"                   → "bZx iToken Duplication"
+ *   "USDC Depeg Exploit"                             → "USDC Depeg Exploit"
+ *   "Hack (via reentrancy)"                          → "Hack (via reentrancy)"  (unchanged)
+ *
+ * Never lowercases. Only strips the trailing paren when it is chain-only.
+ */
+export function stripChainSuffix(title: string): string {
+  const stripped = removeChainSuffix(title)
+  return stripped !== null ? stripped : title.trim()
 }
 
 /**

@@ -12,7 +12,7 @@
  */
 import { Link } from 'react-router-dom'
 import type { IncidentGroup } from '../lib/incidents'
-import { isDisputed, normalizeTitle } from '../lib/incidents'
+import { isDisputed, stripChainSuffix } from '../lib/incidents'
 import type { FeedPost, ChainInfo } from '../lib/queries'
 import { splitCompositeId } from '../lib/queries'
 import { registryAddress, type SupportedChainId } from '../lib/contracts'
@@ -29,7 +29,7 @@ import { ShareButton } from './ShareButton'
 
 export function IncidentCard({ group }: { group: IncidentGroup }) {
   const { leadPost, posts, chains, isCrossChain } = group
-  const headline = normalizeTitle(leadPost.title) || '(untitled)'
+  const headline = stripChainSuffix(leadPost.title) || '(untitled)'
   const body = leadPost.note?.trim()
   // Prefer the chain's canonical detail URL for the share button.
   const shareHref = livePostHref(leadPost)
@@ -63,7 +63,7 @@ export function IncidentCard({ group }: { group: IncidentGroup }) {
       {/* Title (once, normalized, linked to leadPost detail page)            */}
       {/* ------------------------------------------------------------------ */}
       <Link to={shareHref} className="block group">
-        <h2 className="font-black tracking-tight text-2xl sm:text-3xl leading-tight text-neutral-900 group-hover:text-red-600 transition-colors line-clamp-3 capitalize">
+        <h2 className="font-black tracking-tight text-2xl sm:text-3xl leading-tight text-neutral-900 group-hover:text-red-600 transition-colors line-clamp-3">
           {headline}
         </h2>
       </Link>
