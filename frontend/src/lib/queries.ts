@@ -52,6 +52,13 @@ export interface FeedPost {
   createdAtTimestamp: string
   attackerLinks: PostAttackerLink[]
   victimLinks: PostVictimLink[]
+  /**
+   * Optional future seam: when the backend formalises a cross-chain incident
+   * identifier, it will be surfaced here. `groupKey` in `lib/incidents` prefers
+   * this over the heuristic when present. Currently always `undefined` — the
+   * backend does not produce it yet.
+   */
+  incidentId?: string
 }
 
 export interface ConfirmationEntity {

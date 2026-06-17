@@ -3,7 +3,9 @@ import { useInfiniteQuery, useQueryClient } from '@tanstack/react-query'
 import { fetchFeedPage, type FeedPost, type SortOption } from '../lib/queries'
 import { selectArchive, formatAmountUsd, type ArchivePost } from '../lib/archive'
 import { liveIndexedChains } from '../lib/chains'
+import { groupIntoIncidents, type IncidentGroup } from '../lib/incidents'
 import { PostCard } from '../components/PostCard'
+import { IncidentCard } from '../components/IncidentCard'
 import { ChainSelector } from '../components/ChainSelector'
 import { ArchiveDivider } from '../components/ArchiveDivider'
 import { EmptyState } from '../components/EmptyState'
@@ -363,12 +365,20 @@ function LiveSection({
   const capped = showArchive && !showAllLive
   const displayedPosts = capped ? visiblePosts.slice(0, LIVE_POSTS_WHEN_ARCHIVE) : visiblePosts
 
+  // Group sibling cross-chain posts into IncidentGroups. Runs over the
+  // full displayed slice so internal "load more" page boundaries are
+  // invisible to the grouping logic.
+  const incidents: IncidentGroup[] = useMemo(
+    () => groupIntoIncidents(displayedPosts),
+    [displayedPosts],
+  )
+
   return (
     <div>
-      {displayedPosts.map((post, i) => (
-        <div key={post.id}>
+      {incidents.map((group, i) => (
+        <div key={group.key}>
           {i > 0 && <hr className="my-8 border-t-2 border-black" />}
-          <PostCard item={{ kind: 'live', post }} />
+          <IncidentCard group={group} />
         </div>
       ))}
 
