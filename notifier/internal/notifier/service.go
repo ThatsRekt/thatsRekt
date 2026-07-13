@@ -15,6 +15,7 @@ package notifier
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sort"
@@ -212,8 +213,33 @@ func (s *Service) PollOnce(ctx context.Context) {
 
 		// --- State 4: mapped + snapshot + changed → edit in place ---
 		if err := s.amendEdit(ctx, p, msgID); err != nil {
-			s.Logger.Warn("amendment edit failed", "post_id", p.ID, "err", err)
-			// Don't update snapshot — next poll will retry.
+			var termErr *telegram.ErrTerminalEdit
+			if errors.As(err, &termErr) {
+				// Advance the snapshot in both terminal sub-cases to stop the
+				// retry loop. For amendments the harm is cosmetic: the message
+				// shows stale content. Retrying indefinitely is worse.
+				s.Store.UpdatePostSnapshot(p.ID, p.ActionCount, p.LastUpdatedAt)
+				if termErr.MessageGone {
+					// Message was deleted from the channel — nothing left to edit.
+					s.Logger.Warn("amendment edit permanently failed — message gone, tombstoning snapshot",
+						"post_id", p.ID,
+						"message_id", msgID,
+						"reason", termErr.Description,
+					)
+				} else {
+					// Message EXISTS but is uneditable (edit window expired, or bot
+					// lost admin rights). Content is stale — log at ERROR so the
+					// operator can see it. Snapshot advanced to stop retrying.
+					s.Logger.Error("amendment edit permanently failed — message uneditable, tombstoning snapshot; message shows stale content",
+						"post_id", p.ID,
+						"message_id", msgID,
+						"reason", termErr.Description,
+					)
+				}
+				continue
+			}
+			// Transient (network error, rate-limit, etc.) — retry on next poll.
+			s.Logger.Warn("amendment edit failed (will retry)", "post_id", p.ID, "err", err)
 			continue
 		}
 	}
@@ -276,12 +302,41 @@ func (s *Service) checkRetracts(ctx context.Context) {
 
 		// Post is retracted on-chain. Edit the Telegram message.
 		if err := s.retractEdit(ctx, result, e.PostID, e.MessageID); err != nil {
-			s.Logger.Warn("checkRetracts: retract edit failed",
+			var termErr *telegram.ErrTerminalEdit
+			if errors.As(err, &termErr) {
+				if termErr.MessageGone {
+					// The message no longer exists in the channel — the false-
+					// accusation risk is gone. Mark retracted so StoredPosts()
+					// excludes this post on future polls. See issue #256 Bug 2.
+					s.Store.MarkRetracted(e.PostID)
+					s.Logger.Warn("checkRetracts: retract edit permanently failed — message gone, marking retracted",
+						"post_id", e.PostID,
+						"message_id", e.MessageID,
+						"reason", termErr.Description,
+					)
+				} else {
+					// CRITICAL: the message EXISTS and is still publicly visible,
+					// but the bot cannot edit it (edit window expired, or admin
+					// rights revoked). Do NOT call MarkRetracted — that would
+					// permanently silence retrying and leave a live false accusation
+					// marked "done". Log at ERROR. A human must manually delete the
+					// Telegram message; once that is confirmed, remove or set
+					// retracted:true for this post in state.json.
+					s.Logger.Error(
+						"CRITICAL: checkRetracts — retract edit blocked; false accusation still publicly visible; MANUAL RETRACTION REQUIRED",
+						"post_id", e.PostID,
+						"message_id", e.MessageID,
+						"reason", termErr.Description,
+					)
+				}
+				continue
+			}
+			// Transient (network error, rate-limit, etc.) — retry on next poll.
+			s.Logger.Warn("checkRetracts: retract edit failed (will retry)",
 				"post_id", e.PostID,
 				"chain", e.ChainSlug,
 				"err", err,
 			)
-			// Do NOT mark retracted — retry on next poll.
 		}
 	}
 }

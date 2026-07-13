@@ -1,0 +1,57 @@
+name: Notifier CI
+
+# Runs on every PR and push that touches:
+#   - any file in the Go notifier package
+#   - mesh/src/chains.ts (the TypeScript chain registry)
+#
+# The chain-coverage drift guard (TestChainCoverage_AllMeshChainsCoveredByNotifier)
+# reads mesh/src/chains.ts at runtime. Without -count=1 the Go test cache returns
+# a stale GREEN even when only chains.ts changes (it is outside the package cache
+# key). ALWAYS pass -count=1 here — removing it silently re-introduces the drift
+# failure mode this workflow was added to catch.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "notifier/**"
+      - "mesh/src/chains.ts"
+  pull_request:
+    paths:
+      - "notifier/**"
+      - "mesh/src/chains.ts"
+
+jobs:
+  test:
+    name: go vet + gofmt + go test
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: "notifier/go.mod"
+          cache-dependency-path: "notifier/go.sum"
+
+      - name: go vet
+        working-directory: notifier
+        run: go vet ./...
+
+      - name: gofmt
+        working-directory: notifier
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "The following files are not gofmt-formatted:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: go test
+        working-directory: notifier
+        # -count=1 defeats the Go test cache for TestChainCoverage_AllMeshChainsCoveredByNotifier,
+        # which reads mesh/src/chains.ts at runtime (outside the Go cache key).
+        # Without this flag, editing chains.ts without editing any Go file returns a
+        # cached PASS — the exact failure mode that let bugs #256 slip through.
+        run: go test -count=1 -race ./...
