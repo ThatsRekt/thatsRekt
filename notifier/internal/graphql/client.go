@@ -87,25 +87,79 @@ func NewClient(url string) *Client {
 	}
 }
 
-// chainSlugToPrefix maps the chain slug (as returned in the unified posts feed)
-// to the GraphQL prefix the Mesh gateway uses for per-chain queries. The
-// prefix is applied by the gateway's RenameRootFields transformer:
+// chainEntry is the single source of truth for one chain the notifier supports.
+// Both the slug-to-prefix lookup map and the SupportedChainSlugs list are derived
+// from chainConfig at init time — never written separately.
 //
-//	"base" → "Base_"     → query field is Base_postById(id: "42") { removed ... }
-//	"ethereum" → "Ethereum_"
+// To add a chain:
+//  1. Add a single entry to chainConfig below.
+//  2. Run `go test ./internal/graphql/...` — the chain coverage test will turn GREEN.
 //
-// The mapping must stay in sync with mesh/src/chains.ts. The sentinel "" value
-// means the chain is unknown to this notifier build — PostById returns an error
-// for unknown slugs rather than silently querying the wrong prefix.
-var chainSlugToPrefix = map[string]string{
-	"anvil-eth":    "AnvilEth_",
-	"anvil-base":   "AnvilBase_",
-	"sepolia":      "Sepolia_",
-	"ethereum":     "Ethereum_",
-	"base":         "Base_",
-	"base-sepolia": "BaseSepolia_",
-	"optimism":     "Optimism_",
-	"arbitrum":     "Arbitrum_",
+// If you add a chain to mesh/src/chains.ts but forget to add it here, the test
+// TestChainCoverage_AllMeshChainsCoveredByNotifier fails in CI. If you leave the
+// Prefix empty, init() panics at startup.
+type chainEntry struct {
+	slug   string
+	prefix string
+}
+
+// chainConfig is the ONLY place chains are declared in the Go notifier.
+// Do NOT modify chainSlugToPrefix or SupportedChainSlugs directly — they are
+// derived from this slice by init() and are read-only after that point.
+//
+// Prefix values must match the RenameRootFields transformer in mesh/src/chains.ts
+// (field: prefix). Example: slug "base" → prefix "Base_" → GraphQL query field
+// "Base_postById(id: "42") { removed title }".
+var chainConfig = []chainEntry{
+	{"anvil-eth", "AnvilEth_"},
+	{"anvil-base", "AnvilBase_"},
+	{"sepolia", "Sepolia_"},
+	{"ethereum", "Ethereum_"},
+	{"base", "Base_"},
+	{"base-sepolia", "BaseSepolia_"},
+	{"optimism", "Optimism_"},
+	{"arbitrum", "Arbitrum_"},
+	{"bsc", "Bsc_"},      // added 2026-07-13: fix issue #256
+	{"polygon", "Polygon_"}, // added 2026-07-13: fix issue #256
+}
+
+// chainSlugToPrefix is built from chainConfig at init time.
+// Use PrefixForChain to look up entries — do not access this map directly from
+// outside this package.
+var chainSlugToPrefix map[string]string
+
+// SupportedChainSlugs is the authoritative list of chain slugs this notifier
+// understands, in the order declared in chainConfig. Exported so tests can
+// iterate it to verify coverage against external registries (mesh/src/chains.ts).
+var SupportedChainSlugs []string
+
+func init() {
+	chainSlugToPrefix = make(map[string]string, len(chainConfig))
+	SupportedChainSlugs = make([]string, 0, len(chainConfig))
+	for _, e := range chainConfig {
+		if e.slug == "" || e.prefix == "" {
+			panic(fmt.Sprintf(
+				"thatsrekt-notifier: chainConfig entry {slug:%q prefix:%q} has empty field — fix notifier/internal/graphql/client.go",
+				e.slug, e.prefix,
+			))
+		}
+		if _, dup := chainSlugToPrefix[e.slug]; dup {
+			panic(fmt.Sprintf(
+				"thatsrekt-notifier: duplicate slug %q in chainConfig — fix notifier/internal/graphql/client.go",
+				e.slug,
+			))
+		}
+		chainSlugToPrefix[e.slug] = e.prefix
+		SupportedChainSlugs = append(SupportedChainSlugs, e.slug)
+	}
+}
+
+// PrefixForChain returns the GraphQL prefix for a known chain slug and true.
+// Returns ("", false) for unknown slugs. Used by tests to validate coverage
+// without relying on PostById's error path.
+func PrefixForChain(slug string) (string, bool) {
+	p, ok := chainSlugToPrefix[slug]
+	return p, ok
 }
 
 // PostByIdResult is the minimal shape returned by the per-chain postById
@@ -128,7 +182,7 @@ type PostByIdResult struct {
 func (c *Client) PostById(ctx context.Context, chainSlug, onchainID string) (*PostByIdResult, error) {
 	prefix, ok := chainSlugToPrefix[chainSlug]
 	if !ok {
-		return nil, fmt.Errorf("PostById: unknown chain slug %q — add it to chainSlugToPrefix", chainSlug)
+		return nil, fmt.Errorf("PostById: unknown chain slug %q — add it to chainConfig in notifier/internal/graphql/client.go", chainSlug)
 	}
 
 	// Build the query dynamically using the chain prefix. The field name is

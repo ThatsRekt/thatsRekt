@@ -35,6 +35,7 @@ package notifier_test
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"os"
 	"strings"
@@ -81,12 +82,16 @@ func (g *stubGQL) PostById(_ context.Context, chainSlug, onchainID string) (*gra
 // stubBot implements notifier.TelegramBot. It records sends, edits, and
 // keyboard arguments passed to EditMessageText so tests can assert the
 // keyboard-removal behaviour of retractEdit.
+//
+// editMessageErr, when non-nil, is returned by EditMessageText instead of nil.
+// Use this to simulate terminal or transient Telegram API failures in tests.
 type stubBot struct {
-	mu      sync.Mutex
-	sends   []sendCall
-	edits   []editCall
-	deletes int
-	nextID  int64
+	mu             sync.Mutex
+	sends          []sendCall
+	edits          []editCall
+	deletes        int
+	nextID         int64
+	editMessageErr error // returned by EditMessageText when non-nil
 }
 
 type sendCall struct {
@@ -113,7 +118,7 @@ func (b *stubBot) EditMessageText(_ context.Context, chatID string, messageID in
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.edits = append(b.edits, editCall{chatID: chatID, messageID: messageID, text: text, keyboard: kb})
-	return nil
+	return b.editMessageErr
 }
 
 // ---- helpers ---------------------------------------------------------------
@@ -1108,5 +1113,209 @@ func TestIsNew_EmptyLastSeen(t *testing.T) {
 	}
 	if got := st.LastSeen("ethereum"); got != "ethereum-1" {
 		t.Errorf("empty last-seen: expected lastSeen=ethereum-1, got %q", got)
+	}
+}
+
+// ---- issue #256: terminal-edit handling tests --------------------------------
+//
+// These tests cover the non-terminal edit-retry loop bug (Bug 2 of #256).
+//
+// When EditMessageText returns a terminal error (ErrTerminalEdit — e.g.
+// "message to edit not found"), the service must:
+//   - For amendment edits: advance the post snapshot so the edit is not
+//     retried on the next poll. The message is lost; there is nothing to
+//     retry. Without this fix, state.json is frozen forever.
+//   - For retract edits: mark the post retracted so checkRetracts stops
+//     probing it. The message is lost; the false-accusation risk is moot.
+//
+// When EditMessageText returns a transient (non-terminal) error, the service
+// must NOT advance the snapshot — retry on next poll is correct.
+
+// terminalEditErr returns the sentinel terminal error from the telegram package.
+// This is the error type the real Bot.EditMessageText returns for known permanent
+// failures (e.g. "message to edit not found").
+func terminalEditErr() error {
+	return &telegram.ErrTerminalEdit{Description: "Bad Request: message to edit not found"}
+}
+
+// TestAmendEdit_TerminalErrorAdvancesSnapshot verifies that a terminal edit
+// failure on an amendment advances the stored snapshot (tombstones the revision)
+// so the retry loop cannot fire again for the same on-chain state.
+//
+// Two-poll sequence:
+//  1. Poll 1: post is amended (ActionCount 1→2). EditMessageText fails terminally.
+//     Expected: snapshot advances to {ActionCount:2, LastUpdatedAt: updated}.
+//  2. Poll 2: same feed, same post. Snapshot now matches feed → no edit, no send
+//     (State 3: unchanged). Proves the loop has terminated.
+func TestAmendEdit_TerminalErrorAdvancesSnapshot(t *testing.T) {
+	pub := basePost()
+	st := populatedStore("base-1", 42, pub)
+
+	bot := &stubBot{editMessageErr: terminalEditErr()}
+	gql := &stubGQL{posts: []graphql.Post{amendedPost()}}
+
+	svc := &notifier.Service{
+		GQL:       gql,
+		Bot:       bot,
+		Store:     st,
+		ChannelID: "@testchan",
+		SiteURL:   "https://thatsrekt.com",
+		Logger:    makeTestLogger(),
+	}
+
+	// Poll 1 — terminal edit failure should advance the snapshot.
+	svc.PollOnce(context.Background())
+
+	bot.mu.Lock()
+	edits1 := len(bot.edits)
+	sends1 := len(bot.sends)
+	bot.mu.Unlock()
+
+	if edits1 != 1 {
+		t.Errorf("poll 1: expected 1 edit attempt (to record the failure), got %d", edits1)
+	}
+	if sends1 != 0 {
+		t.Errorf("poll 1: expected 0 sends, got %d", sends1)
+	}
+
+	// Poll 2 — same feed. If the snapshot was NOT advanced, another edit fires.
+	// If it WAS advanced, the post is State 3 (unchanged) → no edit.
+	svc.PollOnce(context.Background())
+
+	bot.mu.Lock()
+	edits2 := len(bot.edits)
+	sends2 := len(bot.sends)
+	bot.mu.Unlock()
+
+	if edits2 != 1 {
+		t.Errorf("poll 2: expected still 1 total edit (no retry after terminal failure), got %d — snapshot was not advanced", edits2)
+	}
+	if sends2 != 0 {
+		t.Errorf("poll 2: expected 0 sends, got %d", sends2)
+	}
+}
+
+// TestAmendEdit_TransientErrorDoesNotAdvanceSnapshot verifies that a transient
+// (non-terminal) edit failure does NOT advance the snapshot — the retry-on-next-
+// poll behaviour is correct and must be preserved.
+//
+// Two-poll sequence:
+//  1. Poll 1: post is amended. EditMessageText returns a transient error.
+//     Expected: snapshot is NOT advanced (same as before).
+//  2. Poll 2: same feed, edit now succeeds.
+//     Expected: edit fires again (retry) — proves the transient path retries.
+func TestAmendEdit_TransientErrorDoesNotAdvanceSnapshot(t *testing.T) {
+	pub := basePost()
+	st := populatedStore("base-1", 42, pub)
+
+	transientErr := fmt.Errorf("do editMessageText: connection reset by peer")
+
+	bot := &stubBot{editMessageErr: transientErr}
+	gql := &stubGQL{posts: []graphql.Post{amendedPost()}}
+
+	svc := &notifier.Service{
+		GQL:       gql,
+		Bot:       bot,
+		Store:     st,
+		ChannelID: "@testchan",
+		SiteURL:   "https://thatsrekt.com",
+		Logger:    makeTestLogger(),
+	}
+
+	// Poll 1 — transient failure. Snapshot must NOT advance.
+	svc.PollOnce(context.Background())
+
+	bot.mu.Lock()
+	edits1 := len(bot.edits)
+	bot.mu.Unlock()
+
+	if edits1 != 1 {
+		t.Errorf("poll 1: expected 1 edit attempt, got %d", edits1)
+	}
+
+	// Poll 2 — let it succeed now.
+	bot.mu.Lock()
+	bot.editMessageErr = nil
+	bot.mu.Unlock()
+
+	svc.PollOnce(context.Background())
+
+	bot.mu.Lock()
+	edits2 := len(bot.edits)
+	bot.mu.Unlock()
+
+	if edits2 != 2 {
+		t.Errorf("poll 2: expected 2 total edits (retry after transient), got %d — snapshot was incorrectly advanced on transient error", edits2)
+	}
+}
+
+// TestRetractEdit_TerminalErrorMarksRetracted verifies that a terminal edit
+// failure on a retract marks the post retracted in the store, preventing the
+// infinite retry loop from firing on subsequent polls.
+//
+// Two-poll sequence:
+//  1. Poll 1: postById returns removed=true. EditMessageText fails terminally
+//     ("message to edit not found"). Expected: post is marked retracted.
+//  2. Poll 2: same postById. Expected: StoredPosts() excludes the post (already
+//     retracted) → PostById is NOT called → no additional edit attempt.
+func TestRetractEdit_TerminalErrorMarksRetracted(t *testing.T) {
+	pub := basePost()
+	st := populatedStore("base-1", 55, pub)
+
+	bot := &stubBot{editMessageErr: terminalEditErr()}
+	postByIdCallCount := 0
+	gql := &stubGQL{
+		posts: []graphql.Post{},
+		postByIdFn: func(chainSlug, onchainID string) (*graphql.PostByIdResult, error) {
+			postByIdCallCount++
+			if chainSlug == "base" && onchainID == "1" {
+				return retractedPostByIdResult(), nil
+			}
+			return nil, nil
+		},
+	}
+
+	svc := &notifier.Service{
+		GQL:       gql,
+		Bot:       bot,
+		Store:     st,
+		ChannelID: "@testchan",
+		SiteURL:   "https://thatsrekt.com",
+		Logger:    makeTestLogger(),
+	}
+
+	// Poll 1 — retract edit fails terminally. Post must be marked retracted.
+	svc.PollOnce(context.Background())
+
+	bot.mu.Lock()
+	edits1 := len(bot.edits)
+	bot.mu.Unlock()
+	callsAfterPoll1 := postByIdCallCount
+
+	if edits1 != 1 {
+		t.Errorf("poll 1: expected 1 edit attempt, got %d", edits1)
+	}
+	if callsAfterPoll1 != 1 {
+		t.Errorf("poll 1: expected 1 postById call, got %d", callsAfterPoll1)
+	}
+
+	// Verify the store marks the post retracted.
+	if !st.IsRetracted("base-1") {
+		t.Errorf("poll 1: post must be marked retracted after terminal edit failure")
+	}
+
+	// Poll 2 — post is already retracted → StoredPosts() excludes it → no PostById call.
+	svc.PollOnce(context.Background())
+
+	bot.mu.Lock()
+	edits2 := len(bot.edits)
+	bot.mu.Unlock()
+	callsAfterPoll2 := postByIdCallCount
+
+	if edits2 != 1 {
+		t.Errorf("poll 2: expected still 1 total edit (no retry after terminal), got %d", edits2)
+	}
+	if callsAfterPoll2 != 1 {
+		t.Errorf("poll 2: expected 0 additional postById calls (post is retracted), got %d total", callsAfterPoll2)
 	}
 }

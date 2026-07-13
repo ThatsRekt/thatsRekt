@@ -103,6 +103,37 @@ type editMessageTextReq struct {
 	ReplyMarkup *InlineKeyboardMarkup `json:"reply_markup,omitempty"`
 }
 
+// ErrTerminalEdit is returned by EditMessageText when the Telegram API indicates
+// the failure is permanent: retrying the same request will not succeed.
+//
+// Known terminal conditions (matched by isTerminalEditError below):
+//   - "message to edit not found" — message was deleted from the channel.
+//   - "can't edit message" — message too old (>48 h) or bot lost edit rights.
+//   - "MESSAGE_ID_INVALID" — Telegram MTProto error forwarded to the Bot API.
+//
+// Transient conditions (rate-limit 429, 5xx server errors) are NOT wrapped
+// in this type — they propagate as plain errors so the caller's retry-on-
+// next-poll behaviour applies correctly.
+//
+// Callers detect this type via errors.As and should record the terminal
+// outcome in state (advance the snapshot, or mark retracted) rather than
+// retrying on the next poll.
+type ErrTerminalEdit struct {
+	Description string
+}
+
+func (e *ErrTerminalEdit) Error() string {
+	return "editMessageText (terminal): " + e.Description
+}
+
+// isTerminalEditError reports whether the Telegram Bot API error description
+// indicates a permanent failure that retrying cannot resolve.
+func isTerminalEditError(desc string) bool {
+	return strings.Contains(desc, "message to edit not found") ||
+		strings.Contains(desc, "can't edit message") ||
+		strings.Contains(desc, "MESSAGE_ID_INVALID")
+}
+
 // EditMessageText replaces the text of an existing message in place. Used
 // for amendment handling: when a post the notifier has already published is
 // amended on-chain, we call this instead of sending a new message so
@@ -110,6 +141,11 @@ type editMessageTextReq struct {
 //
 // Telegram returns 400 "message is not modified" when the new text is
 // identical to the current one; we treat that as a no-op.
+//
+// Terminal errors (message deleted, too old, etc.) are returned as
+// *ErrTerminalEdit. Callers should use errors.As to distinguish terminal from
+// transient failures: terminal → record outcome and move on; transient →
+// retry on next poll.
 func (b *Bot) EditMessageText(ctx context.Context, chatID string, messageID int64, text string, kb *InlineKeyboardMarkup) error {
 	body, _ := json.Marshal(editMessageTextReq{
 		ChatID:      chatID,
@@ -126,10 +162,16 @@ func (b *Bot) EditMessageText(ctx context.Context, chatID string, messageID int6
 		return err
 	}
 	if !out.OK {
+		// "message is not modified" — no-op; idempotent by Telegram spec.
 		// Telegram historically returns this with and without the
 		// "Bad Request:" prefix — use substring match for robustness.
 		if strings.Contains(out.Description, "message is not modified") {
 			return nil
+		}
+		// Classify terminal vs transient. Terminal errors cannot succeed on
+		// retry; the caller must record the outcome and move on.
+		if isTerminalEditError(out.Description) {
+			return &ErrTerminalEdit{Description: out.Description}
 		}
 		return fmt.Errorf("editMessageText: %s", out.Description)
 	}

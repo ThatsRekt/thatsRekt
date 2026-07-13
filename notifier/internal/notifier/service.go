@@ -15,6 +15,7 @@ package notifier
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sort"
@@ -212,8 +213,22 @@ func (s *Service) PollOnce(ctx context.Context) {
 
 		// --- State 4: mapped + snapshot + changed → edit in place ---
 		if err := s.amendEdit(ctx, p, msgID); err != nil {
-			s.Logger.Warn("amendment edit failed", "post_id", p.ID, "err", err)
-			// Don't update snapshot — next poll will retry.
+			var termErr *telegram.ErrTerminalEdit
+			if errors.As(err, &termErr) {
+				// Terminal: the message is gone (deleted by admin, too old, etc.).
+				// Advance the snapshot so we don't retry this revision on every
+				// subsequent poll — the infinite-retry loop is the live failure
+				// mode described in issue #256 Bug 2.
+				s.Store.UpdatePostSnapshot(p.ID, p.ActionCount, p.LastUpdatedAt)
+				s.Logger.Warn("amendment edit permanently failed — tombstoning snapshot",
+					"post_id", p.ID,
+					"message_id", msgID,
+					"reason", termErr.Description,
+				)
+				continue
+			}
+			// Transient (network error, rate-limit, etc.) — retry on next poll.
+			s.Logger.Warn("amendment edit failed (will retry)", "post_id", p.ID, "err", err)
 			continue
 		}
 	}
@@ -276,12 +291,26 @@ func (s *Service) checkRetracts(ctx context.Context) {
 
 		// Post is retracted on-chain. Edit the Telegram message.
 		if err := s.retractEdit(ctx, result, e.PostID, e.MessageID); err != nil {
-			s.Logger.Warn("checkRetracts: retract edit failed",
+			var termErr *telegram.ErrTerminalEdit
+			if errors.As(err, &termErr) {
+				// Terminal: the message no longer exists. Mark retracted so
+				// StoredPosts() excludes this post on subsequent polls — the
+				// false-accusation risk is gone because the message is already
+				// gone from the channel. See issue #256 Bug 2.
+				s.Store.MarkRetracted(e.PostID)
+				s.Logger.Warn("checkRetracts: retract edit permanently failed — marking retracted (message lost)",
+					"post_id", e.PostID,
+					"message_id", e.MessageID,
+					"reason", termErr.Description,
+				)
+				continue
+			}
+			// Transient (network error, rate-limit, etc.) — retry on next poll.
+			s.Logger.Warn("checkRetracts: retract edit failed (will retry)",
 				"post_id", e.PostID,
 				"chain", e.ChainSlug,
 				"err", err,
 			)
-			// Do NOT mark retracted — retry on next poll.
 		}
 	}
 }
