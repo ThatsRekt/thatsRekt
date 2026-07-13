@@ -129,6 +129,17 @@ func TestSupportedChainSlugs_BscAndPolygon(t *testing.T) {
 func parseMeshChains(t *testing.T) map[string]string {
 	t.Helper()
 
+	// Defeat the Go test cache. mesh/src/chains.ts is read at runtime and
+	// lives outside the Go package source tree, so the test tool does not
+	// include it in the cache key. Without this call, editing chains.ts and
+	// running `go test ./...` locally returns "(cached)" — a FALSE GREEN that
+	// hides exactly the drift this test guards against.
+	//
+	// t.Setenv is sufficient: per the Go spec (go help testcache), tests that
+	// call t.Setenv are never cached. The value is arbitrary — only the call
+	// matters. CI additionally passes -count=1 for belt-and-suspenders.
+	t.Setenv("_NOTIFIER_CHAINS_TS_CACHE_BUST", "1")
+
 	// Resolve absolute path to mesh/src/chains.ts from the test file's location.
 	// client_test.go lives at notifier/internal/graphql/client_test.go.
 	// Up 3 dirs from notifier/internal/graphql/ reaches the repo root.

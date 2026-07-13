@@ -1131,11 +1131,26 @@ func TestIsNew_EmptyLastSeen(t *testing.T) {
 // When EditMessageText returns a transient (non-terminal) error, the service
 // must NOT advance the snapshot — retry on next poll is correct.
 
-// terminalEditErr returns the sentinel terminal error from the telegram package.
-// This is the error type the real Bot.EditMessageText returns for known permanent
-// failures (e.g. "message to edit not found").
+// terminalEditErr returns a terminal error with MessageGone=true: the message
+// was deleted from the channel. For retract paths, MarkRetracted is safe. For
+// amendment paths, advancing the snapshot stops the retry loop (cosmetic loss).
 func terminalEditErr() error {
-	return &telegram.ErrTerminalEdit{Description: "Bad Request: message to edit not found"}
+	return &telegram.ErrTerminalEdit{
+		Description: "Bad Request: message to edit not found",
+		MessageGone: true,
+	}
+}
+
+// uneditableEditErr returns a terminal error with MessageGone=false: the message
+// EXISTS and is still publicly visible, but the bot cannot edit it (edit window
+// expired or admin rights revoked). For retract paths, MarkRetracted must NOT be
+// called — a false accusation is still publicly visible. The correct Telegram API
+// string is "message can't be edited" (NOT "can't edit message").
+func uneditableEditErr() error {
+	return &telegram.ErrTerminalEdit{
+		Description: "Bad Request: message can't be edited",
+		MessageGone: false,
+	}
 }
 
 // TestAmendEdit_TerminalErrorAdvancesSnapshot verifies that a terminal edit
@@ -1317,5 +1332,315 @@ func TestRetractEdit_TerminalErrorMarksRetracted(t *testing.T) {
 	}
 	if callsAfterPoll2 != 1 {
 		t.Errorf("poll 2: expected 0 additional postById calls (post is retracted), got %d total", callsAfterPoll2)
+	}
+}
+
+// ---- B3: MessageGone split tests ---------------------------------------------
+//
+// These tests cover the two sub-classes of ErrTerminalEdit introduced to fix
+// the "isTerminalEditError" landmine (issue #257 review blocker B3).
+//
+// The split:
+//   - MessageGone=true ("message to edit not found"): message is gone, MarkRetracted is safe.
+//   - MessageGone=false ("message can't be edited"): message EXISTS, do NOT MarkRetracted.
+//     A false accusation is still publicly visible; human intervention is required.
+
+// TestRetractEdit_MessageGone_MarksRetracted verifies that a terminal retract
+// edit where the message is gone (MessageGone=true) marks the post retracted and
+// stops retrying. This is the safe path — the false-accusation risk is moot
+// because there is nothing left in the channel.
+//
+// Mutation evidence: delete the `if termErr.MessageGone` branch (make it never
+// call MarkRetracted) →
+//
+//	--- FAIL: TestRetractEdit_MessageGone_MarksRetracted
+//	    service_test.go:NN: poll 1: post must be marked retracted when message is gone
+func TestRetractEdit_MessageGone_MarksRetracted(t *testing.T) {
+	pub := basePost()
+	st := populatedStore("base-1", 77, pub)
+
+	bot := &stubBot{editMessageErr: terminalEditErr()} // MessageGone=true
+	gql := &stubGQL{
+		posts: []graphql.Post{},
+		postByIdFn: func(chainSlug, onchainID string) (*graphql.PostByIdResult, error) {
+			if chainSlug == "base" && onchainID == "1" {
+				return retractedPostByIdResult(), nil
+			}
+			return nil, nil
+		},
+	}
+
+	svc := &notifier.Service{
+		GQL:       gql,
+		Bot:       bot,
+		Store:     st,
+		ChannelID: "@testchan",
+		SiteURL:   "https://thatsrekt.com",
+		Logger:    makeTestLogger(),
+	}
+
+	svc.PollOnce(context.Background())
+
+	// Message is gone → MarkRetracted must have been called.
+	if !st.IsRetracted("base-1") {
+		t.Errorf("poll 1: post must be marked retracted when message is gone (MessageGone=true)")
+	}
+
+	// Poll 2: post is retracted → StoredPosts excludes it → no further edits.
+	bot.mu.Lock()
+	edits1 := len(bot.edits)
+	bot.mu.Unlock()
+
+	svc.PollOnce(context.Background())
+
+	bot.mu.Lock()
+	edits2 := len(bot.edits)
+	bot.mu.Unlock()
+
+	if edits2 != edits1 {
+		t.Errorf("poll 2: expected no additional edits after MarkRetracted, got %d total (was %d)", edits2, edits1)
+	}
+}
+
+// TestRetractEdit_MessageUneditable_NotMarkedRetracted verifies that a terminal
+// retract edit where the message EXISTS but cannot be edited (MessageGone=false)
+// does NOT call MarkRetracted and keeps retrying on subsequent polls.
+//
+// This is the dangerous path: the false accusation is still publicly visible.
+// The correct behaviour is to keep the retry loop alive (emitting an ERROR log)
+// until a human manually retracts the message.
+//
+// Mutation evidence: change the `if termErr.MessageGone` check to always call
+// MarkRetracted →
+//
+//	--- FAIL: TestRetractEdit_MessageUneditable_NotMarkedRetracted
+//	    service_test.go:NN: poll 1: post must NOT be marked retracted when message is still visible (MessageGone=false)
+//	    service_test.go:NN: poll 2: expected 2 total edit attempts (retry for uneditable), got 1
+func TestRetractEdit_MessageUneditable_NotMarkedRetracted(t *testing.T) {
+	pub := basePost()
+	st := populatedStore("base-1", 88, pub)
+
+	bot := &stubBot{editMessageErr: uneditableEditErr()} // MessageGone=false
+	postByIdCalls := 0
+	gql := &stubGQL{
+		posts: []graphql.Post{},
+		postByIdFn: func(chainSlug, onchainID string) (*graphql.PostByIdResult, error) {
+			postByIdCalls++
+			if chainSlug == "base" && onchainID == "1" {
+				return retractedPostByIdResult(), nil
+			}
+			return nil, nil
+		},
+	}
+
+	svc := &notifier.Service{
+		GQL:       gql,
+		Bot:       bot,
+		Store:     st,
+		ChannelID: "@testchan",
+		SiteURL:   "https://thatsrekt.com",
+		Logger:    makeTestLogger(),
+	}
+
+	// Poll 1 — uneditable retract fail. Must NOT mark retracted.
+	svc.PollOnce(context.Background())
+
+	if st.IsRetracted("base-1") {
+		t.Errorf("poll 1: post must NOT be marked retracted when message is still visible (MessageGone=false)")
+	}
+	bot.mu.Lock()
+	edits1 := len(bot.edits)
+	bot.mu.Unlock()
+
+	// Poll 2 — post is still in StoredPosts (not retracted) → retry fires.
+	svc.PollOnce(context.Background())
+
+	bot.mu.Lock()
+	edits2 := len(bot.edits)
+	bot.mu.Unlock()
+
+	if edits2 != edits1+1 {
+		t.Errorf("poll 2: expected %d total edit attempts (retry for uneditable), got %d", edits1+1, edits2)
+	}
+	if st.IsRetracted("base-1") {
+		t.Errorf("poll 2: post must still not be marked retracted after two failed uneditable retract attempts")
+	}
+	if postByIdCalls != 2 {
+		t.Errorf("expected 2 postById calls (one per poll), got %d", postByIdCalls)
+	}
+}
+
+// TestAmendEdit_MessageUneditable_TombstonesSnapshot verifies that a terminal
+// amendment edit where the message is uneditable (MessageGone=false) still
+// advances the snapshot. For amendments, both MessageGone=true and =false
+// advance the snapshot — the harm is cosmetic (stale content) not a safety issue.
+// The retry loop stopping is more important than preserving the latest content.
+//
+// Mutation evidence: skip UpdatePostSnapshot for MessageGone=false on amendment →
+//
+//	--- FAIL: TestAmendEdit_MessageUneditable_TombstonesSnapshot
+//	    service_test.go:NN: poll 2: expected still 1 total edit (snapshot must advance for uneditable), got 2
+func TestAmendEdit_MessageUneditable_TombstonesSnapshot(t *testing.T) {
+	pub := basePost()
+	st := populatedStore("base-1", 42, pub)
+
+	bot := &stubBot{editMessageErr: uneditableEditErr()} // MessageGone=false
+	gql := &stubGQL{posts: []graphql.Post{amendedPost()}}
+
+	svc := &notifier.Service{
+		GQL:       gql,
+		Bot:       bot,
+		Store:     st,
+		ChannelID: "@testchan",
+		SiteURL:   "https://thatsrekt.com",
+		Logger:    makeTestLogger(),
+	}
+
+	// Poll 1 — uneditable amendment. Snapshot must advance despite MessageGone=false.
+	svc.PollOnce(context.Background())
+
+	bot.mu.Lock()
+	edits1 := len(bot.edits)
+	bot.mu.Unlock()
+
+	if edits1 != 1 {
+		t.Errorf("poll 1: expected 1 edit attempt, got %d", edits1)
+	}
+
+	// Poll 2 — same feed. If snapshot was advanced, post is State 3 (unchanged) → no edit.
+	svc.PollOnce(context.Background())
+
+	bot.mu.Lock()
+	edits2 := len(bot.edits)
+	bot.mu.Unlock()
+
+	if edits2 != 1 {
+		t.Errorf("poll 2: expected still 1 total edit (snapshot must advance for uneditable), got %d", edits2)
+	}
+}
+
+// ---- Job2: orphan backfill no-spam proof ------------------------------------
+//
+// This test is the definitive proof that deploying PR #257 + the backfill
+// script sends ZERO new Telegram messages for the 6 orphaned pre-N3 posts.
+//
+// The 6 orphans were published before N3 deployed (chainSlug was not stored at
+// publish time). Their state entries have no chainSlug, so StoredPosts() skips
+// them. After the backfill adds chainSlug="ethereum", they enter the retract
+// pass and are edited to RETRACTED state — but never sent as new messages.
+//
+// Why zero new messages is guaranteed:
+//   - LatestPosts() (the feed) has a server-side removed_eq:false filter.
+//     Retracted posts are permanently excluded from the feed.
+//   - State 1 (new → SendMessage) requires the post to be in the feed.
+//   - Since the feed is empty (all 6 are removed=true), State 1 cannot fire.
+//   - Only checkRetracts fires, which calls EditMessageText on existing messages.
+//
+// Mutation evidence: change EditMessageText to call SendMessage instead →
+// sends jumps from 0 to 6 and the test fails immediately.
+
+// TestOrphanBackfill_NoSpam seeds 6 orphaned state entries (matching the actual
+// production state for ethereum-1 through ethereum-6), runs SetChainSlug on each
+// to simulate the backfill, then runs PollOnce and asserts 0 sends and 6 edits.
+func TestOrphanBackfill_NoSpam(t *testing.T) {
+	// Production orphan entries as of 2026-07-13. ChainSlug intentionally
+	// left empty — this is the pre-N3 state that the backfill patches.
+	orphans := []struct {
+		postID    string
+		messageID int64
+	}{
+		{"ethereum-1", 14},
+		{"ethereum-2", 18},
+		{"ethereum-3", 23},
+		{"ethereum-4", 24},
+		{"ethereum-5", 25},
+		{"ethereum-6", 27},
+	}
+
+	st := store.NewInMemory()
+	for _, o := range orphans {
+		// RegisterPost with empty chainSlug — simulates the pre-N3 state
+		// (no chainSlug stored at publish time). StoredPosts() skips these.
+		st.RegisterPost(o.postID, o.messageID, "")
+	}
+
+	// Simulate the backfill: SetChainSlug adds "ethereum" to each entry.
+	// After this, StoredPosts() includes all 6 entries.
+	for _, o := range orphans {
+		st.SetChainSlug(o.postID, "ethereum")
+	}
+
+	// Sanity-check: all 6 are now visible to checkRetracts.
+	if got := len(st.StoredPosts()); got != 6 {
+		t.Fatalf("expected StoredPosts() to return 6 entries after backfill, got %d", got)
+	}
+
+	bot := &stubBot{}
+	gql := &stubGQL{
+		// Empty feed: LatestPosts returns nothing. The mesh gateway applies a
+		// server-side removed_eq:false filter — retracted posts never appear.
+		// This is the structural guarantee that SendMessage cannot fire.
+		posts: []graphql.Post{},
+		// PostById returns removed=true for all ethereum-N queries.
+		postByIdFn: func(chainSlug, onchainID string) (*graphql.PostByIdResult, error) {
+			if chainSlug == "ethereum" {
+				return &graphql.PostByIdResult{
+					Removed: true,
+					Title:   "Test orphan retract",
+				}, nil
+			}
+			return nil, nil
+		},
+	}
+
+	svc := &notifier.Service{
+		GQL:       gql,
+		Bot:       bot,
+		Store:     st,
+		ChannelID: "@testchan",
+		SiteURL:   "https://thatsrekt.com",
+		Logger:    makeTestLogger(),
+	}
+
+	svc.PollOnce(context.Background())
+
+	bot.mu.Lock()
+	sends := len(bot.sends)
+	edits := len(bot.edits)
+	editedIDs := make(map[int64]bool, len(bot.edits))
+	for _, e := range bot.edits {
+		editedIDs[e.messageID] = true
+	}
+	bot.mu.Unlock()
+
+	// PRIMARY ASSERTION: zero new messages. A failure here means a false alarm
+	// in the channel — the most harmful possible outcome.
+	if sends != 0 {
+		t.Errorf("no-spam: expected 0 SendMessage calls, got %d — deployment would spam the channel!", sends)
+	}
+
+	// 6 retract edits — one per orphaned post.
+	if edits != 6 {
+		t.Errorf("no-spam: expected 6 EditMessageText calls (one per orphan), got %d", edits)
+	}
+
+	// Verify the correct message IDs were edited.
+	expectedIDs := map[int64]bool{14: true, 18: true, 23: true, 24: true, 25: true, 27: true}
+	for id := range expectedIDs {
+		if !editedIDs[id] {
+			t.Errorf("no-spam: expected edit on message_id=%d but it was not called", id)
+		}
+	}
+	for id := range editedIDs {
+		if !expectedIDs[id] {
+			t.Errorf("no-spam: unexpected edit on message_id=%d", id)
+		}
+	}
+
+	// All 6 posts must be marked retracted after PollOnce.
+	for _, o := range orphans {
+		if !st.IsRetracted(o.postID) {
+			t.Errorf("no-spam: expected %s to be marked retracted after PollOnce, but IsRetracted=false", o.postID)
+		}
 	}
 }

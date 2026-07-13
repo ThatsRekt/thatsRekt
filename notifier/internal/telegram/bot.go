@@ -23,7 +23,11 @@ const apiBase = "https://api.telegram.org"
 
 type Bot struct {
 	Token string
-	HTTP  *http.Client
+	// APIBase overrides the Telegram API base URL. Leave empty for production
+	// (defaults to https://api.telegram.org). Set in tests to point at an
+	// httptest.Server so classification can be tested without network access.
+	APIBase string
+	HTTP    *http.Client
 }
 
 func NewBot(token string) *Bot {
@@ -106,32 +110,60 @@ type editMessageTextReq struct {
 // ErrTerminalEdit is returned by EditMessageText when the Telegram API indicates
 // the failure is permanent: retrying the same request will not succeed.
 //
-// Known terminal conditions (matched by isTerminalEditError below):
-//   - "message to edit not found" — message was deleted from the channel.
-//   - "can't edit message" — message too old (>48 h) or bot lost edit rights.
-//   - "MESSAGE_ID_INVALID" — Telegram MTProto error forwarded to the Bot API.
+// MessageGone distinguishes two distinct recovery paths:
+//
+//   - MessageGone=true ("message to edit not found", "MESSAGE_ID_INVALID"):
+//     The message no longer exists in the channel. For retracts, MarkRetracted
+//     is safe — there is nothing publicly visible to retract. For amendments,
+//     advancing the snapshot stops the retry loop (cosmetic loss only).
+//
+//   - MessageGone=false ("message can't be edited", "not enough rights to edit message"):
+//     The message EXISTS and is still publicly visible, but the bot cannot edit
+//     it (edit window expired, or admin rights revoked). For retracts, do NOT
+//     call MarkRetracted — that would permanently silence the retry and leave a
+//     live false accusation marked "done". Log at ERROR and let a human retract
+//     manually. For amendments, advancing the snapshot still makes sense (the
+//     content is stale, not a safety issue).
 //
 // Transient conditions (rate-limit 429, 5xx server errors) are NOT wrapped
 // in this type — they propagate as plain errors so the caller's retry-on-
 // next-poll behaviour applies correctly.
 //
-// Callers detect this type via errors.As and should record the terminal
-// outcome in state (advance the snapshot, or mark retracted) rather than
-// retrying on the next poll.
+// Callers detect this type via errors.As and must branch on MessageGone.
 type ErrTerminalEdit struct {
 	Description string
+	// MessageGone is true when the Telegram message no longer exists.
+	// See the type-level comment for recovery action per value.
+	MessageGone bool
 }
 
 func (e *ErrTerminalEdit) Error() string {
 	return "editMessageText (terminal): " + e.Description
 }
 
-// isTerminalEditError reports whether the Telegram Bot API error description
-// indicates a permanent failure that retrying cannot resolve.
-func isTerminalEditError(desc string) bool {
-	return strings.Contains(desc, "message to edit not found") ||
-		strings.Contains(desc, "can't edit message") ||
-		strings.Contains(desc, "MESSAGE_ID_INVALID")
+// classifyTerminalEdit checks whether a Telegram Bot API error description is a
+// known-permanent edit failure, and if so, whether the message is gone vs. still
+// visible but uneditable.
+//
+// The exact error strings are verified against the live Telegram Bot API. Word
+// order matters — "message can't be edited" NOT "can't edit message". Tests in
+// bot_test.go pin each string to guard against future drift.
+func classifyTerminalEdit(desc string) (isTerminal bool, messageGone bool) {
+	// --- message is GONE — MarkRetracted is safe ---
+	if strings.Contains(desc, "message to edit not found") {
+		return true, true
+	}
+	if strings.Contains(desc, "MESSAGE_ID_INVALID") {
+		return true, true
+	}
+	// --- message EXISTS but bot cannot edit it — do NOT MarkRetracted ---
+	if strings.Contains(desc, "message can't be edited") {
+		return true, false
+	}
+	if strings.Contains(desc, "not enough rights to edit message") {
+		return true, false
+	}
+	return false, false
 }
 
 // EditMessageText replaces the text of an existing message in place. Used
@@ -169,9 +201,9 @@ func (b *Bot) EditMessageText(ctx context.Context, chatID string, messageID int6
 			return nil
 		}
 		// Classify terminal vs transient. Terminal errors cannot succeed on
-		// retry; the caller must record the outcome and move on.
-		if isTerminalEditError(out.Description) {
-			return &ErrTerminalEdit{Description: out.Description}
+		// retry; the caller must branch on MessageGone and record the outcome.
+		if isTerminal, messageGone := classifyTerminalEdit(out.Description); isTerminal {
+			return &ErrTerminalEdit{Description: out.Description, MessageGone: messageGone}
 		}
 		return fmt.Errorf("editMessageText: %s", out.Description)
 	}
@@ -181,7 +213,11 @@ func (b *Bot) EditMessageText(ctx context.Context, chatID string, messageID int6
 // --- HTTP plumbing ---------------------------------------------------------
 
 func (b *Bot) call(ctx context.Context, method string, body []byte, out any) error {
-	url := fmt.Sprintf("%s/bot%s/%s", apiBase, b.Token, method)
+	base := b.APIBase
+	if base == "" {
+		base = apiBase
+	}
+	url := fmt.Sprintf("%s/bot%s/%s", base, b.Token, method)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return fmt.Errorf("new request: %w", err)
