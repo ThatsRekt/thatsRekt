@@ -129,16 +129,20 @@ func TestSupportedChainSlugs_BscAndPolygon(t *testing.T) {
 func parseMeshChains(t *testing.T) map[string]string {
 	t.Helper()
 
-	// Defeat the Go test cache. mesh/src/chains.ts is read at runtime and
-	// lives outside the Go package source tree, so the test tool does not
-	// include it in the cache key. Without this call, editing chains.ts and
-	// running `go test ./...` locally returns "(cached)" — a FALSE GREEN that
-	// hides exactly the drift this test guards against.
+	// WARNING: this test IS cacheable by the Go test cache.
 	//
-	// t.Setenv is sufficient: per the Go spec (go help testcache), tests that
-	// call t.Setenv are never cached. The value is arbitrary — only the call
-	// matters. CI additionally passes -count=1 for belt-and-suspenders.
-	t.Setenv("_NOTIFIER_CHAINS_TS_CACHE_BUST", "1")
+	// The test reads mesh/src/chains.ts at runtime via os.Open. The Go test
+	// cache keys on package source files and looked-up environment variable
+	// values — it does NOT track arbitrary runtime filesystem reads. If
+	// chains.ts changes but no Go source files change, `go test ./...` returns
+	// "(cached)" and passes even though the drift guard would have caught the
+	// new chain.
+	//
+	// The ONLY protection against this false GREEN is running with -count=1.
+	// .github/workflows/notifier-ci.yml hard-codes -count=1 for exactly this
+	// reason. DO NOT remove -count=1 from that workflow under any circumstances.
+	//
+	// Locally, always run: go test -count=1 ./internal/graphql/...
 
 	// Resolve absolute path to mesh/src/chains.ts from the test file's location.
 	// client_test.go lives at notifier/internal/graphql/client_test.go.
