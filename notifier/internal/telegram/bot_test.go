@@ -89,9 +89,9 @@ func TestEditMessageText_TerminalClassification(t *testing.T) {
 		name        string
 		description string
 		httpStatus  int
-		wantGone    bool   // expected ErrTerminalEdit.MessageGone
-		wantTermErr bool   // expected errors.As(*ErrTerminalEdit)
-		wantNilErr  bool   // expected nil error (success or "not modified")
+		wantGone    bool // expected ErrTerminalEdit.MessageGone
+		wantTermErr bool // expected errors.As(*ErrTerminalEdit)
+		wantNilErr  bool // expected nil error (success or "not modified")
 	}
 
 	cases := []tc{

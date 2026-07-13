@@ -119,7 +119,7 @@ var chainConfig = []chainEntry{
 	{"base-sepolia", "BaseSepolia_"},
 	{"optimism", "Optimism_"},
 	{"arbitrum", "Arbitrum_"},
-	{"bsc", "Bsc_"},      // added 2026-07-13: fix issue #256
+	{"bsc", "Bsc_"},         // added 2026-07-13: fix issue #256
 	{"polygon", "Polygon_"}, // added 2026-07-13: fix issue #256
 }
 
