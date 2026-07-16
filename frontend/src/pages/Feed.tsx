@@ -87,17 +87,17 @@ export function Feed() {
   // Combined "something is in flight" state for the refresh button.
   const isRefreshing = isFeedFetching || indexerStatus.isFetching
 
-  // Flatten and explicitly sort by createdAtTimestamp (when the post was
-  // reported/detected), not whatever order the pages arrived in. Posts can
-  // be amended (title/note/attackers/victims) after creation without
-  // changing createdAtTimestamp, so this keeps the feed ordered by
-  // detection time regardless of edit activity.
+  // Flatten and explicitly sort by attackedAt (the incident date, which is
+  // also what's displayed on each card: "attacked Xd ago"), not whatever
+  // order the pages arrived in. Sorting on a field different from the one
+  // shown on the card made the ordering look wrong even when it wasn't —
+  // this keeps what's sorted and what's displayed in agreement.
   const allPosts: FeedPost[] = data
     ? data.pages.flatMap((p) => p.items)
     : []
   const livePosts = allPosts.slice().sort((a, b) => {
-    const ta = new Date(a.createdAtTimestamp).getTime()
-    const tb = new Date(b.createdAtTimestamp).getTime()
+    const ta = new Date(a.attackedAt).getTime()
+    const tb = new Date(b.attackedAt).getTime()
     return sort === 'oldest' ? ta - tb : tb - ta
   })
   const totalLiveCount = data?.pages[0]?.totalCount ?? 0
