@@ -21,8 +21,12 @@ name: Build donations-indexer
 
 on:
   push:
+    # Retargeted from the retired `master` (see #228). This restores
+    # build-and-push on merge: the Fargate task definitions reference
+    # :latest, so a merge here rebuilds the image and the next scheduled
+    # run (rate(30 minutes)) picks it up automatically.
     branches:
-      - master
+      - main
     paths:
       - "donations-indexer/**"
       - ".github/workflows/build-donations-indexer.yml"
