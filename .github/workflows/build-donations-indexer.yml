@@ -81,7 +81,7 @@ jobs:
         # against real infrastructure in the developer's local environment).
         # Unit tests (chainConfig, donationMapper, tokenAllowlist) and the
         # store tests with an in-memory fixture run cleanly in CI.
-        run: bun test --timeout 30000 test/chainConfig.test.ts test/donationMapper.test.ts test/tokenAllowlist.test.ts
+        run: bun test --timeout 30000 test/chainConfig.test.ts test/donationMapper.test.ts test/tokenAllowlist.test.ts test/blockRange.test.ts
 
   # ---------------------------------------------------------------------------
   # Job 2: build and push Docker image to ECR

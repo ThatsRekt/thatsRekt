@@ -31,6 +31,7 @@ import type {
   HashAndHeight,
 } from '@subsquid/util-internal-processor-tools'
 import pkg from 'pg'
+import { resolveToBlock, fetchArchiveHeight } from './blockRange.js'
 import { ensureDonationTable, upsertDonation } from './donationStore.js'
 import { mapNativeTransfer, mapErc20Transfer } from './donationMapper.js'
 import { erc20Addresses, TRANSFER_TOPIC0 } from './tokenAllowlist.js'
@@ -76,6 +77,11 @@ const DB_URL = requireEnv('DONATIONS_DB_URL')
 // DONEE_OVERRIDE bypasses ENS resolution entirely (tests / ops escape hatch).
 const DONEE_SEED = '0x59E4DBc95BD312A882Bb36b7f3E8298682340679'.toLowerCase()
 const ENS_RPC_URL = process.env.ENS_RPC_URL ?? ''
+
+// Subsquid Network archive — only for production chains, not local anvil forks.
+// Set GATEWAY_URL to the chain-specific Subsquid Network gateway URL to enable.
+// Omit it (or leave it empty) for RPC-only mode (used in tests and local setups).
+const GATEWAY_URL = process.env.GATEWAY_URL
 const DONEE_OVERRIDE = process.env.DONEE_OVERRIDE
 
 // Start block: override via per-chain env var (used in tests), else pinned default.
@@ -159,10 +165,21 @@ const main = async () => {
   // Bounded to ≥ FINALITY_CONFIRMATION blocks behind head so we only process
   // finalized blocks. Bounded `to` ⇒ the processor run promise resolves at
   // end of range rather than looping forever.
+  //
+  // Additionally clamped to the archive height: the archive trails head by far
+  // more than FINALITY_CONFIRMATION, and a bound above it forces every run into
+  // RPC ingestion at ~9 blocks/sec. See src/blockRange.ts for the incident.
   const head = await fetchHeadHeight(RPC_URL)
-  const toBlock = Math.max(START_BLOCK, head - FINALITY_CONFIRMATION)
+  const archiveHeight = GATEWAY_URL ? await fetchArchiveHeight(GATEWAY_URL) : null
+  const toBlock = resolveToBlock({
+    startBlock: START_BLOCK,
+    head,
+    finalityConfirmation: FINALITY_CONFIRMATION,
+    archiveHeight,
+  })
   console.log(
-    `[donations-indexer] block range: from=${START_BLOCK} to=${toBlock} (head=${head}, finality=${FINALITY_CONFIRMATION})`,
+    `[donations-indexer] block range: from=${START_BLOCK} to=${toBlock} ` +
+      `(head=${head}, finality=${FINALITY_CONFIRMATION}, archive=${archiveHeight ?? 'none'})`,
   )
 
   // Build the processor inside main() so we can use the resolved donee.
@@ -203,10 +220,8 @@ const main = async () => {
     })
   }
 
-  // Subsquid Network archive — only for production chains, not local anvil forks.
-  // Set GATEWAY_URL to the chain-specific Subsquid Network gateway URL to enable.
-  // Omit it (or leave it empty) for RPC-only mode (used in tests and local setups).
-  const GATEWAY_URL = process.env.GATEWAY_URL
+  // GATEWAY_URL is resolved at module scope — the bounded range above depends
+  // on the archive height, so it must be known before the range is computed.
   const processor = GATEWAY_URL ? base.setGateway(GATEWAY_URL) : base
 
   // Ensure schema before starting the processor loop.
