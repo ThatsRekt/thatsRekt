@@ -95,8 +95,22 @@ export const buildProcessor = (chain: ChainConfig): BuiltProcessor => {
   // Subsquid Network archive — present for real chains, null for local
   // Anvil (no archive exists). Without a gateway the processor falls back
   // to RPC-only sync, which is fine at local-fork volumes.
-  const processor: ConfiguredProcessor =
+  const withGateway: ConfiguredProcessor =
     chain.gateway !== null ? base.setGateway(chain.gateway) : base
+
+  // Archive-only chains drop the RPC hot-block tail entirely: the gateway
+  // becomes the sole data source and per-block `eth_getBlockByNumber` traffic
+  // goes to zero. `setRpcEndpoint` above is deliberately left in place so the
+  // toggle is reversible from config alone, with no deployment change.
+  //
+  // Guarded, not assumed: the processor throws at boot if RPC ingestion is
+  // disabled without a gateway. `chains.ts` forbids that combination and
+  // test/rpcIngestion.test.ts enforces it, but re-checking `gateway` here
+  // keeps this call site correct on its own terms.
+  const processor: ConfiguredProcessor =
+    chain.gateway !== null && !chain.rpcIngestion
+      ? withGateway.setRpcDataIngestionSettings({ disabled: true })
+      : withGateway
 
   return { chain, contractAddress, processor }
 }

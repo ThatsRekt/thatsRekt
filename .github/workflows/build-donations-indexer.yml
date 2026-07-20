@@ -27,8 +27,12 @@ on:
       - "donations-indexer/**"
       - ".github/workflows/build-donations-indexer.yml"
   pull_request:
+    # `master` was retired by the master -> main reconcile (#228), which left
+    # this workflow dead — no PR check and no image build for ~1 month.
+    # PRs run typecheck-and-test only; build-and-push stays gated on
+    # `push`/`workflow_dispatch` below.
     branches:
-      - master
+      - main
     paths:
       - "donations-indexer/**"
       - ".github/workflows/build-donations-indexer.yml"
@@ -81,7 +85,7 @@ jobs:
         # against real infrastructure in the developer's local environment).
         # Unit tests (chainConfig, donationMapper, tokenAllowlist) and the
         # store tests with an in-memory fixture run cleanly in CI.
-        run: bun test --timeout 30000 test/chainConfig.test.ts test/donationMapper.test.ts test/tokenAllowlist.test.ts
+        run: bun test --timeout 30000 test/chainConfig.test.ts test/donationMapper.test.ts test/tokenAllowlist.test.ts test/blockRange.test.ts
 
   # ---------------------------------------------------------------------------
   # Job 2: build and push Docker image to ECR
