@@ -63,6 +63,24 @@ export interface ChainConfig {
   readonly finalityConfirmation: number
   /** Subsquid RPC rate limit (req/s). */
   readonly rpcRateLimit: number
+  /**
+   * Whether to ingest hot (unfinalized) blocks over RPC in real time.
+   *
+   * `true`  — processor follows the chain head over RPC. Real-time, but costs
+   *           one `eth_getBlockByNumber` per block produced, forever.
+   * `false` — archive-only. The Subsquid gateway is the sole data source, so
+   *           RPC cost drops to zero at the price of trailing chain head
+   *           (measured 2026-07-20: ~25m on polygon to ~2.5h worst case on
+   *           arbitrum, since archives publish in large infrequent batches).
+   *
+   * Only mainnet earns real-time: it holds 38 of the registry's 58 lifetime
+   * posts for 3% of RPC spend, while arbitrum holds 4 posts for 50%.
+   *
+   * MUST be `true` when `gateway` is `null` — the processor throws
+   * "Subsquid Archive is required when RPC data ingestion is disabled"
+   * at boot otherwise. Enforced by test/rpcIngestion.test.ts.
+   */
+  readonly rpcIngestion: boolean
 }
 
 export const CHAINS: Readonly<Record<ChainSlug, ChainConfig>> = Object.freeze({
@@ -76,6 +94,7 @@ export const CHAINS: Readonly<Record<ChainSlug, ChainConfig>> = Object.freeze({
     startBlockEnvVar: 'START_BLOCK_ANVIL_ETH',
     finalityConfirmation: 0,
     rpcRateLimit: 50,
+    rpcIngestion: true,
   },
   'anvil-base': {
     chainId: 31338,
@@ -87,6 +106,7 @@ export const CHAINS: Readonly<Record<ChainSlug, ChainConfig>> = Object.freeze({
     startBlockEnvVar: 'START_BLOCK_ANVIL_BASE',
     finalityConfirmation: 0,
     rpcRateLimit: 50,
+    rpcIngestion: true,
   },
   sepolia: {
     chainId: 11155111,
@@ -98,6 +118,7 @@ export const CHAINS: Readonly<Record<ChainSlug, ChainConfig>> = Object.freeze({
     startBlockEnvVar: 'START_BLOCK_SEPOLIA',
     finalityConfirmation: 32,
     rpcRateLimit: 10,
+    rpcIngestion: false,
   },
   base: {
     chainId: 8453,
@@ -109,6 +130,7 @@ export const CHAINS: Readonly<Record<ChainSlug, ChainConfig>> = Object.freeze({
     startBlockEnvVar: 'START_BLOCK_BASE',
     finalityConfirmation: 75,
     rpcRateLimit: 10,
+    rpcIngestion: false,
   },
   'base-sepolia': {
     chainId: 84532,
@@ -120,6 +142,7 @@ export const CHAINS: Readonly<Record<ChainSlug, ChainConfig>> = Object.freeze({
     startBlockEnvVar: 'START_BLOCK_BASE_SEPOLIA',
     finalityConfirmation: 32,
     rpcRateLimit: 10,
+    rpcIngestion: false,
   },
   optimism: {
     chainId: 10,
@@ -131,6 +154,7 @@ export const CHAINS: Readonly<Record<ChainSlug, ChainConfig>> = Object.freeze({
     startBlockEnvVar: 'START_BLOCK_OPTIMISM',
     finalityConfirmation: 75,
     rpcRateLimit: 10,
+    rpcIngestion: false,
   },
   ethereum: {
     chainId: 1,
@@ -142,6 +166,7 @@ export const CHAINS: Readonly<Record<ChainSlug, ChainConfig>> = Object.freeze({
     startBlockEnvVar: 'START_BLOCK_ETHEREUM',
     finalityConfirmation: 75,
     rpcRateLimit: 10,
+    rpcIngestion: true,
   },
   arbitrum: {
     chainId: 42161,
@@ -153,6 +178,7 @@ export const CHAINS: Readonly<Record<ChainSlug, ChainConfig>> = Object.freeze({
     startBlockEnvVar: 'START_BLOCK_ARBITRUM',
     finalityConfirmation: 75,
     rpcRateLimit: 10,
+    rpcIngestion: false,
   },
   bsc: {
     // BNB Chain (BSC) — PoSA consensus, ~3s block time, 21-validator set.
@@ -171,6 +197,7 @@ export const CHAINS: Readonly<Record<ChainSlug, ChainConfig>> = Object.freeze({
     // which takes ~15 blocks (~45s). Use 15 for a safe margin.
     finalityConfirmation: 15,
     rpcRateLimit: 10,
+    rpcIngestion: false,
   },
   polygon: {
     // Polygon PoS — BOR/Heimdall consensus, ~2s block time, reorgs can run
@@ -188,6 +215,7 @@ export const CHAINS: Readonly<Record<ChainSlug, ChainConfig>> = Object.freeze({
     startBlockEnvVar: 'START_BLOCK_POLYGON',
     finalityConfirmation: 100,
     rpcRateLimit: 10,
+    rpcIngestion: false,
   },
 })
 
