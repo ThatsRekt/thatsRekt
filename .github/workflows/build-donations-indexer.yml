@@ -27,8 +27,12 @@ on:
       - "donations-indexer/**"
       - ".github/workflows/build-donations-indexer.yml"
   pull_request:
+    # `master` was retired by the master -> main reconcile (#228), which left
+    # this workflow dead — no PR check and no image build for ~1 month.
+    # PRs run typecheck-and-test only; build-and-push stays gated on
+    # `push`/`workflow_dispatch` below.
     branches:
-      - master
+      - main
     paths:
       - "donations-indexer/**"
       - ".github/workflows/build-donations-indexer.yml"
