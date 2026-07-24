@@ -116,3 +116,93 @@ func TestStateDeserializesLegacyVoteFields(t *testing.T) {
 		t.Error("HasChanged must return true when actionCount changes")
 	}
 }
+
+// ---- poison-pill retry tracking (issue #262 review, PR #265) --------------
+
+// TestRecordPublishFailure_FingerprintChangeResetsAttempts is the store-level
+// unit test for blocker 2's self-healing mechanism: failure history recorded
+// against one fingerprint must not carry forward once the content changes
+// (a different fingerprint is passed in) — the post gets a fresh budget.
+//
+// Mutation evidence:
+//
+//	Sabotage: remove the `if st.Fingerprint != fingerprint` reset check so
+//	          Attempts always carries forward regardless of fingerprint.
+//	Result:   Attempts is 4 after the fingerprint change (3 old + 1 new)
+//	          instead of 1 — this test fails on the post-change assertion.
+func TestRecordPublishFailure_FingerprintChangeResetsAttempts(t *testing.T) {
+	st := store.NewInMemory()
+
+	const fpV1 = "1@2026-07-16T10:00:00Z"
+	const fpV2 = "2@2026-07-17T10:00:00Z" // amendment: different ActionCount/LastUpdatedAt
+
+	// 3 non-transient failures against the original content.
+	for i := 0; i < 3; i++ {
+		st.RecordPublishFailure("ethereum-38", fpV1, true)
+	}
+	if got := st.PublishAttemptCount("ethereum-38"); got != 3 {
+		t.Fatalf("setup: expected 3 attempts against fpV1, got %d", got)
+	}
+
+	// Content changes (amendment). The next failure is against fpV2 — must
+	// NOT inherit the 3 prior attempts.
+	result := st.RecordPublishFailure("ethereum-38", fpV2, true)
+	if result.Attempts != 1 {
+		t.Errorf("expected Attempts=1 after a fingerprint change (fresh budget), got %d", result.Attempts)
+	}
+	if result.Fingerprint != fpV2 {
+		t.Errorf("expected Fingerprint=%q after the change, got %q", fpV2, result.Fingerprint)
+	}
+	if got := st.PublishAttemptCount("ethereum-38"); got != 1 {
+		t.Errorf("expected PublishAttemptCount=1 after fingerprint change, got %d", got)
+	}
+}
+
+// TestRecordPublishFailure_TransientDoesNotIncrement is the store-level unit
+// test for blocker 1: countsTowardBudget=false must never increment Attempts,
+// regardless of how many times it is called.
+func TestRecordPublishFailure_TransientDoesNotIncrement(t *testing.T) {
+	st := store.NewInMemory()
+	for i := 0; i < 10; i++ {
+		st.RecordPublishFailure("ethereum-38", "1@2026-07-16T10:00:00Z", false)
+	}
+	if got := st.PublishAttemptCount("ethereum-38"); got != 0 {
+		t.Errorf("expected 0 attempts after 10 transient (non-counting) failures, got %d", got)
+	}
+}
+
+// TestIsPublishGivenUp_ScopedToFingerprint is the store-level unit test for
+// blocker 2: give-up must only apply when the CURRENT fingerprint matches
+// what was given up on.
+func TestIsPublishGivenUp_ScopedToFingerprint(t *testing.T) {
+	st := store.NewInMemory()
+	st.MarkPublishGivenUp("ethereum-38", "1@2026-07-16T10:00:00Z")
+
+	if !st.IsPublishGivenUp("ethereum-38", "1@2026-07-16T10:00:00Z") {
+		t.Errorf("expected IsPublishGivenUp=true for the exact fingerprint that was given up on")
+	}
+	if st.IsPublishGivenUp("ethereum-38", "2@2026-07-17T10:00:00Z") {
+		t.Errorf("expected IsPublishGivenUp=false for a DIFFERENT fingerprint — give-up must not apply to unseen content")
+	}
+	if st.IsPublishGivenUp("ethereum-99", "1@2026-07-16T10:00:00Z") {
+		t.Errorf("expected IsPublishGivenUp=false for a post that was never given up")
+	}
+}
+
+// TestRegisterPost_ClearsGivenUpAndAttempts verifies a successful publish
+// clears BOTH the attempt counter and the give-up flag, regardless of which
+// fingerprint they were recorded against.
+func TestRegisterPost_ClearsGivenUpAndAttempts(t *testing.T) {
+	st := store.NewInMemory()
+	st.MarkPublishGivenUp("ethereum-38", "1@2026-07-16T10:00:00Z")
+	st.RecordPublishFailure("ethereum-38", "1@2026-07-16T10:00:00Z", true)
+
+	st.RegisterPost("ethereum-38", 200, "ethereum")
+
+	if st.IsPublishGivenUp("ethereum-38", "1@2026-07-16T10:00:00Z") {
+		t.Errorf("expected give-up flag cleared after a successful publish")
+	}
+	if got := st.PublishAttemptCount("ethereum-38"); got != 0 {
+		t.Errorf("expected attempt counter cleared after a successful publish, got %d", got)
+	}
+}

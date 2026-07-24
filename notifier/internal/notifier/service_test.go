@@ -85,6 +85,12 @@ func (g *stubGQL) PostById(_ context.Context, chainSlug, onchainID string) (*gra
 //
 // editMessageErr, when non-nil, is returned by EditMessageText instead of nil.
 // Use this to simulate terminal or transient Telegram API failures in tests.
+//
+// sendMessageFn, when non-nil, is called by SendMessage and its return values
+// override the default (nextID, nil). The function receives chatID, text, and
+// parseMode so tests can sequence different responses (e.g. parse error on
+// the first HTML call, success on the plain-text fallback). The sends slice is
+// always populated regardless of the function's return value.
 type stubBot struct {
 	mu             sync.Mutex
 	sends          []sendCall
@@ -92,11 +98,14 @@ type stubBot struct {
 	deletes        int
 	nextID         int64
 	editMessageErr error // returned by EditMessageText when non-nil
+	// sendMessageFn is called by SendMessage when non-nil.
+	sendMessageFn func(chatID, text, parseMode string) (int64, error)
 }
 
 type sendCall struct {
-	chatID string
-	text   string
+	chatID    string
+	text      string
+	parseMode string
 }
 
 type editCall struct {
@@ -106,11 +115,14 @@ type editCall struct {
 	keyboard  *telegram.InlineKeyboardMarkup // nil means omitted; non-nil means sent
 }
 
-func (b *stubBot) SendMessage(_ context.Context, chatID, text string, _ *telegram.InlineKeyboardMarkup) (int64, error) {
+func (b *stubBot) SendMessage(_ context.Context, chatID, text, parseMode string, _ *telegram.InlineKeyboardMarkup) (int64, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	b.sends = append(b.sends, sendCall{chatID: chatID, text: text, parseMode: parseMode})
+	if b.sendMessageFn != nil {
+		return b.sendMessageFn(chatID, text, parseMode)
+	}
 	b.nextID++
-	b.sends = append(b.sends, sendCall{chatID: chatID, text: text})
 	return b.nextID, nil
 }
 
@@ -1642,5 +1654,534 @@ func TestOrphanBackfill_NoSpam(t *testing.T) {
 		if !st.IsRetracted(o.postID) {
 			t.Errorf("no-spam: expected %s to be marked retracted after PollOnce, but IsRetracted=false", o.postID)
 		}
+	}
+}
+
+// ── poison-pill guard tests (issue #262, bug 2) ────────────────────────────
+//
+// These tests verify the retry-bound and plain-text fallback that prevent a
+// single unrenderable post from looping indefinitely. The exact incident:
+// ethereum-38 (not-new, not-mapped, State 5) failed every poll with a Telegram
+// parse-entity 400, burning API calls for hours with no bound.
+//
+// Coverage required by the spec:
+//   - Parse error triggers exactly one plain-text fallback.
+//   - A successful plain-text fallback marks the post published.
+//   - Permanent failure gives up after maxPublishAttempts and moves on.
+//   - Transient failure keeps retrying (does NOT immediately give up).
+//   - Give-up state survives a "restart" (store is pre-seeded with give-up flag).
+//
+// Test infrastructure: stubBot with sendMessageFn for sequencing different
+// responses per call. stubBot is at our-code-to-our-code seam (service →
+// TelegramBot interface) — the httptest.Server tests in classify_test.go
+// cover the Telegram HTTP boundary.
+
+// parseEntityErr returns the exact structured error telegram.Bot.SendMessage
+// produces for a "can't parse entities" 400 response. Mirrors the exact
+// observed description from the ethereum-38 incident. Constructed as a real
+// *telegram.SendAPIError (not a hand-formatted string) so these tests
+// exercise the same classification path production traffic does.
+func parseEntityErr() error {
+	return &telegram.SendAPIError{
+		StatusCode:  400,
+		ErrorCode:   400,
+		Description: `Bad Request: can't parse entities: Empty attribute name in the tag "a" at byte offset 824`,
+	}
+}
+
+// transientErr returns a representative transient error: a network-level
+// failure that never got as far as a parsed Telegram API response (no
+// *telegram.SendAPIError involved — see Bot.call). ClassifySendError
+// defaults any non-SendAPIError to SendTransient.
+func transientErr() error {
+	return fmt.Errorf("do sendMessage: connection reset by peer")
+}
+
+// ethFingerprint mirrors notifier.contentFingerprint's format
+// (ActionCount@LastUpdatedAt) for a post built by makeEthPost, so these
+// tests can call Store.IsPublishGivenUp / MarkPublishGivenUp exactly as the
+// service does (give-up is scoped to content, not the bare post id — issue
+// #262 review, PR #265 blocker 2).
+func ethFingerprint() string {
+	p := makeEthPost("ethereum-38")
+	return fmt.Sprintf("%d@%s", p.ActionCount, p.LastUpdatedAt)
+}
+
+// makeEthState38 sets up an in-memory store where ethereum-38 is below the
+// high-water mark but NOT in the Posts map — reproducing the State 5 scenario
+// that triggered the incident.
+func makeEthState38() *store.Store {
+	st := store.NewInMemory()
+	// ethereum-39 was published, so ethereum-38 is "not new".
+	st.SetLastSeen("ethereum", "ethereum-39")
+	// ethereum-38 is intentionally absent from the Posts map.
+	return st
+}
+
+// makeSvcForPoisonPill builds a minimal Service wired to the given store and bot.
+func makeSvcForPoisonPill(t *testing.T, st *store.Store, bot *stubBot, posts []graphql.Post) *notifier.Service {
+	t.Helper()
+	return &notifier.Service{
+		GQL:       &stubGQL{posts: posts},
+		Bot:       bot,
+		Store:     st,
+		ChannelID: "@testchan",
+		SiteURL:   "https://thatsrekt.com",
+		Logger:    makeTestLogger(),
+	}
+}
+
+// TestFallback_ParseErrorTriggersPlainText verifies that a parse-entity error
+// on the HTML send triggers exactly one plain-text fallback attempt (not a
+// second HTML attempt). The parseMode of each call to SendMessage is recorded
+// and checked.
+//
+// Mutation evidence:
+//
+//	Sabotage: remove the IsParseError branch in publishWithFallback so it
+//	          always returns the HTML error without trying plain text.
+//	Result:   bot.sends has exactly 1 call (HTML only), plain-text call never
+//	          fires → this test fails on the sends count check.
+func TestFallback_ParseErrorTriggersPlainText(t *testing.T) {
+	st := makeEthState38()
+	bot := &stubBot{}
+	callCount := 0
+	bot.sendMessageFn = func(_, _, parseMode string) (int64, error) {
+		callCount++
+		if parseMode == "HTML" {
+			return 0, parseEntityErr()
+		}
+		// Plain-text call succeeds.
+		return 99, nil
+	}
+
+	post := makeEthPost("ethereum-38")
+	svc := makeSvcForPoisonPill(t, st, bot, []graphql.Post{post})
+	svc.PollOnce(context.Background())
+
+	bot.mu.Lock()
+	sends := bot.sends
+	bot.mu.Unlock()
+
+	// Must have exactly 2 sends: 1 HTML attempt + 1 plain-text fallback.
+	if len(sends) != 2 {
+		t.Fatalf("expected 2 SendMessage calls (HTML + plain-text), got %d", len(sends))
+	}
+	if sends[0].parseMode != "HTML" {
+		t.Errorf("first call: expected parseMode=HTML, got %q", sends[0].parseMode)
+	}
+	if sends[1].parseMode != "" {
+		t.Errorf("second call (plain-text fallback): expected parseMode=\"\", got %q", sends[1].parseMode)
+	}
+}
+
+// TestFallback_PlainTextSuccessMarksPublished verifies that a successful
+// plain-text fallback registers the post in the store so subsequent polls
+// treat it as published (not as a State 5 fallback requiring a new send).
+//
+// Mutation evidence:
+//
+//	Sabotage: remove the registerPublished call in the plain-text fallback
+//	          branch of publishWithFallback.
+//	Result:   MessageIDFor returns (0, false) after the poll — the post is
+//	          not in the store — and this test fails on the MessageIDFor check.
+func TestFallback_PlainTextSuccessMarksPublished(t *testing.T) {
+	st := makeEthState38()
+	bot := &stubBot{}
+	bot.sendMessageFn = func(_, _, parseMode string) (int64, error) {
+		if parseMode == "HTML" {
+			return 0, parseEntityErr()
+		}
+		return 77, nil // plain text succeeds with message_id=77
+	}
+
+	post := makeEthPost("ethereum-38")
+	svc := makeSvcForPoisonPill(t, st, bot, []graphql.Post{post})
+	svc.PollOnce(context.Background())
+
+	// The post must now be in the store (registered on plain-text success).
+	msgID, known := st.MessageIDFor("ethereum-38")
+	if !known {
+		t.Fatalf("post must be registered in store after plain-text fallback success, got known=false")
+	}
+	if msgID != 77 {
+		t.Errorf("expected stored message_id=77, got %d", msgID)
+	}
+
+	// No failed attempts must remain — RegisterPost clears them.
+	if c := st.PublishAttemptCount("ethereum-38"); c != 0 {
+		t.Errorf("expected 0 failed attempts after success, got %d", c)
+	}
+	// Not given up (success, not failure).
+	if st.IsPublishGivenUp("ethereum-38", ethFingerprint()) {
+		t.Errorf("post must not be marked given-up after a successful publish")
+	}
+}
+
+// TestPoisonPill_PermanentErrorGivesUpAfterN verifies the core of the fix:
+// after maxPublishAttempts (5) failed attempts in State 5, the post is
+// permanently marked as given-up and subsequent polls skip it without calling
+// SendMessage again.
+//
+// Mutation evidence:
+//
+//	Sabotage: change the give-up condition from `attempts >= maxPublishAttempts`
+//	          to `attempts > maxPublishAttempts * 10` (effectively never give up).
+//	Result:   poll 6 makes another SendMessage call → sends count is 6 not 5 →
+//	          this test fails on the "no more calls after give-up" assertion.
+func TestPoisonPill_PermanentErrorGivesUpAfterN(t *testing.T) {
+	const n = 5 // must match notifier.maxPublishAttempts
+	st := makeEthState38()
+	bot := &stubBot{}
+	// Always return a permanent, structured API error (e.g. chat not found —
+	// ErrorCode 400, not in the transient {429,500,502,503} set).
+	permanentErr := &telegram.SendAPIError{StatusCode: 400, ErrorCode: 400, Description: "Bad Request: chat not found"}
+	bot.sendMessageFn = func(_, _, _ string) (int64, error) {
+		return 0, permanentErr
+	}
+
+	post := makeEthPost("ethereum-38")
+	svc := makeSvcForPoisonPill(t, st, bot, []graphql.Post{post})
+
+	// Run N polls — each must attempt one send (permanent error, no fallback).
+	for i := 1; i <= n; i++ {
+		svc.PollOnce(context.Background())
+	}
+
+	bot.mu.Lock()
+	sendsAfterN := len(bot.sends)
+	bot.mu.Unlock()
+
+	if sendsAfterN != n {
+		t.Errorf("expected %d sends over %d polls, got %d", n, n, sendsAfterN)
+	}
+
+	// Post must be marked given-up after the N-th failure.
+	if !st.IsPublishGivenUp("ethereum-38", ethFingerprint()) {
+		t.Fatalf("post must be marked given-up after %d failures, IsPublishGivenUp=false", n)
+	}
+
+	// Poll N+1: the give-up flag must prevent any additional SendMessage call.
+	svc.PollOnce(context.Background())
+
+	bot.mu.Lock()
+	sendsAfterGiveUp := len(bot.sends)
+	bot.mu.Unlock()
+
+	if sendsAfterGiveUp != n {
+		t.Errorf("expected no additional sends after give-up, got %d total (was %d before give-up poll)",
+			sendsAfterGiveUp, n)
+	}
+}
+
+// TestPoisonPill_TransientErrorRetries verifies that a transient (network)
+// error does NOT give up AND does NOT consume the attempt budget at all
+// (issue #262 review, PR #265 blocker 1 — this assertion was corrected from
+// the pre-review version, which asserted a transient failure DOES count as 1
+// attempt; that was exactly the bug: enough transient failures would
+// eventually exhaust the budget and permanently discard the alert. See
+// TestTransientOutage_PostStillPublishesAfterRecovery for the sustained-
+// outage reproduction the review specifically asked for.)
+//
+// Mutation evidence:
+//
+//	Sabotage: treat every error as non-transient regardless of
+//	          ClassifySendError's result.
+//	Result:   PublishAttemptCount is 1 (not 0) after poll 1 — this test fails
+//	          on the attempt-count assertion.
+func TestPoisonPill_TransientErrorRetries(t *testing.T) {
+	st := makeEthState38()
+	bot := &stubBot{}
+	// Transient error on first poll, success on second.
+	callCount := 0
+	bot.sendMessageFn = func(_, _, _ string) (int64, error) {
+		callCount++
+		if callCount == 1 {
+			return 0, transientErr()
+		}
+		return 42, nil
+	}
+
+	post := makeEthPost("ethereum-38")
+	svc := makeSvcForPoisonPill(t, st, bot, []graphql.Post{post})
+
+	// Poll 1: transient failure. Must NOT give up, must NOT consume budget.
+	svc.PollOnce(context.Background())
+
+	if st.IsPublishGivenUp("ethereum-38", ethFingerprint()) {
+		t.Fatalf("post must not be given-up after only 1 transient failure (limit is %d)", 5)
+	}
+	if c := st.PublishAttemptCount("ethereum-38"); c != 0 {
+		t.Errorf("transient failure must NOT consume the attempt budget, got %d", c)
+	}
+
+	// Poll 2: succeeds. Post must now be registered, attempts cleared.
+	svc.PollOnce(context.Background())
+
+	msgID, known := st.MessageIDFor("ethereum-38")
+	if !known {
+		t.Fatalf("post must be registered after successful retry, got known=false")
+	}
+	if msgID != 42 {
+		t.Errorf("expected message_id=42 after retry success, got %d", msgID)
+	}
+	if st.PublishAttemptCount("ethereum-38") != 0 {
+		t.Errorf("expected 0 attempts after success, got %d", st.PublishAttemptCount("ethereum-38"))
+	}
+}
+
+// TestPoisonPill_GiveUpStateSurvivesRestart verifies that a post marked as
+// given-up in the store is still skipped after a "restart" (simulated by
+// constructing a new Service backed by the same already-mutated store). In
+// production, the store is loaded from S3; here we reuse the in-memory store
+// directly, which is equivalent from the service's perspective.
+//
+// Mutation evidence:
+//
+//	Sabotage: remove the IsPublishGivenUp check in the State 5 handler.
+//	Result:   poll after restart attempts a send even though the post is
+//	          given-up → sends count is 1 instead of 0 → this test fails.
+func TestPoisonPill_GiveUpStateSurvivesRestart(t *testing.T) {
+	// Arrange: store already has give-up flag set for ethereum-38 (state from
+	// a previous session that ran out of attempts).
+	st := makeEthState38()
+	st.MarkPublishGivenUp("ethereum-38", ethFingerprint())
+
+	bot := &stubBot{}
+	post := makeEthPost("ethereum-38")
+	// New service instance with same store — simulates service restart.
+	svc := makeSvcForPoisonPill(t, st, bot, []graphql.Post{post})
+
+	svc.PollOnce(context.Background())
+
+	bot.mu.Lock()
+	sends := len(bot.sends)
+	bot.mu.Unlock()
+
+	if sends != 0 {
+		t.Errorf("restart: give-up state not respected — got %d send(s), expected 0", sends)
+	}
+}
+
+// TestPoisonPill_ParseErrorGiveUpAfterN verifies that when both the HTML and
+// plain-text sends fail NON-transiently, the (HTML+fallback) pair counts as
+// ONE failed attempt. After maxPublishAttempts such pairs, the post is given
+// up.
+//
+// The plain-text failure must be non-transient for this scenario to make
+// sense post-blocker-1-fix: if it were transient, the round would never
+// consume the budget at all and the post would retry forever rather than
+// give up (which is the correct behaviour for a genuine outage — see
+// TestTransientOutage_PostStillPublishesAfterRecovery — but not what this
+// test is verifying). "Not enough rights to send text messages" models a
+// channel-permission failure that also breaks the plain-text fallback.
+//
+// This guards against a regression where the parse-error path somehow resets
+// or double-counts the attempt counter.
+func TestPoisonPill_ParseErrorGiveUpAfterN(t *testing.T) {
+	const n = 5 // must match notifier.maxPublishAttempts
+	st := makeEthState38()
+	bot := &stubBot{}
+	// Both HTML and plain text always fail; the plain-text failure is
+	// non-transient (permanent, channel-permission style).
+	plainErr := &telegram.SendAPIError{StatusCode: 400, ErrorCode: 400, Description: "Bad Request: not enough rights to send text messages"}
+	bot.sendMessageFn = func(_, _, parseMode string) (int64, error) {
+		if parseMode == "HTML" {
+			return 0, parseEntityErr()
+		}
+		return 0, plainErr
+	}
+
+	post := makeEthPost("ethereum-38")
+	svc := makeSvcForPoisonPill(t, st, bot, []graphql.Post{post})
+
+	for i := 1; i <= n; i++ {
+		svc.PollOnce(context.Background())
+	}
+
+	// N polls × 2 sends per poll (HTML + plain-text fallback) = 2N calls.
+	bot.mu.Lock()
+	totalSends := len(bot.sends)
+	bot.mu.Unlock()
+
+	if totalSends != 2*n {
+		t.Errorf("expected %d SendMessage calls (%d polls × 2 attempts), got %d", 2*n, n, totalSends)
+	}
+
+	// Attempt counter must reflect N (each poll = one failed round).
+	if c := st.PublishAttemptCount("ethereum-38"); c != n {
+		t.Errorf("expected %d failed attempt(s), got %d", n, c)
+	}
+
+	// Post must be marked given-up.
+	if !st.IsPublishGivenUp("ethereum-38", ethFingerprint()) {
+		t.Fatalf("post must be given-up after %d parse-error rounds, IsPublishGivenUp=false", n)
+	}
+
+	// Poll N+1: no more calls.
+	svc.PollOnce(context.Background())
+
+	bot.mu.Lock()
+	sendsAfterGiveUp := len(bot.sends)
+	bot.mu.Unlock()
+
+	if sendsAfterGiveUp != 2*n {
+		t.Errorf("expected no additional sends after give-up, got %d total", sendsAfterGiveUp)
+	}
+}
+
+// TestPoisonPill_State1_NewPostGivesUpAfterN verifies that the poison-pill
+// guard also applies to State 1 (brand-new posts), not just State 5.
+// After maxPublishAttempts failures, the post is given up AND the high-water
+// mark is advanced so the post stops being treated as new.
+//
+// Mutation evidence:
+//
+//	Sabotage: remove the IsPublishGivenUp check and attempt counter from the
+//	          State 1 handler.
+//	Result:   after N polls the post is still not given-up → poll N+1 makes
+//	          another send → this test fails on the "no sends after give-up" assertion.
+func TestPoisonPill_State1_NewPostGivesUpAfterN(t *testing.T) {
+	const n = 5
+	st := store.NewInMemory()
+	// No last-seen: ethereum-38 is new (State 1).
+
+	bot := &stubBot{}
+	permanentErr := &telegram.SendAPIError{StatusCode: 400, ErrorCode: 400, Description: "Bad Request: chat not found"}
+	bot.sendMessageFn = func(_, _, _ string) (int64, error) {
+		return 0, permanentErr
+	}
+
+	post := makeEthPost("ethereum-38")
+	svc := makeSvcForPoisonPill(t, st, bot, []graphql.Post{post})
+
+	for i := 1; i <= n; i++ {
+		svc.PollOnce(context.Background())
+	}
+
+	// After N failures, must be given-up.
+	if !st.IsPublishGivenUp("ethereum-38", ethFingerprint()) {
+		t.Fatalf("State 1 new post: must be given-up after %d failures", n)
+	}
+
+	// High-water mark must have advanced to ethereum-38 on the give-up cycle
+	// so that the post is no longer treated as new.
+	if got := st.LastSeen("ethereum"); got != "ethereum-38" {
+		t.Errorf("expected lastSeen=ethereum-38 after give-up, got %q", got)
+	}
+
+	// Poll N+1: give-up flag respected in State 1 path as well.
+	svc.PollOnce(context.Background())
+
+	bot.mu.Lock()
+	sendsAfterGiveUp := len(bot.sends)
+	bot.mu.Unlock()
+
+	if sendsAfterGiveUp != n {
+		t.Errorf("State 1 give-up: expected no additional sends after give-up, got %d total", sendsAfterGiveUp)
+	}
+}
+
+// ---- PR #265 review blockers (issue #262 follow-up) -----------------------
+
+// TestTransientOutage_PostStillPublishesAfterRecovery is the required
+// reproduction for review blocker 1: a sustained Telegram/network outage
+// (5 consecutive transient failures — enough to exhaust the OLD unconditional
+// maxPublishAttempts budget) must NOT permanently discard the alert. Once
+// Telegram recovers, the post must still publish.
+//
+// Against the pre-fix code (both call sites increment the attempt counter
+// unconditionally on any error), this test fails: the post is marked
+// given-up after 5 transient failures and poll 6's recovery never has a
+// chance to publish.
+func TestTransientOutage_PostStillPublishesAfterRecovery(t *testing.T) {
+	st := makeEthState38()
+	bot := &stubBot{}
+	callCount := 0
+	bot.sendMessageFn = func(_, _, _ string) (int64, error) {
+		callCount++
+		if callCount <= 5 {
+			return 0, transientErr()
+		}
+		return 55, nil
+	}
+
+	post := makeEthPost("ethereum-38")
+	svc := makeSvcForPoisonPill(t, st, bot, []graphql.Post{post})
+
+	// 5 polls of sustained transient failure — old code's entire budget.
+	for i := 1; i <= 5; i++ {
+		svc.PollOnce(context.Background())
+	}
+	if st.IsPublishGivenUp("ethereum-38", ethFingerprint()) {
+		t.Fatalf("must not be given up after transient failures alone (5 polls)")
+	}
+
+	// Poll 6: Telegram recovers.
+	svc.PollOnce(context.Background())
+
+	msgID, known := st.MessageIDFor("ethereum-38")
+	if !known {
+		t.Fatalf("ALERT LOST: post never published even after the transient outage recovered")
+	}
+	if msgID != 55 {
+		t.Errorf("expected message_id=55 after recovery, got %d", msgID)
+	}
+	if st.IsPublishGivenUp("ethereum-38", ethFingerprint()) {
+		t.Errorf("post must not be given-up after a successful publish")
+	}
+}
+
+// TestAmendmentAfterGiveUp_Republishes is the required reproduction for
+// review blocker 2: a post that has been given up on must republish once its
+// on-chain content changes (an amendment, or — as with the real ethereum-38
+// incident — a notifier deploy that fixes how the post renders). Give-up
+// must not be a permanent tombstone keyed on the bare post id.
+//
+// Against the pre-fix code (give-up is a bare postID -> bool flag, checked
+// before any fallback publish is attempted), this test fails: zero further
+// sends occur even though the amended content is perfectly renderable.
+func TestAmendmentAfterGiveUp_Republishes(t *testing.T) {
+	st := store.NewInMemory()
+	// No last-seen: ethereum-38 is new (State 1).
+
+	bot := &stubBot{}
+	permanentErr := &telegram.SendAPIError{StatusCode: 400, ErrorCode: 400, Description: "Bad Request: chat not found"}
+	bot.sendMessageFn = func(_, _, _ string) (int64, error) {
+		return 0, permanentErr
+	}
+
+	post := makeEthPost("ethereum-38")
+	svc := makeSvcForPoisonPill(t, st, bot, []graphql.Post{post})
+
+	// Exhaust the budget on the original content.
+	for i := 1; i <= 5; i++ {
+		svc.PollOnce(context.Background())
+	}
+	if !st.IsPublishGivenUp("ethereum-38", ethFingerprint()) {
+		t.Fatalf("setup: post must be given-up after 5 failures")
+	}
+
+	// A deploy fixes the rendering (or the poster amends the note) — Telegram
+	// now accepts the send. Content changes (ActionCount bump) so a fresh
+	// poll must retry rather than staying silently suppressed.
+	bot.sendMessageFn = func(_, _, _ string) (int64, error) {
+		return 200, nil
+	}
+	amended := post
+	amended.ActionCount = 2
+	amended.LastUpdatedAt = "2026-06-01T01:00:00Z"
+
+	svc2 := makeSvcForPoisonPill(t, st, bot, []graphql.Post{amended})
+	for i := 1; i <= 5; i++ {
+		svc2.PollOnce(context.Background())
+	}
+
+	msgID, known := st.MessageIDFor("ethereum-38")
+	if !known {
+		t.Fatalf("amendment after give-up is permanently suppressed — alert never reaches the channel even though the content is now renderable and Telegram now accepts it")
+	}
+	if msgID != 200 {
+		t.Errorf("expected message_id=200 after republish, got %d", msgID)
 	}
 }

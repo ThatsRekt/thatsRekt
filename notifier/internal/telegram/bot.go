@@ -70,31 +70,67 @@ type sendMessageResp struct {
 		MessageID int64 `json:"message_id"`
 	} `json:"result"`
 	Description string `json:"description,omitempty"`
+	// ErrorCode is Telegram's own error_code field, present whenever ok=false.
+	// In practice it mirrors the HTTP status; see SendAPIError.
+	ErrorCode int `json:"error_code,omitempty"`
+}
+
+// SendAPIError represents a structured error response from a Telegram Bot
+// API sendMessage call: the HTTP request completed and the body decoded as
+// JSON with ok=false. StatusCode is the HTTP response status; ErrorCode is
+// Telegram's own `error_code` field from the JSON body. In practice these
+// match, but they are logically distinct fields from two different layers
+// (transport vs. application) and are kept separate defensively rather than
+// assumed to always agree.
+//
+// Classifying on these numeric fields (see telegram.ClassifySendError)
+// instead of substring-matching the formatted error string is the fix for
+// issue #262 review blocker 3 (PR #265): the previous implementation matched
+// bare digit substrings ("429", "500", "502", "503") against the entire
+// lowercased error string, which collided with byte offsets embedded in
+// Telegram's "can't parse entities: ... at byte offset N" description —
+// 16 of the 4097 possible offsets in Telegram's message-length range matched
+// one of those digit strings and were silently misclassified as transient.
+type SendAPIError struct {
+	StatusCode  int
+	ErrorCode   int
+	Description string
+}
+
+func (e *SendAPIError) Error() string {
+	return fmt.Sprintf("sendMessage: %s (status=%d, error_code=%d)", e.Description, e.StatusCode, e.ErrorCode)
 }
 
 // SendMessage posts to a chat (channel @username or numeric -100… id) and
-// returns the resulting message id. ParseMode is "HTML" so we can use
-// `<b>`, `<a href="…">` etc. without escaping every emoji-looking thing.
+// returns the resulting message id.
+//
+// parseMode controls Telegram's text parser:
+//   - "HTML"  — enables <b>, <i>, <a href="…">, etc.
+//   - ""      — plain text; all characters treated literally, no entities parsed.
+//
+// Pass "HTML" for the normal formatted alert. Pass "" for the plain-text
+// fallback when Telegram has rejected the HTML message with a parse error.
 //
 // Web-page preview is enabled. Mesh renders an informative OG card at
 // `/post/:chain/:postId` (title + byline + attacker/victim counts +
 // brand strip — see mesh/src/og.ts), so Telegram's link preview now
 // adds signal. Flip DisableWebPagePreview back to true if the renderer
 // regresses or if a particular notification needs to suppress it.
-func (b *Bot) SendMessage(ctx context.Context, chatID, text string, kb *InlineKeyboardMarkup) (int64, error) {
+func (b *Bot) SendMessage(ctx context.Context, chatID, text, parseMode string, kb *InlineKeyboardMarkup) (int64, error) {
 	body, _ := json.Marshal(sendMessageReq{
 		ChatID:                chatID,
 		Text:                  text,
-		ParseMode:             "HTML",
+		ParseMode:             parseMode,
 		DisableWebPagePreview: false,
 		ReplyMarkup:           kb,
 	})
 	var out sendMessageResp
-	if err := b.call(ctx, "sendMessage", body, &out); err != nil {
+	statusCode, err := b.call(ctx, "sendMessage", body, &out)
+	if err != nil {
 		return 0, err
 	}
 	if !out.OK {
-		return 0, fmt.Errorf("sendMessage: %s", out.Description)
+		return 0, &SendAPIError{StatusCode: statusCode, ErrorCode: out.ErrorCode, Description: out.Description}
 	}
 	return out.Result.MessageID, nil
 }
@@ -190,7 +226,7 @@ func (b *Bot) EditMessageText(ctx context.Context, chatID string, messageID int6
 		OK          bool   `json:"ok"`
 		Description string `json:"description"`
 	}
-	if err := b.call(ctx, "editMessageText", body, &out); err != nil {
+	if _, err := b.call(ctx, "editMessageText", body, &out); err != nil {
 		return err
 	}
 	if !out.OK {
@@ -212,7 +248,11 @@ func (b *Bot) EditMessageText(ctx context.Context, chatID string, messageID int6
 
 // --- HTTP plumbing ---------------------------------------------------------
 
-func (b *Bot) call(ctx context.Context, method string, body []byte, out any) error {
+// call returns the HTTP status code alongside the error so callers that need
+// it (SendMessage, to build a structured SendAPIError) can access it. The
+// status code is 0 when the request never got a response (DNS/dial/transport
+// failure).
+func (b *Bot) call(ctx context.Context, method string, body []byte, out any) (int, error) {
 	base := b.APIBase
 	if base == "" {
 		base = apiBase
@@ -220,22 +260,22 @@ func (b *Bot) call(ctx context.Context, method string, body []byte, out any) err
 	url := fmt.Sprintf("%s/bot%s/%s", base, b.Token, method)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
-		return fmt.Errorf("new request: %w", err)
+		return 0, fmt.Errorf("new request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := b.HTTP.Do(req)
 	if err != nil {
-		return fmt.Errorf("do %s: %w", method, err)
+		return 0, fmt.Errorf("do %s: %w", method, err)
 	}
 	defer resp.Body.Close()
 	raw, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return fmt.Errorf("read body: %w", err)
+		return resp.StatusCode, fmt.Errorf("read body: %w", err)
 	}
 	if err := json.Unmarshal(raw, out); err != nil {
-		return fmt.Errorf("unmarshal %s: %w (body: %s)", method, err, truncate(string(raw), 200))
+		return resp.StatusCode, fmt.Errorf("unmarshal %s: %w (body: %s)", method, err, truncate(string(raw), 200))
 	}
-	return nil
+	return resp.StatusCode, nil
 }
 
 func truncate(s string, n int) string {
