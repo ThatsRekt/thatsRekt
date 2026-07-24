@@ -2,6 +2,8 @@ package telegram
 
 import (
 	"fmt"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -101,31 +103,31 @@ func FormatPostMessageAt(p graphql.Post, now time.Time) string {
 		body = strings.TrimSpace(parsed.Summary)
 	}
 	if body != "" {
-		fmt.Fprintf(&b, "\n%s\n", html(body))
+		fmt.Fprintf(&b, "\n%s\n", html(stripMarkup(body)))
 	}
 
 	// Attackers
-	if len(p.Attackers) > 0 {
+	if attackers := filterValid(p.Attackers, isAddress); len(attackers) > 0 {
 		fmt.Fprintf(&b, "\nAttackers:\n")
-		for _, addr := range p.Attackers {
+		for _, addr := range attackers {
 			link := explorerAddrURL(p.Chain, addr)
 			fmt.Fprintf(&b, "  %s (%s)\n", html(addrAbbrev(addr)), explorerLink(link, addrAbbrev(addr)))
 		}
 	}
 
 	// Victims (only when present)
-	if len(p.Victims) > 0 {
+	if victims := filterValid(p.Victims, isAddress); len(victims) > 0 {
 		fmt.Fprintf(&b, "\nVictims:\n")
-		for _, addr := range p.Victims {
+		for _, addr := range victims {
 			link := explorerAddrURL(p.Chain, addr)
 			fmt.Fprintf(&b, "  %s (%s)\n", html(addrAbbrev(addr)), explorerLink(link, addrAbbrev(addr)))
 		}
 	}
 
 	// Exploit tx hashes from parsed note (legacy key:value format only).
-	if len(parsed.ExploitTxHashes) > 0 {
+	if txs := filterValid(parsed.ExploitTxHashes, isTxHash); len(txs) > 0 {
 		fmt.Fprintf(&b, "\nTx:\n")
-		for _, txHash := range parsed.ExploitTxHashes {
+		for _, txHash := range txs {
 			link := explorerTxURL(p.Chain, txHash)
 			fmt.Fprintf(&b, "  %s (%s)\n", html(txAbbrev(txHash)), explorerLink(link, txAbbrev(txHash)))
 		}
@@ -161,7 +163,18 @@ func attackedChainsDisplay(parsed note.ParsedNote, chainFallback string) string 
 		return strings.Join(names, ", ")
 	}
 	if len(parsed.AttackedChains) > 0 {
-		return strings.Join(parsed.AttackedChains, ", ")
+		// Legacy notes carry slugs, but producers sometimes write numeric chain
+		// IDs into this field (observed in prod: `chains: 1`), which rendered as
+		// a bare "on 1". Map all-digit slugs through the same name table.
+		names := make([]string, 0, len(parsed.AttackedChains))
+		for _, slug := range parsed.AttackedChains {
+			if id, err := strconv.Atoi(strings.TrimSpace(slug)); err == nil && id > 0 {
+				names = append(names, chainIDToName(id))
+				continue
+			}
+			names = append(names, slug)
+		}
+		return strings.Join(names, ", ")
 	}
 	return chainFallback
 }
@@ -318,6 +331,65 @@ func explorerLink(url, label string) string {
 }
 
 // --- abbreviation helpers ---
+
+// --- input validation ---
+//
+// Nothing upstream guarantees that "addresses" and "tx hashes" are well-formed.
+// ExploitTxHashes is assigned from the note's `txs:` field via splitTrimmed()
+// with no validation (note.go), and notes are free-form on-chain text. A prod
+// alert on 2026-07-24 rendered `<a hre…</a>` in its Tx: section because the
+// note contained anchor markup and addrAbbrev() happily took first-6 + last-4
+// of it.
+//
+// Render only what is provably an address / hash; drop the rest rather than
+// emit garbage to a user-facing channel.
+
+// isHexOfBytes reports whether s is "0x" followed by exactly n bytes of hex.
+func isHexOfBytes(s string, n int) bool {
+	if len(s) != 2+2*n || !strings.HasPrefix(s, "0x") {
+		return false
+	}
+	for _, c := range s[2:] {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') && (c < 'A' || c > 'F') {
+			return false
+		}
+	}
+	return true
+}
+
+// isAddress reports whether s is a 20-byte hex address.
+func isAddress(s string) bool { return isHexOfBytes(s, 20) }
+
+// isTxHash reports whether s is a 32-byte hex transaction hash.
+func isTxHash(s string) bool { return isHexOfBytes(s, 32) }
+
+// filterValid returns only the entries satisfying ok.
+func filterValid(in []string, ok func(string) bool) []string {
+	out := make([]string, 0, len(in))
+	for _, s := range in {
+		if ok(strings.TrimSpace(s)) {
+			out = append(out, strings.TrimSpace(s))
+		}
+	}
+	return out
+}
+
+// anchorRE matches an HTML anchor so its text and target can be recovered.
+var anchorRE = regexp.MustCompile(`(?is)<a\s+href="([^"]*)"[^>]*>(.*?)</a>`)
+
+// tagRE matches any remaining HTML tag.
+var tagRE = regexp.MustCompile(`(?s)<[^>]+>`)
+
+// stripMarkup turns HTML embedded in free-form note text into readable plain
+// text. Escaping alone is not enough: html() makes markup SAFE, but the reader
+// then sees `<a href="…">…</a>` verbatim in the channel (observed in prod
+// 2026-07-24). Anchors keep both their label and their target, since the target
+// URL is genuinely useful; any other tag is dropped.
+func stripMarkup(s string) string {
+	s = anchorRE.ReplaceAllString(s, "$2 ($1)")
+	s = tagRE.ReplaceAllString(s, "")
+	return strings.TrimSpace(s)
+}
 
 // addrAbbrev renders a hex address or tx hash as `0x1234…abcd`
 // (first 6 chars + last 4). Inputs shorter than 10 chars are returned as-is.
