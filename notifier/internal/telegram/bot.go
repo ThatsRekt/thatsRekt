@@ -73,19 +73,25 @@ type sendMessageResp struct {
 }
 
 // SendMessage posts to a chat (channel @username or numeric -100… id) and
-// returns the resulting message id. ParseMode is "HTML" so we can use
-// `<b>`, `<a href="…">` etc. without escaping every emoji-looking thing.
+// returns the resulting message id.
+//
+// parseMode controls Telegram's text parser:
+//   - "HTML"  — enables <b>, <i>, <a href="…">, etc.
+//   - ""      — plain text; all characters treated literally, no entities parsed.
+//
+// Pass "HTML" for the normal formatted alert. Pass "" for the plain-text
+// fallback when Telegram has rejected the HTML message with a parse error.
 //
 // Web-page preview is enabled. Mesh renders an informative OG card at
 // `/post/:chain/:postId` (title + byline + attacker/victim counts +
 // brand strip — see mesh/src/og.ts), so Telegram's link preview now
 // adds signal. Flip DisableWebPagePreview back to true if the renderer
 // regresses or if a particular notification needs to suppress it.
-func (b *Bot) SendMessage(ctx context.Context, chatID, text string, kb *InlineKeyboardMarkup) (int64, error) {
+func (b *Bot) SendMessage(ctx context.Context, chatID, text, parseMode string, kb *InlineKeyboardMarkup) (int64, error) {
 	body, _ := json.Marshal(sendMessageReq{
 		ChatID:                chatID,
 		Text:                  text,
-		ParseMode:             "HTML",
+		ParseMode:             parseMode,
 		DisableWebPagePreview: false,
 		ReplyMarkup:           kb,
 	})

@@ -2,6 +2,7 @@ package telegram
 
 import (
 	"fmt"
+	gohtml "html"
 	"regexp"
 	"strconv"
 	"strings"
@@ -426,4 +427,23 @@ func html(s string) string {
 		"\"", "&quot;",
 	)
 	return r.Replace(s)
+}
+
+// FormatPlainTextMessage renders the same content as FormatPostMessage but
+// stripped of all HTML markup, for use as a Telegram send fallback when the
+// HTML version is rejected with a parse error (issue #262).
+//
+// Pipeline:
+//  1. FormatPostMessage — renders the full HTML message with entity-escaped text.
+//  2. stripMarkup — converts anchors to "label (url)" and drops all other tags.
+//     Reuses the existing function rather than duplicating it (DRY).
+//  3. gohtml.UnescapeString — converts HTML entities (&amp; → &, &lt; → <, etc.)
+//     back to their literal characters so the plain text is readable.
+//
+// The result contains no HTML tags or entities. Telegram treats it literally
+// when sent with an empty parse_mode.
+func FormatPlainTextMessage(p graphql.Post) string {
+	raw := FormatPostMessage(p)
+	stripped := stripMarkup(raw)
+	return gohtml.UnescapeString(stripped)
 }

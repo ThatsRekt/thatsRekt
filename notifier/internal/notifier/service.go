@@ -11,6 +11,21 @@
 //
 // State is flushed to S3 on a debounced timer so we don't hit S3 on every
 // poll.
+//
+// Poison-pill guard (issue #262):
+//
+// maxPublishAttempts bounds the number of times we try to publish any single
+// post. After that many failed attempts the post is permanently marked as
+// given-up (persisted to S3) and future polls skip it with a log entry at
+// WARN. An ERROR is emitted on the cycle that crosses the threshold, surfacing
+// the payload for operator investigation.
+//
+// N = 5 justification: at the default 10 s poll interval, five attempts give
+// 50 s of retries — enough to outlast a typical Telegram 429 retry-after
+// (≤ 30 s) without looping for hours. Parse-entity errors (deterministic)
+// consume at most two of those five attempts (one HTML + one plain-text
+// fallback). After five failures of any kind the post is given up and an
+// operator must investigate from the ERROR log.
 package notifier
 
 import (
@@ -44,9 +59,18 @@ type GQLClient interface {
 // TelegramBot is the subset of telegram.Bot used by the Service. Declared as
 // an interface so the service can be tested with a stub implementation.
 type TelegramBot interface {
-	SendMessage(ctx context.Context, chatID, text string, kb *telegram.InlineKeyboardMarkup) (int64, error)
+	// SendMessage posts a new message to chatID. parseMode controls Telegram's
+	// text parser: "HTML" enables <b>, <a href="…">, etc.; "" sends plain text
+	// with no entity parsing. Pass "" for the plain-text fallback when Telegram
+	// has rejected the HTML version with a parse error.
+	SendMessage(ctx context.Context, chatID, text, parseMode string, kb *telegram.InlineKeyboardMarkup) (int64, error)
 	EditMessageText(ctx context.Context, chatID string, messageID int64, text string, kb *telegram.InlineKeyboardMarkup) error
 }
+
+// maxPublishAttempts is the maximum number of failed publish attempts allowed
+// per post before the service permanently gives up. See the package-level
+// comment for the N=5 justification.
+const maxPublishAttempts = 5
 
 type Service struct {
 	GQL          GQLClient
@@ -149,9 +173,39 @@ func (s *Service) PollOnce(ctx context.Context) {
 	for _, p := range posts {
 		// --- State 1: brand-new post ---
 		if s.isNew(p) {
-			if err := s.publish(ctx, p); err != nil {
-				s.Logger.Warn("publish failed", "post_id", p.ID, "err", err)
-				// Don't bump LastSeen — try again next cycle.
+			// Poison-pill guard: if we have already permanently given up on
+			// this post, advance the high-water mark and move on. The ERROR
+			// log emitted on the give-up cycle is the operator's action item.
+			if s.Store.IsPublishGivenUp(p.ID) {
+				s.Logger.Warn("skipping given-up new post — advancing high-water mark",
+					"post_id", p.ID,
+				)
+				s.Store.SetLastSeen(p.Chain.Slug, p.ID)
+				continue
+			}
+			if err := s.publishWithFallback(ctx, p); err != nil {
+				attempts := s.Store.IncrPublishAttempts(p.ID)
+				if attempts >= maxPublishAttempts {
+					s.Store.MarkPublishGivenUp(p.ID)
+					s.Logger.Error("publish permanently failed — giving up on new post; advancing high-water mark",
+						"post_id", p.ID,
+						"attempts", attempts,
+						"err", err,
+					)
+					// Advance so subsequent polls do not re-enter State 1 for
+					// this post. The give-up flag persists even if LastSeen is
+					// somehow reset, providing defence in depth.
+					s.Store.SetLastSeen(p.Chain.Slug, p.ID)
+				} else {
+					s.Logger.Warn("publish failed (will retry)",
+						"post_id", p.ID,
+						"attempt", attempts,
+						"of", maxPublishAttempts,
+						"err", err,
+					)
+				}
+				// Do not bump LastSeen on transient / below-limit failures —
+				// try again next cycle.
 				continue
 			}
 			s.Store.SetLastSeen(p.Chain.Slug, p.ID)
@@ -165,12 +219,35 @@ func (s *Service) PollOnce(ctx context.Context) {
 			// --- State 5: not-new + not mapped ---
 			// The notifier never published this post. Fall back to a fresh
 			// publish (acceptance criterion 4 of issue #128).
+			//
+			// Poison-pill guard (issue #262): if we have already permanently
+			// given up on this post, skip it silently. The ERROR log on the
+			// give-up cycle is the operator's action item.
+			if s.Store.IsPublishGivenUp(p.ID) {
+				continue
+			}
+
 			s.Logger.Info("not-new post absent from store — publishing fresh",
 				"post_id", p.ID,
 				"action_count", p.ActionCount,
 			)
-			if err := s.publish(ctx, p); err != nil {
-				s.Logger.Warn("fallback publish failed", "post_id", p.ID, "err", err)
+			if err := s.publishWithFallback(ctx, p); err != nil {
+				attempts := s.Store.IncrPublishAttempts(p.ID)
+				if attempts >= maxPublishAttempts {
+					s.Store.MarkPublishGivenUp(p.ID)
+					s.Logger.Error("publish permanently failed — giving up on post",
+						"post_id", p.ID,
+						"attempts", attempts,
+						"err", err,
+					)
+				} else {
+					s.Logger.Warn("fallback publish failed (will retry)",
+						"post_id", p.ID,
+						"attempt", attempts,
+						"of", maxPublishAttempts,
+						"err", err,
+					)
+				}
 			}
 			continue
 		}
@@ -380,15 +457,57 @@ func onchainPart(id string) string {
 	return id[idx+1:]
 }
 
-// publish sends one post to Telegram + records its message id and the current
-// on-chain snapshot (ActionCount + LastUpdatedAt). No inline keyboard is
-// attached — the vote subsystem has been removed.
-func (s *Service) publish(ctx context.Context, p graphql.Post) error {
-	text := telegram.FormatPostMessage(p)
-	msgID, err := s.Bot.SendMessage(ctx, s.ChannelID, text, nil)
-	if err != nil {
-		return fmt.Errorf("send message: %w", err)
+// publishWithFallback sends a new Telegram message for p and records the
+// outcome in the store. It is called for both fresh posts (State 1) and the
+// catch-up fallback path (State 5).
+//
+// Attempt sequence:
+//  1. Render p as HTML and call SendMessage with ParseMode="HTML".
+//  2. If Telegram returns a parse-entity error ("can't parse entities"),
+//     render p as plain text and call SendMessage with no parse mode.
+//     A plain, unformatted alert is far better than no alert. The plain-text
+//     path reuses the existing stripMarkup helper (issue #264, DRY).
+//  3. If both attempts fail, return a combined error. The caller increments
+//     the attempt counter and handles give-up logic.
+//
+// On success (either HTML or plain-text), RegisterPost and UpdatePostSnapshot
+// are called so the post is tracked for future amendment and retract handling.
+func (s *Service) publishWithFallback(ctx context.Context, p graphql.Post) error {
+	htmlText := telegram.FormatPostMessage(p)
+	msgID, err := s.Bot.SendMessage(ctx, s.ChannelID, htmlText, "HTML", nil)
+	if err == nil {
+		s.registerPublished(p, msgID)
+		return nil
 	}
+
+	// Parse-entity error: the HTML is syntactically invalid for Telegram's
+	// parser. Retry exactly once with plain text — the same HTML payload would
+	// fail identically on every subsequent attempt (deterministic failure).
+	if telegram.IsParseError(err) {
+		s.Logger.Warn("publish HTML rejected by Telegram parse error — falling back to plain text",
+			"post_id", p.ID,
+			"err", err,
+		)
+		plainText := telegram.FormatPlainTextMessage(p)
+		plainMsgID, fallbackErr := s.Bot.SendMessage(ctx, s.ChannelID, plainText, "", nil)
+		if fallbackErr == nil {
+			s.Logger.Warn("published via plain-text fallback",
+				"post_id", p.ID,
+				"chain", p.Chain.Slug,
+				"message_id", plainMsgID,
+			)
+			s.registerPublished(p, plainMsgID)
+			return nil
+		}
+		return fmt.Errorf("send HTML: %w; plain-text fallback: %w", err, fallbackErr)
+	}
+
+	return fmt.Errorf("send message: %w", err)
+}
+
+// registerPublished records a successful Telegram send in the store. Called
+// by publishWithFallback on both the HTML and plain-text success paths.
+func (s *Service) registerPublished(p graphql.Post, msgID int64) {
 	s.Store.RegisterPost(p.ID, msgID, p.Chain.Slug)
 	s.Store.UpdatePostSnapshot(p.ID, p.ActionCount, p.LastUpdatedAt)
 	s.Logger.Info("published",
@@ -398,7 +517,6 @@ func (s *Service) publish(ctx context.Context, p graphql.Post) error {
 		"title", p.Title,
 		"action_count", p.ActionCount,
 	)
-	return nil
 }
 
 // amendEdit edits an existing Telegram message to reflect new post content.

@@ -41,6 +41,18 @@ type State struct {
 	// Per-post Telegram-side metadata: which message id is the bot's
 	// post (so we can edit), and the running cosmetic vote counts.
 	Posts map[string]PostState `json:"posts"`
+
+	// FailedPublishAttempts counts how many times we have tried (and failed)
+	// to publish each post. Posts are removed from this map on a successful
+	// publish (they transition into Posts). Persisted so a restart does not
+	// reset the counter for a post that has already been attempted.
+	FailedPublishAttempts map[string]int `json:"failedPublishAttempts,omitempty"`
+
+	// GivenUpPosts is the set of composite post IDs for which the notifier
+	// has permanently stopped trying to publish after exhausting all retry
+	// attempts (see maxPublishAttempts in service.go). Persisted so a restart
+	// does not re-enter the retry loop for a known-unrenderable post.
+	GivenUpPosts map[string]bool `json:"givenUpPosts,omitempty"`
 }
 
 type PostState struct {
@@ -93,21 +105,23 @@ func New(client *s3.Client, bucket, key string) *Store {
 		bucket: bucket,
 		key:    key,
 		client: client,
-		state: State{
-			LastSeenByChain: map[string]string{},
-			Posts:           map[string]PostState{},
-		},
+		state:  newState(),
 	}
 }
 
 // NewInMemory returns a zero-dependency, S3-free Store for use in tests.
 // Save is a no-op. All other methods work identically to the production Store.
 func NewInMemory() *Store {
-	return &Store{
-		state: State{
-			LastSeenByChain: map[string]string{},
-			Posts:           map[string]PostState{},
-		},
+	return &Store{state: newState()}
+}
+
+// newState initialises a blank State with all maps allocated.
+func newState() State {
+	return State{
+		LastSeenByChain:       map[string]string{},
+		Posts:                 map[string]PostState{},
+		FailedPublishAttempts: map[string]int{},
+		GivenUpPosts:          map[string]bool{},
 	}
 }
 
@@ -147,6 +161,12 @@ func (s *Store) Load(ctx context.Context) error {
 	}
 	if parsed.Posts == nil {
 		parsed.Posts = map[string]PostState{}
+	}
+	if parsed.FailedPublishAttempts == nil {
+		parsed.FailedPublishAttempts = map[string]int{}
+	}
+	if parsed.GivenUpPosts == nil {
+		parsed.GivenUpPosts = map[string]bool{}
 	}
 	s.state = parsed
 	return nil
@@ -202,7 +222,9 @@ func (s *Store) SetLastSeen(chainSlug, id string) {
 }
 
 // RegisterPost records that we just posted `postID` to Telegram with
-// message id `msgID` for the given `chainSlug`.
+// message id `msgID` for the given `chainSlug`. It also clears any
+// FailedPublishAttempts entry for the post — a successful publish ends the
+// retry tracking.
 func (s *Store) RegisterPost(postID string, msgID int64, chainSlug string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -210,6 +232,7 @@ func (s *Store) RegisterPost(postID string, msgID int64, chainSlug string) {
 	ps.MessageID = msgID
 	ps.ChainSlug = chainSlug
 	s.state.Posts[postID] = ps
+	delete(s.state.FailedPublishAttempts, postID)
 	s.dirty = true
 }
 
@@ -350,4 +373,47 @@ func (s *Store) PostState(postID string) (PostState, bool) {
 	}
 	// PostState is a value type — returning it by value is already a copy.
 	return ps, true
+}
+
+// --- poison-pill retry tracking ---
+
+// IncrPublishAttempts records one failed publish attempt for postID and
+// returns the new total attempt count. Called only when publishWithFallback
+// fails; successful publishes clear the counter via RegisterPost instead.
+func (s *Store) IncrPublishAttempts(postID string) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.state.FailedPublishAttempts[postID]++
+	n := s.state.FailedPublishAttempts[postID]
+	s.dirty = true
+	return n
+}
+
+// PublishAttemptCount returns the current failed-attempt count for postID.
+// Returns 0 for posts that have never failed (or that have been successfully
+// published and had their counter cleared by RegisterPost).
+func (s *Store) PublishAttemptCount(postID string) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.state.FailedPublishAttempts[postID]
+}
+
+// MarkPublishGivenUp records that the notifier has permanently given up
+// trying to publish postID after exhausting all retry attempts. Future polls
+// must check IsPublishGivenUp and skip the post rather than retrying.
+// Persisted to S3 so a restart does not re-enter the retry loop.
+func (s *Store) MarkPublishGivenUp(postID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.state.GivenUpPosts[postID] = true
+	s.dirty = true
+}
+
+// IsPublishGivenUp reports whether the notifier has permanently given up
+// trying to publish postID. Returns false for unknown posts (so the first
+// publish attempt always proceeds).
+func (s *Store) IsPublishGivenUp(postID string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.state.GivenUpPosts[postID]
 }
