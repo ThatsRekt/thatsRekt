@@ -13,13 +13,37 @@
 //   - Permanent: any other deterministic Telegram error (wrong chat_id, bot
 //     blocked, etc.). Retrying will not help.
 //
-// Ordering rule (mirrors damm-thatsrekt-relayer/internal/classifier):
-// infrastructure/transient patterns are checked BEFORE generic-permanent
-// patterns, so a 429 with an unusual description string never falls through
-// to Permanent.
+// Classification strategy (issue #262 review, PR #265 blocker 3):
+//
+// A real Telegram API failure — Bot.SendMessage got an HTTP response and
+// decoded it as JSON with ok=false — surfaces as *SendAPIError, carrying the
+// parsed HTTP status and Telegram's own error_code field. Classification for
+// that case is purely numeric (classifyAPIError): parse-entity errors are
+// detected via a whole-phrase description match, and rate-limit/server-error
+// codes are matched against the structured, already-parsed status code —
+// never against a formatted string. This is what actually closes blocker 3:
+// the previous implementation matched bare digit substrings ("429", "500",
+// "502", "503") against the ENTIRE lowercased error string, which collided
+// with byte offsets embedded in the parse-error description itself (16 of
+// the 4097 possible offsets in Telegram's message-length range contain one
+// of those digit sequences and were silently misclassified as transient —
+// which, after the classification result started being consumed, would have
+// meant an unbounded retry loop, exactly the bug issue #262 exists to kill).
+//
+// Any error that is NOT a *SendAPIError — a transport failure before a
+// response was ever parsed (dial/timeout/connection reset), or a body that
+// didn't even decode as JSON (e.g. an upstream gateway's HTML error page) —
+// is not a structured Telegram response telling us the payload itself is
+// invalid. It is symptomatic of infrastructure trouble that may self-heal.
+// Default to SendTransient (mirrors damm-thatsrekt-relayer/internal/classifier:
+// unknown ⇒ Transient, so the operator sees repeated retries in the logs
+// rather than a silently dropped alert).
 package telegram
 
-import "strings"
+import (
+	"errors"
+	"strings"
+)
 
 // SendClassification describes how the caller should handle a failed
 // SendMessage call.
@@ -38,66 +62,58 @@ const (
 	SendParseError
 
 	// SendTransient means the error may self-heal (rate limit, server error,
-	// network hiccup). The caller should count the attempt and retry on the
-	// next poll cycle.
+	// network hiccup). The caller must NOT count this against a bounded
+	// attempt budget — see notifier.Service, issue #262 review blocker 1.
 	SendTransient
 )
 
-// ClassifySendError maps a SendMessage error to a SendClassification.
-// err must be the error returned directly by Bot.SendMessage (not wrapped by
-// the caller). A nil err is classified as SendPermanent to guard against
-// accidental misuse.
+// ClassifySendError maps a SendMessage error to a SendClassification. err
+// must be the error returned directly by Bot.SendMessage (not wrapped by the
+// caller, though errors.As traversal means one extra layer of fmt.Errorf
+// %w-wrapping is still handled correctly). A nil err is classified as
+// SendPermanent to guard against accidental misuse.
 //
-// Infra/transient patterns are checked BEFORE parse-entity and generic-
-// permanent patterns (relayer ordering rule).
+// See the package comment for the full classification strategy.
 func ClassifySendError(err error) SendClassification {
 	if err == nil {
 		return SendPermanent
 	}
-	msg := strings.ToLower(err.Error())
 
-	// ── Infrastructure / transient patterns — checked FIRST ────────────────
-	// Keep these exhaustive: any error that may self-heal belongs here.
-	transientPatterns := []string{
-		"too many requests",
-		"429",
-		"500",
-		"502",
-		"503",
-		"connection refused",
-		"connection reset",
-		"dial tcp",
-		"eof",
-		"broken pipe",
-		"timeout",
-		"deadline exceeded",
-		"context deadline",
-		"i/o timeout",
-		"temporary failure",
-		// json unmarshal failure on the response body is a proxy for a
-		// non-JSON (e.g. HTML gateway) response from an upstream 5xx.
-		"unmarshal sendmessage",
-	}
-	for _, pat := range transientPatterns {
-		if strings.Contains(msg, pat) {
-			return SendTransient
-		}
+	var apiErr *SendAPIError
+	if errors.As(err, &apiErr) {
+		return classifyAPIError(apiErr)
 	}
 
-	// ── Parse-entity error — specific permanent ─────────────────────────────
-	// Telegram returns this when the HTML markup is syntactically invalid.
-	// The exact string observed in the ethereum-38 incident (issue #262):
-	//   "Bad Request: can't parse entities: Empty attribute name in the tag
-	//    \"a\" at byte offset 824"
-	if strings.Contains(msg, "can't parse entities") {
+	// Not a structured API response — see package comment.
+	return SendTransient
+}
+
+// classifyAPIError classifies a structured Telegram Bot API error response.
+// The parse-entity check runs FIRST — a parse error is never transient
+// regardless of what byte offset or other digits happen to appear in its
+// description (relayer ordering rule; see the package comment).
+func classifyAPIError(e *SendAPIError) SendClassification {
+	if strings.Contains(strings.ToLower(e.Description), "can't parse entities") {
 		return SendParseError
 	}
-
-	// ── Unknown / other 400 — permanent ────────────────────────────────────
-	// Unlike the relayer (which defaults to Transient to avoid silent loss via
-	// DLQ), the notifier has an attempt counter as the safety net. Unknown
-	// Telegram 4xx errors are almost always permanent content issues.
+	if isTransientCode(e.ErrorCode) || isTransientCode(e.StatusCode) {
+		return SendTransient
+	}
 	return SendPermanent
+}
+
+// isTransientCode reports whether an HTTP/Telegram error_code is one that
+// commonly self-heals: rate-limit (429) or upstream server trouble (5xx
+// gateway family). Telegram's error_code mirrors the HTTP status in
+// practice; SendAPIError keeps both fields and this is checked against each
+// independently in case they ever diverge.
+func isTransientCode(code int) bool {
+	switch code {
+	case 429, 500, 502, 503:
+		return true
+	default:
+		return false
+	}
 }
 
 // IsParseError reports whether err is a Telegram "can't parse entities"

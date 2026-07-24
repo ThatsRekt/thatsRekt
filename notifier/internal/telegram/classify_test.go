@@ -15,6 +15,7 @@ package telegram_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -140,6 +141,40 @@ func TestSendMessage_Success_NoError(t *testing.T) {
 	// We just check there's no error and a non-negative ID.
 	if msgID < 0 {
 		t.Errorf("unexpected negative message_id: %d", msgID)
+	}
+}
+
+// --- review blocker 3 (issue #262 follow-up): byte-offset collision ---
+
+// TestSendMessage_ParseError_ByteOffsetCollisions is the required
+// reproduction for review blocker 3: Telegram's parse-error description
+// embeds an arbitrary byte offset ("... at byte offset N"). The old
+// implementation matched bare digit substrings ("429", "500", "502", "503")
+// against the ENTIRE lowercased error string, so any offset that happens to
+// contain one of those digit sequences was misclassified as SendTransient
+// instead of SendParseError — silently skipping the plain-text fallback.
+//
+// Every offset below is a real collision (16 of the 4097 offsets in
+// Telegram's 0-4096 message-length range).
+func TestSendMessage_ParseError_ByteOffsetCollisions(t *testing.T) {
+	collidingOffsets := []int{429, 500, 502, 503, 1429, 1500, 1502, 1503, 2429, 2500, 2502, 2503, 3429, 3500, 3502, 3503}
+
+	for _, offset := range collidingOffsets {
+		offset := offset
+		t.Run(fmt.Sprintf("offset_%d", offset), func(t *testing.T) {
+			desc := fmt.Sprintf(`Bad Request: can't parse entities: Empty attribute name in the tag "a" at byte offset %d`, offset)
+			srv := serveTelegramError(t, 400, desc)
+			_, err := newTestBot(t, srv).SendMessage(context.Background(), "@chan", "<b>x</b>", "HTML", nil)
+			if err == nil {
+				t.Fatal("expected error")
+			}
+			if !telegram.IsParseError(err) {
+				t.Errorf("offset=%d: expected IsParseError=true, got false (err: %v)", offset, err)
+			}
+			if got := telegram.ClassifySendError(err); got != telegram.SendParseError {
+				t.Errorf("offset=%d: expected SendParseError, got %v", offset, got)
+			}
+		})
 	}
 }
 

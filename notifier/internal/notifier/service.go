@@ -12,20 +12,41 @@
 // State is flushed to S3 on a debounced timer so we don't hit S3 on every
 // poll.
 //
-// Poison-pill guard (issue #262):
+// Poison-pill guard (issue #262, hardened by the PR #265 review):
 //
-// maxPublishAttempts bounds the number of times we try to publish any single
-// post. After that many failed attempts the post is permanently marked as
-// given-up (persisted to S3) and future polls skip it with a log entry at
-// WARN. An ERROR is emitted on the cycle that crosses the threshold, surfacing
-// the payload for operator investigation.
+// maxPublishAttempts bounds the number of *non-transient* failed attempts we
+// allow for any single post's current content before permanently giving up
+// (persisted to S3). Future polls skip a given-up post with a log entry at
+// WARN. An ERROR is emitted on the cycle that crosses the threshold,
+// surfacing the payload for operator investigation.
 //
-// N = 5 justification: at the default 10 s poll interval, five attempts give
-// 50 s of retries — enough to outlast a typical Telegram 429 retry-after
-// (≤ 30 s) without looping for hours. Parse-entity errors (deterministic)
-// consume at most two of those five attempts (one HTML + one plain-text
-// fallback). After five failures of any kind the post is given up and an
-// operator must investigate from the ERROR log.
+// Only non-transient failures count (blocker 1). A transient failure —
+// classified by telegram.ClassifySendError as SendTransient: rate-limit,
+// 5xx, or a network-level fault — never consumes this budget; it is logged
+// at WARN and retried on the next poll cycle with no state mutation at all.
+// The alternative (the pre-review behaviour) trades an infinite-retry bug for
+// a silent alert-loss bug: a ~50 s Telegram/network blip would otherwise
+// permanently discard a hack alert, which is strictly worse for a public
+// safety channel than looping loudly. Only a deterministic, retry-proof
+// failure (wrong chat_id, bot blocked, or a parse-entity error that also
+// fails its plain-text fallback) may burn the budget.
+//
+// The budget — and the give-up flag itself — is scoped to a fingerprint of
+// the post's on-chain content, not the bare post id (blocker 2; see
+// contentFingerprint and store.Store.IsPublishGivenUp). If the content later
+// changes (an amendment, or a notifier deploy that changes how the post
+// renders), the fingerprint changes too and the post gets a fresh budget
+// automatically — give-up self-heals rather than permanently tombstoning the
+// post. This is what the actual ethereum-38 incident needed: it was fixed by
+// deploying PRs #263/#264, and under a bare-post-id give-up scheme that fix
+// would never have reached the channel.
+//
+// N = 5 justification: at the default 10 s poll interval, five non-transient
+// attempts give ~50 s before giving up on genuinely unfixable-by-retry
+// content (e.g. a chat the bot has no access to). A parse-entity error and
+// its plain-text fallback together count as ONE attempt (not two) — see
+// publishWithFallback — so five polls is the full budget for a post whose
+// HTML and plain-text renders both fail identically every time.
 package notifier
 
 import (
@@ -173,36 +194,25 @@ func (s *Service) PollOnce(ctx context.Context) {
 	for _, p := range posts {
 		// --- State 1: brand-new post ---
 		if s.isNew(p) {
+			fp := contentFingerprint(p)
 			// Poison-pill guard: if we have already permanently given up on
-			// this post, advance the high-water mark and move on. The ERROR
-			// log emitted on the give-up cycle is the operator's action item.
-			if s.Store.IsPublishGivenUp(p.ID) {
+			// this exact content, advance the high-water mark and move on.
+			// The ERROR log emitted on the give-up cycle is the operator's
+			// action item. A content change (fp differs) is NOT given up —
+			// see contentFingerprint and Store.IsPublishGivenUp.
+			if s.Store.IsPublishGivenUp(p.ID, fp) {
 				s.Logger.Warn("skipping given-up new post — advancing high-water mark",
 					"post_id", p.ID,
 				)
 				s.Store.SetLastSeen(p.Chain.Slug, p.ID)
 				continue
 			}
-			if err := s.publishWithFallback(ctx, p); err != nil {
-				attempts := s.Store.IncrPublishAttempts(p.ID)
-				if attempts >= maxPublishAttempts {
-					s.Store.MarkPublishGivenUp(p.ID)
-					s.Logger.Error("publish permanently failed — giving up on new post; advancing high-water mark",
-						"post_id", p.ID,
-						"attempts", attempts,
-						"err", err,
-					)
+			if transient, err := s.publishWithFallback(ctx, p); err != nil {
+				if s.handlePublishFailure(p, fp, err, transient, "new post") {
 					// Advance so subsequent polls do not re-enter State 1 for
 					// this post. The give-up flag persists even if LastSeen is
 					// somehow reset, providing defence in depth.
 					s.Store.SetLastSeen(p.Chain.Slug, p.ID)
-				} else {
-					s.Logger.Warn("publish failed (will retry)",
-						"post_id", p.ID,
-						"attempt", attempts,
-						"of", maxPublishAttempts,
-						"err", err,
-					)
 				}
 				// Do not bump LastSeen on transient / below-limit failures —
 				// try again next cycle.
@@ -221,9 +231,11 @@ func (s *Service) PollOnce(ctx context.Context) {
 			// publish (acceptance criterion 4 of issue #128).
 			//
 			// Poison-pill guard (issue #262): if we have already permanently
-			// given up on this post, skip it silently. The ERROR log on the
-			// give-up cycle is the operator's action item.
-			if s.Store.IsPublishGivenUp(p.ID) {
+			// given up on this exact content, skip it silently. The ERROR
+			// log on the give-up cycle is the operator's action item. A
+			// content change is NOT given up — see contentFingerprint.
+			fp := contentFingerprint(p)
+			if s.Store.IsPublishGivenUp(p.ID, fp) {
 				continue
 			}
 
@@ -231,23 +243,8 @@ func (s *Service) PollOnce(ctx context.Context) {
 				"post_id", p.ID,
 				"action_count", p.ActionCount,
 			)
-			if err := s.publishWithFallback(ctx, p); err != nil {
-				attempts := s.Store.IncrPublishAttempts(p.ID)
-				if attempts >= maxPublishAttempts {
-					s.Store.MarkPublishGivenUp(p.ID)
-					s.Logger.Error("publish permanently failed — giving up on post",
-						"post_id", p.ID,
-						"attempts", attempts,
-						"err", err,
-					)
-				} else {
-					s.Logger.Warn("fallback publish failed (will retry)",
-						"post_id", p.ID,
-						"attempt", attempts,
-						"of", maxPublishAttempts,
-						"err", err,
-					)
-				}
+			if transient, err := s.publishWithFallback(ctx, p); err != nil {
+				s.handlePublishFailure(p, fp, err, transient, "post")
 			}
 			continue
 		}
@@ -467,26 +464,35 @@ func onchainPart(id string) string {
 //     render p as plain text and call SendMessage with no parse mode.
 //     A plain, unformatted alert is far better than no alert. The plain-text
 //     path reuses the existing stripMarkup helper (issue #264, DRY).
-//  3. If both attempts fail, return a combined error. The caller increments
-//     the attempt counter and handles give-up logic.
+//  3. If both attempts fail, return a combined error. The caller decides
+//     whether to count the attempt and handles give-up logic via
+//     handlePublishFailure.
+//
+// transient reports whether the overall failure should be exempt from the
+// maxPublishAttempts budget (issue #262 review, PR #265 blocker 1). The HTML
+// attempt's own classification is never what decides this: if it was a
+// parse error, that half of the round is deterministic and permanent by
+// definition — what matters is whether the SECOND (plain-text) attempt also
+// failed, and if so, whether THAT failure was transient. If the HTML attempt
+// failed for a non-parse-error reason, its own classification decides.
 //
 // On success (either HTML or plain-text), RegisterPost and UpdatePostSnapshot
 // are called so the post is tracked for future amendment and retract handling.
-func (s *Service) publishWithFallback(ctx context.Context, p graphql.Post) error {
+func (s *Service) publishWithFallback(ctx context.Context, p graphql.Post) (transient bool, err error) {
 	htmlText := telegram.FormatPostMessage(p)
-	msgID, err := s.Bot.SendMessage(ctx, s.ChannelID, htmlText, "HTML", nil)
-	if err == nil {
+	msgID, sendErr := s.Bot.SendMessage(ctx, s.ChannelID, htmlText, "HTML", nil)
+	if sendErr == nil {
 		s.registerPublished(p, msgID)
-		return nil
+		return false, nil
 	}
 
 	// Parse-entity error: the HTML is syntactically invalid for Telegram's
 	// parser. Retry exactly once with plain text — the same HTML payload would
 	// fail identically on every subsequent attempt (deterministic failure).
-	if telegram.IsParseError(err) {
+	if telegram.IsParseError(sendErr) {
 		s.Logger.Warn("publish HTML rejected by Telegram parse error — falling back to plain text",
 			"post_id", p.ID,
-			"err", err,
+			"err", sendErr,
 		)
 		plainText := telegram.FormatPlainTextMessage(p)
 		plainMsgID, fallbackErr := s.Bot.SendMessage(ctx, s.ChannelID, plainText, "", nil)
@@ -497,12 +503,82 @@ func (s *Service) publishWithFallback(ctx context.Context, p graphql.Post) error
 				"message_id", plainMsgID,
 			)
 			s.registerPublished(p, plainMsgID)
-			return nil
+			return false, nil
 		}
-		return fmt.Errorf("send HTML: %w; plain-text fallback: %w", err, fallbackErr)
+		combined := fmt.Errorf("send HTML: %w; plain-text fallback: %w", sendErr, fallbackErr)
+		return telegram.ClassifySendError(fallbackErr) == telegram.SendTransient, combined
 	}
 
-	return fmt.Errorf("send message: %w", err)
+	return telegram.ClassifySendError(sendErr) == telegram.SendTransient, fmt.Errorf("send message: %w", sendErr)
+}
+
+// handlePublishFailure applies the poison-pill retry/give-up policy for a
+// failed publish attempt (issue #262 review, PR #265 blockers 1 and 2):
+//
+//   - transient failures (network blips, 429s, 5xx) never consume the
+//     maxPublishAttempts budget and mutate no store state at all — they are
+//     logged at WARN and retried on the next poll with a clean slate;
+//   - non-transient failures increment the attempt counter, scoped to fp (a
+//     fingerprint of the on-chain content currently being published) so an
+//     amendment or a rendering-fixing deploy gets a fresh budget rather than
+//     inheriting a prior failure count for content that no longer exists;
+//   - crossing maxPublishAttempts marks the post given-up, scoped to the
+//     same fingerprint (self-healing give-up).
+//
+// logContext is a short label ("new post" / "post") purely for keeping the
+// two call sites' log lines distinguishable; it has no effect on behaviour.
+// Returns true if this call crossed the give-up threshold — the caller (State
+// 1 only) uses this to decide whether to advance the high-water mark.
+func (s *Service) handlePublishFailure(p graphql.Post, fp string, sendErr error, transient bool, logContext string) bool {
+	if transient {
+		s.Logger.Warn("publish failed (transient — not counted against attempt budget, will retry)",
+			"post_id", p.ID,
+			"context", logContext,
+			"err", sendErr,
+		)
+		return false
+	}
+
+	st := s.Store.RecordPublishFailure(p.ID, fp, true)
+	if st.Attempts < maxPublishAttempts {
+		s.Logger.Warn("publish failed (will retry)",
+			"post_id", p.ID,
+			"context", logContext,
+			"attempt", st.Attempts,
+			"of", maxPublishAttempts,
+			"err", sendErr,
+		)
+		return false
+	}
+
+	s.Store.MarkPublishGivenUp(p.ID, fp)
+	s.Logger.Error("publish permanently failed — giving up",
+		"post_id", p.ID,
+		"context", logContext,
+		"attempts", st.Attempts,
+		"err", sendErr,
+	)
+	return true
+}
+
+// contentFingerprint returns a stable identifier for the on-chain content
+// that determines what gets published for p, used to scope the notifier's
+// publish-retry and give-up state (issue #262 review, PR #265 blocker 2)
+// instead of the bare post id.
+//
+// Deliberately NOT a hash of the rendered text: telegram.FormatPostMessage
+// renders a relative "X ago" timestamp computed from wall-clock time, which
+// drifts on every single poll independent of the on-chain data. Hashing the
+// rendered output directly would reset the attempt counter on every poll —
+// the budget would never be reached and a genuinely permanent failure would
+// retry forever. ActionCount + LastUpdatedAt is exactly the pair
+// Store.HasChanged already uses to detect "has this post changed" for
+// amendment handling — reusing it here keeps one definition of "changed" for
+// the whole package, and is sufficient: nothing else in the post's rendered
+// content (title, note, attackers, victims) changes on-chain without also
+// bumping one of these two fields.
+func contentFingerprint(p graphql.Post) string {
+	return fmt.Sprintf("%d@%s", p.ActionCount, p.LastUpdatedAt)
 }
 
 // registerPublished records a successful Telegram send in the store. Called

@@ -43,16 +43,39 @@ type State struct {
 	Posts map[string]PostState `json:"posts"`
 
 	// FailedPublishAttempts counts how many times we have tried (and failed)
-	// to publish each post. Posts are removed from this map on a successful
-	// publish (they transition into Posts). Persisted so a restart does not
-	// reset the counter for a post that has already been attempted.
-	FailedPublishAttempts map[string]int `json:"failedPublishAttempts,omitempty"`
+	// to publish each post, scoped to the content fingerprint that has been
+	// failing. Posts are removed from this map on a successful publish (they
+	// transition into Posts). Persisted so a restart does not reset the
+	// counter for a post that has already been attempted.
+	FailedPublishAttempts map[string]PublishAttemptState `json:"failedPublishAttempts,omitempty"`
 
-	// GivenUpPosts is the set of composite post IDs for which the notifier
-	// has permanently stopped trying to publish after exhausting all retry
-	// attempts (see maxPublishAttempts in service.go). Persisted so a restart
-	// does not re-enter the retry loop for a known-unrenderable post.
-	GivenUpPosts map[string]bool `json:"givenUpPosts,omitempty"`
+	// GivenUpPosts maps a composite post ID to the content fingerprint the
+	// notifier permanently gave up publishing after exhausting all retry
+	// attempts (see maxPublishAttempts in service.go). Keyed on fingerprint,
+	// not just post ID (issue #262 review, PR #265 blocker 2): an amendment
+	// or a rendering-fixing deploy changes the fingerprint, so
+	// Store.IsPublishGivenUp only returns true when the CURRENT content
+	// matches what was actually given up on — give-up is self-healing, not a
+	// permanent tombstone. Persisted so a restart does not re-enter the retry
+	// loop for content that is still failing.
+	GivenUpPosts map[string]string `json:"givenUpPosts,omitempty"`
+}
+
+// PublishAttemptState tracks the failed-publish-attempt budget for a single
+// post, scoped to the exact content fingerprint that has been failing.
+type PublishAttemptState struct {
+	// Fingerprint identifies the on-chain content (see
+	// notifier.contentFingerprint) that Attempts is counting failures for.
+	// When a poll computes a different fingerprint for the same post id — an
+	// on-chain amendment, or a notifier deploy that changes rendering — the
+	// previous failure history does not apply to the new content and
+	// Store.RecordPublishFailure resets Attempts rather than carrying it
+	// forward.
+	Fingerprint string `json:"fingerprint"`
+	// Attempts counts only NON-TRANSIENT failures (issue #262 review, PR
+	// #265 blocker 1). A Telegram/network blip must never consume this
+	// budget — only a deterministic, retry-proof failure may.
+	Attempts int `json:"attempts"`
 }
 
 type PostState struct {
@@ -120,8 +143,8 @@ func newState() State {
 	return State{
 		LastSeenByChain:       map[string]string{},
 		Posts:                 map[string]PostState{},
-		FailedPublishAttempts: map[string]int{},
-		GivenUpPosts:          map[string]bool{},
+		FailedPublishAttempts: map[string]PublishAttemptState{},
+		GivenUpPosts:          map[string]string{},
 	}
 }
 
@@ -163,10 +186,10 @@ func (s *Store) Load(ctx context.Context) error {
 		parsed.Posts = map[string]PostState{}
 	}
 	if parsed.FailedPublishAttempts == nil {
-		parsed.FailedPublishAttempts = map[string]int{}
+		parsed.FailedPublishAttempts = map[string]PublishAttemptState{}
 	}
 	if parsed.GivenUpPosts == nil {
-		parsed.GivenUpPosts = map[string]bool{}
+		parsed.GivenUpPosts = map[string]string{}
 	}
 	s.state = parsed
 	return nil
@@ -223,8 +246,9 @@ func (s *Store) SetLastSeen(chainSlug, id string) {
 
 // RegisterPost records that we just posted `postID` to Telegram with
 // message id `msgID` for the given `chainSlug`. It also clears any
-// FailedPublishAttempts entry for the post — a successful publish ends the
-// retry tracking.
+// FailedPublishAttempts and GivenUpPosts entries for the post — a
+// successful publish ends the retry tracking regardless of which content
+// fingerprint it eventually succeeded on.
 func (s *Store) RegisterPost(postID string, msgID int64, chainSlug string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -233,6 +257,7 @@ func (s *Store) RegisterPost(postID string, msgID int64, chainSlug string) {
 	ps.ChainSlug = chainSlug
 	s.state.Posts[postID] = ps
 	delete(s.state.FailedPublishAttempts, postID)
+	delete(s.state.GivenUpPosts, postID)
 	s.dirty = true
 }
 
@@ -375,45 +400,76 @@ func (s *Store) PostState(postID string) (PostState, bool) {
 	return ps, true
 }
 
-// --- poison-pill retry tracking ---
+// --- poison-pill retry tracking (issue #262 review, PR #265) ---
 
-// IncrPublishAttempts records one failed publish attempt for postID and
-// returns the new total attempt count. Called only when publishWithFallback
-// fails; successful publishes clear the counter via RegisterPost instead.
-func (s *Store) IncrPublishAttempts(postID string) int {
+// RecordPublishFailure records a failed publish attempt for postID against
+// the given content fingerprint and returns the resulting state. Attempts is
+// incremented only when countsTowardBudget is true — the caller passes false
+// for a transient failure (network blip, 429, 5xx) so it never consumes the
+// maxPublishAttempts budget (blocker 1: a Telegram/network outage must not
+// permanently discard an alert).
+//
+// A fingerprint change resets Attempts to reflect only this call: prior
+// failure history belonged to content that no longer exists (an amendment,
+// or a rendering-affecting deploy) and must not carry forward. This, plus
+// the equivalent scoping in IsPublishGivenUp, is what makes give-up
+// self-healing (blocker 2) instead of a permanent tombstone.
+func (s *Store) RecordPublishFailure(postID, fingerprint string, countsTowardBudget bool) PublishAttemptState {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.state.FailedPublishAttempts[postID]++
-	n := s.state.FailedPublishAttempts[postID]
+	st := s.state.FailedPublishAttempts[postID]
+	if st.Fingerprint != fingerprint {
+		st = PublishAttemptState{Fingerprint: fingerprint}
+	}
+	if countsTowardBudget {
+		st.Attempts++
+	}
+	s.state.FailedPublishAttempts[postID] = st
 	s.dirty = true
-	return n
+	return st
 }
 
-// PublishAttemptCount returns the current failed-attempt count for postID.
-// Returns 0 for posts that have never failed (or that have been successfully
-// published and had their counter cleared by RegisterPost).
+// PublishAttemptCount returns the current non-transient failed-attempt count
+// for postID, regardless of which fingerprint it is scoped to. Returns 0 for
+// posts that have never failed, that have been successfully published
+// (RegisterPost clears the entry), or whose only recorded failures so far
+// were transient.
 func (s *Store) PublishAttemptCount(postID string) int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.state.FailedPublishAttempts[postID]
+	return s.state.FailedPublishAttempts[postID].Attempts
 }
 
 // MarkPublishGivenUp records that the notifier has permanently given up
-// trying to publish postID after exhausting all retry attempts. Future polls
-// must check IsPublishGivenUp and skip the post rather than retrying.
-// Persisted to S3 so a restart does not re-enter the retry loop.
-func (s *Store) MarkPublishGivenUp(postID string) {
+// publishing postID's content as identified by fingerprint, after
+// exhausting the retry budget for that fingerprint. Future polls must check
+// IsPublishGivenUp (with the CURRENT fingerprint) and skip the post rather
+// than retrying. Persisted to S3 so a restart does not re-enter the retry
+// loop for content that is still failing.
+func (s *Store) MarkPublishGivenUp(postID, fingerprint string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.state.GivenUpPosts[postID] = true
+	s.state.GivenUpPosts[postID] = fingerprint
 	s.dirty = true
 }
 
 // IsPublishGivenUp reports whether the notifier has permanently given up
-// trying to publish postID. Returns false for unknown posts (so the first
-// publish attempt always proceeds).
-func (s *Store) IsPublishGivenUp(postID string) bool {
+// publishing postID's content AS IT CURRENTLY RENDERS. Give-up is scoped to
+// the content fingerprint that failed, not the bare post id (issue #262
+// review, PR #265 blocker 2): if fingerprint differs from what was given up
+// on — an on-chain amendment changed ActionCount/LastUpdatedAt, or a
+// notifier deploy changed how the post renders — this returns false and the
+// post gets a fresh retry budget. This is what makes give-up self-healing:
+// the actual remediation that fixed the ethereum-38 incident (deploying
+// PRs #263/#264, which changed rendering) would have un-suppressed the post
+// automatically under this scheme, rather than requiring the (non-functional)
+// manual state.json edit described in earlier drafts of this fix.
+//
+// Returns false for postIDs never given up (so the first publish attempt
+// always proceeds).
+func (s *Store) IsPublishGivenUp(postID, fingerprint string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.state.GivenUpPosts[postID]
+	givenUpFingerprint, ok := s.state.GivenUpPosts[postID]
+	return ok && givenUpFingerprint == fingerprint
 }

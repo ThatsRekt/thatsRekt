@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/ThatsRekt/thatsRekt/notifier/internal/graphql"
 	"github.com/ThatsRekt/thatsRekt/notifier/internal/note"
@@ -435,15 +436,100 @@ func html(s string) string {
 //
 // Pipeline:
 //  1. FormatPostMessage — renders the full HTML message with entity-escaped text.
-//  2. stripMarkup — converts anchors to "label (url)" and drops all other tags.
-//     Reuses the existing function rather than duplicating it (DRY).
-//  3. gohtml.UnescapeString — converts HTML entities (&amp; → &, &lt; → <, etc.)
-//     back to their literal characters so the plain text is readable.
+//  2. stripMarkup — converts real anchors to "label (url)" and drops all
+//     other tags. Reuses the existing function rather than duplicating it
+//     (DRY).
+//  3. collapseDuplicateAnchorLabel — the address/tx line template
+//     intentionally prints the abbreviated address once as plain text and
+//     once more inside a clickable anchor with the SAME label (so HTML mode
+//     shows a visible abbreviation with a tappable copy in parens). Once
+//     flattened to plain text by step 2 there is no visual distinction
+//     between the two, so the label would otherwise appear twice:
+//     "0x1234…abcd (0x1234…abcd (https://…))". Collapse that down to a
+//     single occurrence.
+//  4. gohtml.UnescapeString — converts HTML entities (&amp; → &, &lt; → <,
+//     etc.) back to their literal characters. This intentionally reveals any
+//     on-chain markup that #264 neutralised for HTML mode (e.g. a note
+//     containing literal "<b>") as literal plain text. That is correct here,
+//     not a regression: Telegram's plain mode (parse_mode="") does not parse
+//     entities at all, so sending the STILL-ESCAPED "&lt;b&gt;" would show
+//     the reader raw entity syntax, which is strictly worse than showing
+//     exactly what the poster wrote as inert text. There is no HTML-parsing
+//     step downstream of this in plain mode, so unescaping here is safe.
+//  5. truncateForTelegram — Telegram hard-caps message text at 4096
+//     characters (core.telegram.org/bots/api#sendmessage). Truncating here
+//     — after all markup has already been resolved to plain characters — is
+//     safe; truncating the HTML render directly could cut a tag in half and
+//     manufacture a NEW parse error. See truncateForTelegram's comment for
+//     why the HTML path does not get the same treatment.
 //
-// The result contains no HTML tags or entities. Telegram treats it literally
-// when sent with an empty parse_mode.
+// The result contains no HTML tags or entities and fits Telegram's message
+// length limit. Telegram treats it literally when sent with an empty
+// parse_mode.
 func FormatPlainTextMessage(p graphql.Post) string {
 	raw := FormatPostMessage(p)
 	stripped := stripMarkup(raw)
-	return gohtml.UnescapeString(stripped)
+	deduped := collapseDuplicateAnchorLabel(stripped)
+	plain := gohtml.UnescapeString(deduped)
+	return truncateForTelegram(plain)
+}
+
+// addrAnchorDupRE matches the shape of the redundant pattern produced when
+// stripMarkup flattens an address/tx/victim anchor line: FormatPostMessageAt
+// always prints the abbreviated label once as plain text AND once more
+// inside the clickable anchor (intentional for HTML mode). See
+// FormatPlainTextMessage's pipeline comment, step 3.
+//
+// Go's RE2 engine does not support backreferences in the pattern itself
+// (only in the replacement), so the "are the two labels identical" check is
+// done in Go code by collapseDuplicateAnchorLabel rather than in the regexp.
+var addrAnchorDupRE = regexp.MustCompile(`(\S+) \((\S+) \((\S+)\)\)`)
+
+// collapseDuplicateAnchorLabel collapses "LABEL (LABEL (URL))" down to
+// "LABEL (URL)" — but ONLY when the outer and inner labels are identical.
+// Scoped to this exact structural pattern (same token repeated verbatim) so
+// it cannot accidentally alter unrelated "label (url)" text elsewhere in the
+// message where the two differ (e.g. a genuine free-form anchor from the
+// note body, "click here (https://…)").
+func collapseDuplicateAnchorLabel(s string) string {
+	return addrAnchorDupRE.ReplaceAllStringFunc(s, func(match string) string {
+		groups := addrAnchorDupRE.FindStringSubmatch(match)
+		outerLabel, innerLabel, url := groups[1], groups[2], groups[3]
+		if outerLabel != innerLabel {
+			return match
+		}
+		return fmt.Sprintf("%s (%s)", outerLabel, url)
+	})
+}
+
+// telegramMaxMessageLength is Telegram's hard cap on sendMessage text length
+// (core.telegram.org/bots/api#sendmessage: "1-4096 characters after entities
+// parsing"). An over-length message is rejected with a non-parse 400 ("Bad
+// Request: message is too long") — a deterministic, permanent failure that,
+// left unguarded, burns the notifier's non-transient attempt budget on a
+// post that could never fit rather than being fixed proactively.
+const telegramMaxMessageLength = 4096
+
+// truncateForTelegram clips s to Telegram's message-length limit on a rune
+// boundary (never splitting a multi-byte character) and appends a marker so
+// readers know the alert was cut, rather than silently missing its tail.
+//
+// Only applied to the plain-text path. Truncating the HTML-rendered message
+// safely would require re-balancing any open tags cut mid-way — attempting
+// that risks manufacturing a NEW parse error, which is worse than the
+// problem it would be solving. The HTML path instead relies on Telegram's
+// "message is too long" response being correctly classified as a permanent,
+// non-transient error (see classify.go) so an oversized post gives up after
+// the normal attempt budget rather than looping.
+func truncateForTelegram(s string) string {
+	if utf8.RuneCountInString(s) <= telegramMaxMessageLength {
+		return s
+	}
+	const suffix = "\n\n… (truncated)"
+	runes := []rune(s)
+	cut := telegramMaxMessageLength - utf8.RuneCountInString(suffix)
+	if cut < 0 {
+		cut = 0
+	}
+	return string(runes[:cut]) + suffix
 }
