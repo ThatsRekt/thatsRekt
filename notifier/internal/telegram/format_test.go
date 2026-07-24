@@ -280,8 +280,23 @@ func TestFormatPostMessage_HTMLEscaping(t *testing.T) {
 	// Must not contain raw injected tags
 	assertAbsent(t, msg, "<script>", "raw script tag must be escaped")
 	assertAbsent(t, msg, "<b>bold title</b>", "raw bold title must be escaped")
-	// Must contain escaped form
-	assertContains(t, msg, "&lt;script&gt;", "escaped script tag in summary")
+
+	// The TITLE is a structured on-chain field, not free-form note text, so it
+	// is still escaped rather than stripped — the reader sees the literal
+	// characters the poster actually wrote.
+	assertContains(t, msg, "&lt;b&gt;bold title&lt;/b&gt;", "escaped title")
+
+	// The BODY is free-form note text and is now stripped of markup before
+	// escaping (changed 2026-07-24). Previously this asserted the escaped form
+	// "&lt;script&gt;" survived into the body, which meant readers saw literal
+	// tags in the channel — exactly the unreadable output reported in prod,
+	// where a note's embedded <a href="…"> anchors rendered verbatim.
+	//
+	// Stripping is at least as safe as escaping (the tag is gone entirely, not
+	// merely inert) and produces a readable alert, so the inner text is kept
+	// and the tags are dropped.
+	assertAbsent(t, msg, "&lt;script&gt;", "script tag must be stripped from body, not merely escaped")
+	assertContains(t, msg, "alert(1)", "body text content must survive stripping")
 }
 
 // TestFormatPostMessage_ZeroActionCountFallsBackToRev1 covers the production
