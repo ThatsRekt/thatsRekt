@@ -109,7 +109,7 @@ func FormatPostMessageAt(p graphql.Post, now time.Time) string {
 		fmt.Fprintf(&b, "\nAttackers:\n")
 		for _, addr := range p.Attackers {
 			link := explorerAddrURL(p.Chain, addr)
-			fmt.Fprintf(&b, "  %s (%s)\n", addrAbbrev(addr), explorerLink(link, addrAbbrev(addr)))
+			fmt.Fprintf(&b, "  %s (%s)\n", html(addrAbbrev(addr)), explorerLink(link, addrAbbrev(addr)))
 		}
 	}
 
@@ -118,7 +118,7 @@ func FormatPostMessageAt(p graphql.Post, now time.Time) string {
 		fmt.Fprintf(&b, "\nVictims:\n")
 		for _, addr := range p.Victims {
 			link := explorerAddrURL(p.Chain, addr)
-			fmt.Fprintf(&b, "  %s (%s)\n", addrAbbrev(addr), explorerLink(link, addrAbbrev(addr)))
+			fmt.Fprintf(&b, "  %s (%s)\n", html(addrAbbrev(addr)), explorerLink(link, addrAbbrev(addr)))
 		}
 	}
 
@@ -127,7 +127,7 @@ func FormatPostMessageAt(p graphql.Post, now time.Time) string {
 		fmt.Fprintf(&b, "\nTx:\n")
 		for _, txHash := range parsed.ExploitTxHashes {
 			link := explorerTxURL(p.Chain, txHash)
-			fmt.Fprintf(&b, "  %s (%s)\n", txAbbrev(txHash), explorerLink(link, txAbbrev(txHash)))
+			fmt.Fprintf(&b, "  %s (%s)\n", html(txAbbrev(txHash)), explorerLink(link, txAbbrev(txHash)))
 		}
 	}
 
@@ -303,11 +303,18 @@ func explorerBase(c graphql.Chain) string {
 
 // explorerLink wraps label in an HTML anchor when url is non-empty;
 // returns the label unchanged otherwise.
+//
+// BOTH arguments are escaped. Addresses and tx hashes are NOT guaranteed to be
+// well-formed hex — exploit tx hashes and sources are parsed out of the post's
+// free-form on-chain note, so they are attacker-influenced text. An unescaped
+// double quote in url terminates the href attribute early, which Telegram
+// reports as `can't parse entities: Empty attribute name in the tag "a"` and
+// which rejects the ENTIRE message, not just the link (issue #262).
 func explorerLink(url, label string) string {
 	if url == "" {
-		return label
+		return html(label)
 	}
-	return fmt.Sprintf(`<a href="%s">%s</a>`, url, label)
+	return fmt.Sprintf(`<a href="%s">%s</a>`, html(url), html(label))
 }
 
 // --- abbreviation helpers ---
