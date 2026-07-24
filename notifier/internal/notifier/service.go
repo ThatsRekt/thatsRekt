@@ -32,14 +32,20 @@
 // fails its plain-text fallback) may burn the budget.
 //
 // The budget — and the give-up flag itself — is scoped to a fingerprint of
-// the post's on-chain content, not the bare post id (blocker 2; see
-// contentFingerprint and store.Store.IsPublishGivenUp). If the content later
-// changes (an amendment, or a notifier deploy that changes how the post
-// renders), the fingerprint changes too and the post gets a fresh budget
-// automatically — give-up self-heals rather than permanently tombstoning the
-// post. This is what the actual ethereum-38 incident needed: it was fixed by
-// deploying PRs #263/#264, and under a bare-post-id give-up scheme that fix
-// would never have reached the channel.
+// the post's ON-CHAIN content, not the bare post id (blocker 2; see
+// contentFingerprint and store.Store.IsPublishGivenUp). If that content later
+// changes — an on-chain AMENDMENT, which bumps ActionCount/LastUpdatedAt —
+// the fingerprint changes too and the post gets a fresh budget automatically:
+// give-up self-heals rather than permanently tombstoning the post.
+//
+// A notifier CODE deploy that changes how a post renders (e.g. a fix to
+// FormatPostMessage) does NOT change the fingerprint — ActionCount and
+// LastUpdatedAt are on-chain data, unaffected by what binary is running. A
+// post given up on before such a deploy stays given up after it. The actual
+// ethereum-38 incident was fixed by deploying PRs #263/#264 — a rendering
+// fix, not an on-chain amendment — so under THIS scheme it would still need
+// the operator to run cmd/clear-given-up post-deploy; it would not have
+// un-suppressed itself. See cmd/clear-given-up for that recovery path.
 //
 // N = 5 justification: at the default 10 s poll interval, five non-transient
 // attempts give ~50 s before giving up on genuinely unfixable-by-retry
@@ -519,9 +525,11 @@ func (s *Service) publishWithFallback(ctx context.Context, p graphql.Post) (tran
 //     maxPublishAttempts budget and mutate no store state at all — they are
 //     logged at WARN and retried on the next poll with a clean slate;
 //   - non-transient failures increment the attempt counter, scoped to fp (a
-//     fingerprint of the on-chain content currently being published) so an
-//     amendment or a rendering-fixing deploy gets a fresh budget rather than
-//     inheriting a prior failure count for content that no longer exists;
+//     fingerprint of the ON-CHAIN content currently being published) so an
+//     amendment gets a fresh budget rather than inheriting a prior failure
+//     count for content that no longer exists. A rendering-fixing notifier
+//     deploy does NOT change fp (fp is on-chain data) — see cmd/clear-given-up
+//     for that recovery path;
 //   - crossing maxPublishAttempts marks the post given-up, scoped to the
 //     same fingerprint (self-healing give-up).
 //

@@ -2,16 +2,23 @@
 // notifier's permanent-give-up state for a specific post (issue #262 review,
 // PR #265 blocker 2).
 //
-// Why this exists despite give-up being self-healing: give-up is scoped to a
-// fingerprint of the on-chain content (see notifier.contentFingerprint). If
-// the content changes — an amendment, or a notifier deploy that changes
-// rendering — the next poll computes a different fingerprint and retries
-// automatically; no operator action needed. This tool is for the OTHER
-// case: the content is fine, but publishing keeps failing for a reason
-// unrelated to content (e.g. the bot lost admin rights in the channel, or
-// was temporarily removed). Once that external condition is fixed, use this
-// tool to clear the give-up flag and the failed-attempt counter so the next
-// poll retries with a fresh budget — without hand-editing state.json.
+// Why this exists despite give-up self-healing on content change: give-up is
+// scoped to a fingerprint of the ON-CHAIN content (see
+// notifier.contentFingerprint — ActionCount@LastUpdatedAt). If that content
+// changes — an on-chain AMENDMENT — the next poll computes a different
+// fingerprint and retries automatically; no operator action needed.
+//
+// The fingerprint does NOT change on a notifier CODE deploy, because it is
+// on-chain data, not derived from the rendered output. A deploy that fixes a
+// rendering bug (e.g. #263/#264) does NOT un-suppress a post that was
+// already given up — the on-chain content, and therefore the fingerprint,
+// is unchanged. This tool is for exactly that case, and for the other case
+// where content is fine but publishing keeps failing for a reason unrelated
+// to content (e.g. the bot lost admin rights in the channel, or was
+// temporarily removed). Once the underlying cause (a bad render, or an
+// external condition) is fixed, use this tool to clear the give-up flag and
+// the failed-attempt counter so the next poll retries with a fresh budget —
+// without hand-editing state.json.
 //
 // # CRITICAL SAFETY REQUIREMENT: STOP THE NOTIFIER BEFORE PATCHING STATE
 //

@@ -52,12 +52,15 @@ type State struct {
 	// GivenUpPosts maps a composite post ID to the content fingerprint the
 	// notifier permanently gave up publishing after exhausting all retry
 	// attempts (see maxPublishAttempts in service.go). Keyed on fingerprint,
-	// not just post ID (issue #262 review, PR #265 blocker 2): an amendment
-	// or a rendering-fixing deploy changes the fingerprint, so
+	// not just post ID (issue #262 review, PR #265 blocker 2): an ON-CHAIN
+	// AMENDMENT (bumps ActionCount/LastUpdatedAt) changes the fingerprint, so
 	// Store.IsPublishGivenUp only returns true when the CURRENT content
-	// matches what was actually given up on — give-up is self-healing, not a
-	// permanent tombstone. Persisted so a restart does not re-enter the retry
-	// loop for content that is still failing.
+	// matches what was actually given up on — give-up self-heals on content
+	// change rather than permanently tombstoning the post. A notifier CODE
+	// deploy that changes rendering does NOT change the fingerprint (it is
+	// on-chain data) and does NOT self-heal a give-up — see cmd/clear-given-up
+	// for that recovery path. Persisted so a restart does not re-enter the
+	// retry loop for content that is still failing.
 	GivenUpPosts map[string]string `json:"givenUpPosts,omitempty"`
 }
 
@@ -67,10 +70,11 @@ type PublishAttemptState struct {
 	// Fingerprint identifies the on-chain content (see
 	// notifier.contentFingerprint) that Attempts is counting failures for.
 	// When a poll computes a different fingerprint for the same post id — an
-	// on-chain amendment, or a notifier deploy that changes rendering — the
-	// previous failure history does not apply to the new content and
+	// ON-CHAIN AMENDMENT (bumps ActionCount/LastUpdatedAt) — the previous
+	// failure history does not apply to the new content and
 	// Store.RecordPublishFailure resets Attempts rather than carrying it
-	// forward.
+	// forward. A notifier CODE deploy that changes rendering does NOT change
+	// this fingerprint (it is on-chain data, deploy-independent).
 	Fingerprint string `json:"fingerprint"`
 	// Attempts counts only NON-TRANSIENT failures (issue #262 review, PR
 	// #265 blocker 1). A Telegram/network blip must never consume this
@@ -410,10 +414,11 @@ func (s *Store) PostState(postID string) (PostState, bool) {
 // permanently discard an alert).
 //
 // A fingerprint change resets Attempts to reflect only this call: prior
-// failure history belonged to content that no longer exists (an amendment,
-// or a rendering-affecting deploy) and must not carry forward. This, plus
-// the equivalent scoping in IsPublishGivenUp, is what makes give-up
-// self-healing (blocker 2) instead of a permanent tombstone.
+// failure history belonged to content that no longer exists (an ON-CHAIN
+// AMENDMENT — the fingerprint is on-chain data, not affected by a notifier
+// code deploy) and must not carry forward. This, plus the equivalent scoping
+// in IsPublishGivenUp, is what makes give-up self-heal on content change
+// (blocker 2) instead of permanently tombstoning the post.
 func (s *Store) RecordPublishFailure(postID, fingerprint string, countsTowardBudget bool) PublishAttemptState {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -454,16 +459,24 @@ func (s *Store) MarkPublishGivenUp(postID, fingerprint string) {
 }
 
 // IsPublishGivenUp reports whether the notifier has permanently given up
-// publishing postID's content AS IT CURRENTLY RENDERS. Give-up is scoped to
-// the content fingerprint that failed, not the bare post id (issue #262
-// review, PR #265 blocker 2): if fingerprint differs from what was given up
-// on — an on-chain amendment changed ActionCount/LastUpdatedAt, or a
-// notifier deploy changed how the post renders — this returns false and the
-// post gets a fresh retry budget. This is what makes give-up self-healing:
-// the actual remediation that fixed the ethereum-38 incident (deploying
-// PRs #263/#264, which changed rendering) would have un-suppressed the post
-// automatically under this scheme, rather than requiring the (non-functional)
-// manual state.json edit described in earlier drafts of this fix.
+// publishing postID's content AS IT CURRENTLY EXISTS ON-CHAIN. Give-up is
+// scoped to the content fingerprint that failed, not the bare post id
+// (issue #262 review, PR #265 blocker 2): if fingerprint differs from what
+// was given up on — an ON-CHAIN AMENDMENT changed ActionCount/LastUpdatedAt
+// — this returns false and the post gets a fresh retry budget. This is what
+// makes give-up self-heal on content change, rather than permanently
+// tombstoning the post.
+//
+// This does NOT cover the case of a notifier CODE deploy that fixes
+// rendering without any on-chain change: the fingerprint is on-chain data
+// (ActionCount@LastUpdatedAt) and is unaffected by which binary is running,
+// so a post given up on before such a deploy stays given up after it. The
+// actual ethereum-38 incident was fixed by deploying PRs #263/#264 — a
+// rendering fix, not an on-chain amendment — so under this scheme it would
+// still require the operator to run cmd/clear-given-up post-deploy; it would
+// NOT have un-suppressed itself. See cmd/clear-given-up for that recovery
+// path (a working replacement for the non-functional manual state.json edit
+// described in earlier drafts of this fix).
 //
 // Returns false for postIDs never given up (so the first publish attempt
 // always proceeds).
