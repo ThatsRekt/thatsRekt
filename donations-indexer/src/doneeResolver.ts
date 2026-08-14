@@ -1,28 +1,29 @@
 /**
- * doneeResolver — resolve the current thatsrekt.eth donation address
- * from ENS AddrChanged logs on Ethereum mainnet.
+ * doneeResolver — resolve the current thatsrekt.eth donation address from ENS
+ * on Ethereum mainnet.
  *
- * Design:
- * - Uses a single `eth_getLogs` call (raw fetch JSON-RPC, no new dependency).
- * - Filter is resolver-agnostic (no `address` filter) — works across resolver upgrades.
- * - Topics: [AddrChanged topic0, namehash(thatsrekt.eth)]
- * - The highest-block log is taken as the current mapping.
- * - Data word (32 bytes): last 20 bytes = address (left-padded).
- * - Zero address or cleared name → null; caller falls back to seed.
- * - Any failure (RPC error, network, malformed response, no logs) → loud
- *   console.warn + return fallback. Never throws. Never returns 0x0.
+ * Resolution makes two dependent raw JSON-RPC eth_calls at latest:
+ * 1. ENS Registry resolver(bytes32) to locate the current resolver.
+ * 2. That resolver's addr(bytes32) to locate the current donee.
  *
- * History:
- * - Block 24952292: jerry's wallet (0x9e8680db…1b385df)
- * - Block 25031705: governance safe (0x59e4dbc9…340679)
+ * Any failure logs a warning and returns the lowercased seed donee.
  */
 
 /**
- * keccak256("AddrChanged(bytes32,address)")
- * Computed with: cast keccak "AddrChanged(bytes32,address)"
+ * The canonical Ethereum mainnet ENS Registry.
  */
-export const ADDRCHANGED_TOPIC0 =
-  '0x52d7d861f09ab3d26239d492e8968629f95e9e318cf0b73bfddc441522a15fd2'
+export const ENS_REGISTRY_ADDRESS =
+  '0x00000000000c2e074ec69a0dfb2997ba6c7d2e1e'
+
+/**
+ * selector for resolver(bytes32)
+ */
+export const ENS_REGISTRY_RESOLVER_SELECTOR = '0x0178b8bf'
+
+/**
+ * selector for addr(bytes32)
+ */
+export const ENS_RESOLVER_ADDR_SELECTOR = '0x3b3b57de'
 
 /**
  * namehash("thatsrekt.eth")
@@ -32,80 +33,34 @@ export const THATSREKT_ENS_NAMEHASH =
   '0x6dfbf6357dc05b7c231e63a0fd428fd2138b381eb15bfbd6bc51705ca4117726'
 
 /**
- * The Ethereum mainnet block from which to start scanning for AddrChanged logs.
- * Chosen before the first known thatsrekt.eth AddrChanged event (block 24952292).
+ * Encodes a bytes32 ENS namehash argument after a four-byte function selector.
  */
-export const ENS_HISTORY_FROM_BLOCK = 24_900_000
-
-// ---------------------------------------------------------------------------
-// Pure functions — unit-testable without any I/O
-// ---------------------------------------------------------------------------
-
-/**
- * Extract a lowercased 0x-prefixed Ethereum address from an AddrChanged `data`
- * word (a 32-byte value, hex-encoded without 0x prefix, 64 hex chars).
- *
- * The address is left-padded to 32 bytes, so the address lives in the last 20
- * bytes (40 hex chars) of the 64-char string.
- *
- * Returns null for:
- * - Malformed data (length !== 64)
- * - Zero address (0x000...000) — indicates a cleared ENS record
- */
-export function addressFromAddrChangedData(data: string): string | null {
-  const hex = data.startsWith('0x') ? data.slice(2) : data
-  if (hex.length !== 64) return null
-
-  const addrHex = hex.slice(24) // last 40 chars = last 20 bytes
-  const addr = '0x' + addrHex.toLowerCase()
-
-  // Zero address = cleared record
-  if (addr === '0x0000000000000000000000000000000000000000') return null
-
-  return addr
+export function encodeNamehashCallData(
+  selector: string,
+  namehash: string,
+): string {
+  return selector + namehash.slice(2)
 }
 
 /**
- * From a list of AddrChanged logs, return the address in the log at the
- * highest block number.
+ * Decodes an ABI-encoded address return word.
  *
- * blockNumber may be a numeric decimal string (hex-string "0x..." or plain
- * number). Hex strings are parsed with parseInt(x, 16).
- *
- * Returns null if:
- * - logs is empty
- * - the address in the highest-block log is zero / malformed
+ * An address return must be an exact 0x-prefixed 32-byte hexadecimal word with
+ * twelve zero padding bytes. Zero addresses and malformed words are rejected.
  */
-export function latestDoneeFromLogs(
-  logs: ReadonlyArray<{ blockNumber: string | number; data: string }>,
-): string | null {
-  if (logs.length === 0) return null
-
-  const parseBlockNumber = (bn: string | number): number => {
-    if (typeof bn === 'number') return bn
-    if (bn.startsWith('0x') || bn.startsWith('0X')) return parseInt(bn, 16)
-    return parseInt(bn, 10)
+export function addressFromAbiAddressWord(result: unknown): string | null {
+  if (
+    typeof result !== 'string' ||
+    !/^0x[0-9a-fA-F]{64}$/.test(result) ||
+    !/^0{24}$/.test(result.slice(2, 26))
+  ) {
+    return null
   }
 
-  let best: { blockNumber: number; data: string } | null = null
-  for (const log of logs) {
-    const bn = parseBlockNumber(log.blockNumber)
-    if (best === null || bn > best.blockNumber) {
-      best = { blockNumber: bn, data: log.data }
-    }
-  }
-
-  if (best === null) return null
-  return addressFromAddrChangedData(best.data)
-}
-
-// ---------------------------------------------------------------------------
-// RPC-backed resolver
-// ---------------------------------------------------------------------------
-
-interface AddrChangedLog {
-  readonly blockNumber: string
-  readonly data: string
+  const address = '0x' + result.slice(26).toLowerCase()
+  return address === '0x0000000000000000000000000000000000000000'
+    ? null
+    : address
 }
 
 interface RpcResponse {
@@ -113,31 +68,57 @@ interface RpcResponse {
   readonly error?: { message: string }
 }
 
+async function ethCall({
+  rpcUrl,
+  to,
+  data,
+}: {
+  rpcUrl: string
+  to: string
+  data: string
+}): Promise<unknown> {
+  const response = await fetch(rpcUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'eth_call',
+      params: [{ to, data }, 'latest'],
+    }),
+  })
+
+  if (!response.ok) {
+    throw new Error(`RPC HTTP ${response.status} ${response.statusText}`)
+  }
+
+  const json = (await response.json()) as RpcResponse
+  if (json.error) {
+    throw new Error(`RPC error: ${json.error.message}`)
+  }
+
+  return json.result
+}
+
 /**
- * Resolve the current thatsrekt.eth address from ENS AddrChanged logs.
+ * Resolve the current thatsrekt.eth address from ENS.
  *
  * Defensive contract:
- * - Any failure (missing rpcUrl, RPC error, network error, no logs, zero addr)
- *   logs a loud console.warn and returns `fallback.toLowerCase()`.
+ * - Any failure (missing rpcUrl, RPC error, network error, malformed result,
+ *   zero resolver, zero donee) logs a warning and returns
+ *   `fallback.toLowerCase()`.
  * - Never throws.
  * - Never returns the zero address.
  * - Logs (info level) if the resolved donee differs from the fallback.
- *
- * @param rpcUrl     Ethereum mainnet JSON-RPC URL.
- * @param fallback   Seed donee address — returned on any failure path.
- * @param namehash   ENS namehash for thatsrekt.eth (default: THATSREKT_ENS_NAMEHASH).
- * @param fromBlock  Earliest block to scan (default: ENS_HISTORY_FROM_BLOCK).
  */
 export async function resolveCurrentDonee({
   rpcUrl,
   fallback,
   namehash = THATSREKT_ENS_NAMEHASH,
-  fromBlock = ENS_HISTORY_FROM_BLOCK,
 }: {
   rpcUrl: string
   fallback: string
   namehash?: string
-  fromBlock?: number
 }): Promise<string> {
   const fallbackAddr = fallback.toLowerCase()
 
@@ -150,60 +131,33 @@ export async function resolveCurrentDonee({
   }
 
   try {
-    const body = JSON.stringify({
-      jsonrpc: '2.0',
-      id: 1,
-      method: 'eth_getLogs',
-      params: [
-        {
-          fromBlock: '0x' + fromBlock.toString(16),
-          toBlock: 'latest',
-          topics: [ADDRCHANGED_TOPIC0, namehash],
-          // No `address` filter — resolver-agnostic (works across resolver upgrades)
-        },
-      ],
-    })
+    const resolver = addressFromAbiAddressWord(
+      await ethCall({
+        rpcUrl,
+        to: ENS_REGISTRY_ADDRESS,
+        data: encodeNamehashCallData(ENS_REGISTRY_RESOLVER_SELECTOR, namehash),
+      }),
+    )
 
-    const response = await fetch(rpcUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body,
-    })
-
-    if (!response.ok) {
+    if (resolver === null) {
       console.warn(
-        `[doneeResolver] RPC HTTP ${response.status} ${response.statusText} — using seed donee:`,
+        '[doneeResolver] No valid ENS resolver found — using seed donee:',
         fallbackAddr,
       )
       return fallbackAddr
     }
 
-    const json = (await response.json()) as RpcResponse
-
-    if (json.error) {
-      console.warn(
-        '[doneeResolver] RPC error:',
-        json.error.message,
-        '— using seed donee:',
-        fallbackAddr,
-      )
-      return fallbackAddr
-    }
-
-    if (!Array.isArray(json.result)) {
-      console.warn(
-        '[doneeResolver] Unexpected RPC result (not an array) — using seed donee:',
-        fallbackAddr,
-      )
-      return fallbackAddr
-    }
-
-    const logs = json.result as AddrChangedLog[]
-    const resolved = latestDoneeFromLogs(logs)
+    const resolved = addressFromAbiAddressWord(
+      await ethCall({
+        rpcUrl,
+        to: resolver,
+        data: encodeNamehashCallData(ENS_RESOLVER_ADDR_SELECTOR, namehash),
+      }),
+    )
 
     if (resolved === null) {
       console.warn(
-        '[doneeResolver] No valid AddrChanged logs found (empty or zero addr) — using seed donee:',
+        '[doneeResolver] No valid ENS donee found — using seed donee:',
         fallbackAddr,
       )
       return fallbackAddr

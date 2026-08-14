@@ -16,8 +16,7 @@
  * Slice #207: ERC20 Transfer log subscriptions added.
  * Slice #209: Multi-chain parameterization. Per-chain cursor isolation.
  *             Base, Arbitrum, Optimism, BSC, Polygon added.
- * Slice #222: Dynamic ENS donee resolution via AddrChanged logs (mainnet).
- *             Stop-at-head: bounded range → processor exits 0 after run.
+ * Slice #222: Dynamic ENS donee resolution from current mainnet state.
  *             DONEE_OVERRIDE env: deterministic donee for tests / ops.
  */
 
@@ -73,7 +72,7 @@ const RPC_URL = requireEnv(rpcEnvKey)
 const DB_URL = requireEnv('DONATIONS_DB_URL')
 
 // The thatsrekt.eth Safe — canonical seed donee address on every supported chain.
-// Resolved dynamically from ENS AddrChanged logs at startup; falls back to this.
+// Resolved dynamically from current ENS state at startup; falls back to this.
 // DONEE_OVERRIDE bypasses ENS resolution entirely (tests / ops escape hatch).
 const DONEE_SEED = '0x59E4DBc95BD312A882Bb36b7f3E8298682340679'.toLowerCase()
 const ENS_RPC_URL = process.env.ENS_RPC_URL ?? ''
@@ -151,7 +150,7 @@ const fetchHeadHeight = async (rpcUrl: string): Promise<number> => {
 const main = async () => {
   console.log(`[donations-indexer] starting for chain=${CHAIN_SLUG} (id=${CHAIN_ID})`)
 
-  // Resolve the current donee from ENS AddrChanged logs (mainnet).
+  // Resolve the current donee from ENS mainnet state.
   // DONEE_OVERRIDE bypasses ENS — deterministic for tests / ops.
   const donee = DONEE_OVERRIDE?.toLowerCase() ??
     (await resolveCurrentDonee({ rpcUrl: ENS_RPC_URL, fallback: DONEE_SEED }))
