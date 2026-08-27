@@ -4,14 +4,14 @@ TypeScript indexer of `thatsRekt` contract events. Each configured chain has its
 
 ## Stack
 
-- **Indexer:** [Subsquid](https://docs.sqd.ai/) Squid SDK (`@subsquid/evm-processor` + `@subsquid/typeorm-store`)
+- **Processor:** Portal batches (`@subsquid/batch-processor` + `@subsquid/evm-stream`) for Production Chains; explicit RPC only for Local Anvil Forks and testnets.
 - **Storage:** Postgres (managed via TypeORM)
 - **API:** GraphQL via `@subsquid/graphql-server` (auto-generated from `schema.graphql`)
 - **Language:** TypeScript
 
 ## Prereqs
 
-- Node.js ≥ 20
+- Node.js ≥ 22
 - pnpm ≥ 10
 - Docker (for the local Postgres dev container)
 
@@ -21,7 +21,7 @@ One Postgres process hosts isolated logical databases for the Compose chain serv
 
 ```bash
 cp .env.example .env
-$EDITOR .env  # fill in RPC, contract, and start-block variables for services to run
+$EDITOR .env  # set contracts/start blocks and Portal configuration for Production Chains
 docker compose up -d --build
 ```
 
@@ -79,6 +79,29 @@ pnpm serve                 # another — http://localhost:4350/graphql
 The required `CHAIN` environment variable selects one registry processor instance. [`src/chains.ts`](./src/chains.ts) is the source of truth for all supported slugs, chain IDs, source configuration, finality settings, and chain-specific environment variable names.
 
 `CHAIN` accepts `anvil-eth`, `anvil-base`, `sepolia`, `ethereum`, `base`, `base-sepolia`, `optimism`, `arbitrum`, `bsc`, or `polygon`; invalid or absent values fail fast. Only the selected chain's configuration is required at runtime. The six Production Chains are separate processor instances; testnets and Local Anvil Forks remain separate environments.
+
+### Portal configuration
+
+The six Production Chains (`ethereum`, `base`, `arbitrum`, `optimism`, `bsc`,
+and `polygon`) use their exact Portal Dataset Endpoint through a generic
+per-container `PORTAL_URL`; the selected dataset is appended at runtime.
+`PORTAL_API_KEY` is optional and is sent only as `x-api-key`. Empty or absent
+keys send no authentication header.
+
+Production historical ingestion never falls back to chain RPC or the legacy
+archive gateway. `anvil-eth`, `anvil-base`, `sepolia`, and `base-sepolia` stay
+explicit RPC-only and do not require Portal configuration.
+
+### Deterministic Portal proof
+
+The non-production Base fixture freezes all six comparison heights, checks the
+Moonwell post-5 transaction at block `50,517,211`, and resumes at `50,527,337`
+without duplicating entities or rewinding its durable fixture checkpoint:
+
+```bash
+pnpm build
+pnpm test:portal-integrity
+```
 
 ## Schema
 
@@ -163,7 +186,7 @@ pnpm db:migrate
 
 ## Hosting
 
-Production registry processing is self-hosted as separate chain services, with Mesh as the unified public read surface. Local Compose remains the development workflow. Portal variable names and Node 22 documentation remain deferred until the runtime contract is implemented.
+Production registry processing is self-hosted as separate Node 22 chain services, with Mesh as the unified public read surface. Each Production Chain uses a Portal Dataset Endpoint for historical blocks; Local Anvil Forks and testnets remain explicit RPC-only development paths.
 
 ## Plan
 

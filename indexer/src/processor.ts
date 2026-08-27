@@ -1,25 +1,17 @@
 import 'dotenv/config'
+import { run as runBatchProcessor } from '@subsquid/batch-processor'
+import { augmentBlock } from '@subsquid/evm-objects'
 import {
-  EvmBatchProcessor,
-  EvmBatchProcessorFields,
-  BlockHeader as _BlockHeader,
-  Log as _Log,
-  DataHandlerContext as _DataHandlerContext,
-} from '@subsquid/evm-processor'
-import { Store } from '@subsquid/typeorm-store'
+  DataSourceBuilder,
+  type EVMDataSource,
+  type FieldSelection,
+} from '@subsquid/evm-stream'
+import { createLogger, type Logger } from '@subsquid/logger'
+import { EvmBatchProcessor } from '@subsquid/evm-processor'
+import { type Store, type TypeormDatabase } from '@subsquid/typeorm-store'
 import { events } from './abi/ThatsRekt'
 import type { ChainConfig } from './chains'
-
-/**
- * Build a Subsquid processor configured for a single chain.
- *
- * The chain registry (chains.ts) is the single source of truth for
- * chain-specific config; env vars (named in the registry entry) supply
- * the runtime values — RPC URL, contract address, start block.
- *
- * Adding a new chain: add an entry to chains.ts and supply matching env
- * vars. No changes here are required.
- */
+import { buildPortalConfig } from './portal'
 
 const requireEnv = (key: string): string => {
   const value = process.env[key]
@@ -42,46 +34,87 @@ const SUBSCRIBED_TOPICS = [
 ] as const
 
 const LOG_FIELDS = {
+  block: {
+    timestamp: true,
+  },
   log: {
+    address: true,
     topics: true,
     data: true,
     transactionHash: true,
   },
-} as const
+} as const satisfies FieldSelection
 
-// Probe used purely for type derivation. Every built processor has the same
-// .setFields() shape (LOG_FIELDS above), so the Fields / Log / ProcessorContext
-// types are identical across chains and can be derived from one canonical
-// instance. Handlers import these and stay chain-agnostic.
-const _typingProbe = new EvmBatchProcessor().setFields(LOG_FIELDS)
+type ConfiguredRpcProcessor = EvmBatchProcessor<typeof LOG_FIELDS>
 
-export type ConfiguredProcessor = typeof _typingProbe
-export type Fields = EvmBatchProcessorFields<ConfiguredProcessor>
-export type BlockHeader = _BlockHeader<Fields>
-export type Log = _Log<Fields>
-export type ProcessorContext = _DataHandlerContext<Store, Fields>
-
-export interface BuiltProcessor {
-  readonly chain: ChainConfig
-  /** Lowercased proxy address — compare with `lc(log.address)` in handlers. */
-  readonly contractAddress: string
-  readonly processor: ConfiguredProcessor
+export type Log = {
+  readonly address: string
+  readonly topics: string[]
+  readonly data: string
+  readonly transactionHash: string
+  readonly logIndex: number
+  readonly block: {
+    readonly height: number
+    readonly timestamp: number
+  }
 }
 
-export const buildProcessor = (chain: ChainConfig): BuiltProcessor => {
-  const contractAddress = requireEnv(chain.contractEnvVar).toLowerCase()
-  const startBlockRaw = requireEnv(chain.startBlockEnvVar)
-  const startBlock = parseInt(startBlockRaw, 10)
-  if (Number.isNaN(startBlock) || startBlock < 0) {
+type ProcessorBlock = {
+  readonly logs: readonly Log[]
+}
+
+export interface ProcessorContext {
+  readonly log: Logger
+  readonly store: Store
+  readonly blocks: readonly ProcessorBlock[]
+}
+
+type ProcessorHandler = (context: ProcessorContext) => Promise<void>
+
+export interface BuiltRpcProcessor {
+  readonly kind: 'rpc'
+  readonly chain: ChainConfig
+  readonly contractAddress: string
+  readonly processor: ConfiguredRpcProcessor
+}
+
+export interface BuiltPortalProcessor {
+  readonly kind: 'portal'
+  readonly chain: ChainConfig
+  readonly contractAddress: string
+  readonly dataSource: EVMDataSource<typeof LOG_FIELDS>
+}
+
+export type BuiltProcessor = BuiltRpcProcessor | BuiltPortalProcessor
+
+const parseStartBlock = (chain: ChainConfig): number => {
+  const value = requireEnv(chain.startBlockEnvVar)
+  const startBlock = Number.parseInt(value, 10)
+  if (!Number.isInteger(startBlock) || startBlock < 0) {
     throw new Error(
-      `Invalid ${chain.startBlockEnvVar}: "${startBlockRaw}" (expected non-negative integer)`,
+      `Invalid ${chain.startBlockEnvVar}: expected non-negative integer`,
     )
   }
+  return startBlock
+}
 
-  const base = new EvmBatchProcessor()
+const buildRpcProcessor = ({
+  chain,
+  contractAddress,
+  startBlock,
+}: {
+  readonly chain: ChainConfig
+  readonly contractAddress: string
+  readonly startBlock: number
+}): BuiltRpcProcessor => {
+  if (chain.source.kind !== 'rpc') {
+    throw new Error('Portal chain cannot be built as RPC-only')
+  }
+
+  const processor = new EvmBatchProcessor()
     .setRpcEndpoint({
-      url: requireEnv(chain.rpcEnvVar),
-      rateLimit: chain.rpcRateLimit,
+      url: requireEnv(chain.source.rpcEnvVar),
+      rateLimit: chain.source.rpcRateLimit,
     })
     .setFinalityConfirmation(chain.finalityConfirmation)
     .setFields(LOG_FIELDS)
@@ -92,25 +125,84 @@ export const buildProcessor = (chain: ChainConfig): BuiltProcessor => {
       transaction: false,
     })
 
-  // Subsquid Network archive — present for real chains, null for local
-  // Anvil (no archive exists). Without a gateway the processor falls back
-  // to RPC-only sync, which is fine at local-fork volumes.
-  const withGateway: ConfiguredProcessor =
-    chain.gateway !== null ? base.setGateway(chain.gateway) : base
+  return {
+    kind: 'rpc',
+    chain,
+    contractAddress,
+    processor,
+  }
+}
 
-  // Archive-only chains drop the RPC hot-block tail entirely: the gateway
-  // becomes the sole data source and per-block `eth_getBlockByNumber` traffic
-  // goes to zero. `setRpcEndpoint` above is deliberately left in place so the
-  // toggle is reversible from config alone, with no deployment change.
-  //
-  // Guarded, not assumed: the processor throws at boot if RPC ingestion is
-  // disabled without a gateway. `chains.ts` forbids that combination and
-  // test/rpcIngestion.test.ts enforces it, but re-checking `gateway` here
-  // keeps this call site correct on its own terms.
-  const processor: ConfiguredProcessor =
-    chain.gateway !== null && !chain.rpcIngestion
-      ? withGateway.setRpcDataIngestionSettings({ disabled: true })
-      : withGateway
+const buildPortalProcessor = ({
+  chain,
+  contractAddress,
+  startBlock,
+}: {
+  readonly chain: ChainConfig
+  readonly contractAddress: string
+  readonly startBlock: number
+}): BuiltPortalProcessor => {
+  if (chain.source.kind !== 'portal') {
+    throw new Error('RPC-only chain cannot be built as a Portal source')
+  }
 
-  return { chain, contractAddress, processor }
+  const portal = buildPortalConfig({
+    source: chain.source,
+    environment: process.env,
+  })
+  const dataSource = new DataSourceBuilder()
+    .setPortal({
+      url: portal.url,
+      http: portal.http,
+    })
+    .setFields(LOG_FIELDS)
+    .setBlockRange({ from: startBlock })
+    .includeAllBlocks({ from: startBlock })
+    .addLog({
+      where: {
+        address: [contractAddress],
+        topic0: [...SUBSCRIBED_TOPICS],
+      },
+    })
+    .build()
+
+  return {
+    kind: 'portal',
+    chain,
+    contractAddress,
+    dataSource,
+  }
+}
+
+export const buildProcessor = (chain: ChainConfig): BuiltProcessor => {
+  const contractAddress = requireEnv(chain.contractEnvVar).toLowerCase()
+  const startBlock = parseStartBlock(chain)
+
+  return chain.source.kind === 'portal'
+    ? buildPortalProcessor({ chain, contractAddress, startBlock })
+    : buildRpcProcessor({ chain, contractAddress, startBlock })
+}
+
+export const runProcessor = ({
+  built,
+  database,
+  handler,
+}: {
+  readonly built: BuiltProcessor
+  readonly database: TypeormDatabase
+  readonly handler: ProcessorHandler
+}): void => {
+  if (built.kind === 'rpc') {
+    built.processor.run(database, handler)
+    return
+  }
+
+  const logger = createLogger('thatsrekt:registry-portal')
+  runBatchProcessor(built.dataSource, database, async (context) =>
+    handler({
+      log: logger,
+      store: context.store,
+      blocks: context.blocks.map(augmentBlock),
+    }),
+  )
 }

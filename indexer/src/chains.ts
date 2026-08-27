@@ -1,29 +1,9 @@
 /**
- * Backend chain registry — single source of truth for chain-specific
- * config used by the Subsquid processor.
+ * Registry Indexer chain registry.
  *
- * Two flavors of chain entry:
- *   - Real chains:  `sepolia` (EIP-155 11155111), `base` (8453),
- *     `optimism` (10), `bsc` (56), `polygon` (137). Use Subsquid Network
- *     archive gateways + routeme.sh RPCs.
- *   - Local Anvil forks: `anvil-eth` (chainId 31337), `anvil-base`
- *     (chainId 31338). RPC-only mode (no archive gateway). Forked
- *     against real chain state via `--fork-url`. Distinct chain ids
- *     so the indexer doesn't conflate them with their real counterparts
- *     OR with each other.
- *
- * Running both anvil forks at once is the local cross-chain testbed —
- * deploy thatsRekt to both via DeployDev (same EOA → same CREATE2
- * proxy address), index both, and the unified Mesh feed renders posts
- * from both as if they were independent chains.
- *
- * Adding a new chain:
- *   1. Add an entry to CHAINS below.
- *   2. Supply the matching env vars in .env (RPC URL, contract address,
- *      start block — names are declared in the entry).
- *   3. Mirror in mesh/src/chains.ts and frontend/src/lib/chains.ts.
- *
- * keep in sync with mesh/src/chains.ts and frontend/src/lib/chains.ts.
+ * A Production Chain reads historical events from its matching Portal Dataset
+ * Endpoint. Local Anvil Forks and public testnets are deliberately explicit
+ * RPC-only paths; they never require Portal configuration.
  */
 
 export type ChainSlug =
@@ -38,184 +18,163 @@ export type ChainSlug =
   | 'bsc'
   | 'polygon'
 
+export type PortalDataset =
+  | 'ethereum-mainnet'
+  | 'base-mainnet'
+  | 'arbitrum-one'
+  | 'optimism-mainnet'
+  | 'binance-mainnet'
+  | 'polygon-mainnet'
+
+export interface PortalSource {
+  readonly kind: 'portal'
+  readonly dataset: PortalDataset
+}
+
+export interface RpcSource {
+  readonly kind: 'rpc'
+  readonly rpcEnvVar: string
+  readonly rpcRateLimit: number
+}
+
+export type ChainSource = PortalSource | RpcSource
+
 export interface ChainConfig {
   /** EIP-155 chain id. */
   readonly chainId: number
-  /** Human-readable slug — used for display, env var prefixing, and Mesh keys. */
+  /** Human-readable slug — used for display, environment, and Mesh keys. */
   readonly slug: ChainSlug
   /** Display name. */
   readonly name: string
-  /**
-   * Subsquid Network archive gateway URL. `null` for chains without an
-   * archive (e.g. local Anvil) — processor falls back to RPC-only mode.
-   */
-  readonly gateway: string | null
-  /** Env var that holds the RPC HTTP URL for this chain. */
-  readonly rpcEnvVar: string
+  /** Historical ingestion source selected for this chain. */
+  readonly source: ChainSource
   /** Env var that holds the deployed proxy address. */
   readonly contractEnvVar: string
   /** Env var that holds the deploy block (first block to index). */
   readonly startBlockEnvVar: string
-  /**
-   * Number of confirmations to consider a block finalized. `0` is fine for
-   * local Anvil (single-node, no reorgs); use higher values on real chains.
-   */
+  /** Confirmation depth retained for explicit RPC-only development paths. */
   readonly finalityConfirmation: number
-  /** Subsquid RPC rate limit (req/s). */
-  readonly rpcRateLimit: number
-  /**
-   * Whether to ingest hot (unfinalized) blocks over RPC in real time.
-   *
-   * `true`  — processor follows the chain head over RPC. Real-time, but costs
-   *           one `eth_getBlockByNumber` per block produced, forever.
-   * `false` — archive-only. The Subsquid gateway is the sole data source, so
-   *           RPC cost drops to zero at the price of trailing chain head
-   *           (measured 2026-07-20: ~25m on polygon to ~2.5h worst case on
-   *           arbitrum, since archives publish in large infrequent batches).
-   *
-   * Only mainnet earns real-time: it holds 38 of the registry's 58 lifetime
-   * posts for 3% of RPC spend, while arbitrum holds 4 posts for 50%.
-   *
-   * MUST be `true` when `gateway` is `null` — the processor throws
-   * "Subsquid Archive is required when RPC data ingestion is disabled"
-   * at boot otherwise. Enforced by test/rpcIngestion.test.ts.
-   */
-  readonly rpcIngestion: boolean
 }
+
+const rpcSource = ({
+  rpcEnvVar,
+  rpcRateLimit,
+}: {
+  readonly rpcEnvVar: string
+  readonly rpcRateLimit: number
+}): RpcSource => Object.freeze({
+  kind: 'rpc',
+  rpcEnvVar,
+  rpcRateLimit,
+})
+
+const portalSource = (dataset: PortalDataset): PortalSource => Object.freeze({
+  kind: 'portal',
+  dataset,
+})
 
 export const CHAINS: Readonly<Record<ChainSlug, ChainConfig>> = Object.freeze({
   'anvil-eth': {
     chainId: 31337,
     slug: 'anvil-eth',
     name: 'Anvil — Ethereum mainnet fork',
-    gateway: null,
-    rpcEnvVar: 'RPC_ANVIL_ETH_HTTP',
+    source: rpcSource({
+      rpcEnvVar: 'RPC_ANVIL_ETH_HTTP',
+      rpcRateLimit: 50,
+    }),
     contractEnvVar: 'CONTRACT_ANVIL_ETH',
     startBlockEnvVar: 'START_BLOCK_ANVIL_ETH',
     finalityConfirmation: 0,
-    rpcRateLimit: 50,
-    rpcIngestion: true,
   },
   'anvil-base': {
     chainId: 31338,
     slug: 'anvil-base',
     name: 'Anvil — Base fork',
-    gateway: null,
-    rpcEnvVar: 'RPC_ANVIL_BASE_HTTP',
+    source: rpcSource({
+      rpcEnvVar: 'RPC_ANVIL_BASE_HTTP',
+      rpcRateLimit: 50,
+    }),
     contractEnvVar: 'CONTRACT_ANVIL_BASE',
     startBlockEnvVar: 'START_BLOCK_ANVIL_BASE',
     finalityConfirmation: 0,
-    rpcRateLimit: 50,
-    rpcIngestion: true,
   },
   sepolia: {
     chainId: 11155111,
     slug: 'sepolia',
     name: 'Ethereum Sepolia',
-    gateway: 'https://v2.archive.subsquid.io/network/ethereum-sepolia',
-    rpcEnvVar: 'RPC_SEPOLIA_HTTP',
+    source: rpcSource({
+      rpcEnvVar: 'RPC_SEPOLIA_HTTP',
+      rpcRateLimit: 10,
+    }),
     contractEnvVar: 'CONTRACT_SEPOLIA',
     startBlockEnvVar: 'START_BLOCK_SEPOLIA',
     finalityConfirmation: 32,
-    rpcRateLimit: 10,
-    rpcIngestion: false,
-  },
-  base: {
-    chainId: 8453,
-    slug: 'base',
-    name: 'Base',
-    gateway: 'https://v2.archive.subsquid.io/network/base-mainnet',
-    rpcEnvVar: 'RPC_BASE_HTTP',
-    contractEnvVar: 'CONTRACT_BASE',
-    startBlockEnvVar: 'START_BLOCK_BASE',
-    finalityConfirmation: 75,
-    rpcRateLimit: 10,
-    rpcIngestion: false,
-  },
-  'base-sepolia': {
-    chainId: 84532,
-    slug: 'base-sepolia',
-    name: 'Base Sepolia',
-    gateway: 'https://v2.archive.subsquid.io/network/base-sepolia',
-    rpcEnvVar: 'RPC_BASE_SEPOLIA_HTTP',
-    contractEnvVar: 'CONTRACT_BASE_SEPOLIA',
-    startBlockEnvVar: 'START_BLOCK_BASE_SEPOLIA',
-    finalityConfirmation: 32,
-    rpcRateLimit: 10,
-    rpcIngestion: false,
-  },
-  optimism: {
-    chainId: 10,
-    slug: 'optimism',
-    name: 'Optimism',
-    gateway: 'https://v2.archive.subsquid.io/network/optimism-mainnet',
-    rpcEnvVar: 'RPC_OPTIMISM_HTTP',
-    contractEnvVar: 'CONTRACT_OPTIMISM',
-    startBlockEnvVar: 'START_BLOCK_OPTIMISM',
-    finalityConfirmation: 75,
-    rpcRateLimit: 10,
-    rpcIngestion: false,
   },
   ethereum: {
     chainId: 1,
     slug: 'ethereum',
     name: 'Ethereum',
-    gateway: 'https://v2.archive.subsquid.io/network/ethereum-mainnet',
-    rpcEnvVar: 'RPC_ETHEREUM_HTTP',
+    source: portalSource('ethereum-mainnet'),
     contractEnvVar: 'CONTRACT_ETHEREUM',
     startBlockEnvVar: 'START_BLOCK_ETHEREUM',
     finalityConfirmation: 75,
-    rpcRateLimit: 10,
-    rpcIngestion: true,
+  },
+  base: {
+    chainId: 8453,
+    slug: 'base',
+    name: 'Base',
+    source: portalSource('base-mainnet'),
+    contractEnvVar: 'CONTRACT_BASE',
+    startBlockEnvVar: 'START_BLOCK_BASE',
+    finalityConfirmation: 75,
+  },
+  'base-sepolia': {
+    chainId: 84532,
+    slug: 'base-sepolia',
+    name: 'Base Sepolia',
+    source: rpcSource({
+      rpcEnvVar: 'RPC_BASE_SEPOLIA_HTTP',
+      rpcRateLimit: 10,
+    }),
+    contractEnvVar: 'CONTRACT_BASE_SEPOLIA',
+    startBlockEnvVar: 'START_BLOCK_BASE_SEPOLIA',
+    finalityConfirmation: 32,
+  },
+  optimism: {
+    chainId: 10,
+    slug: 'optimism',
+    name: 'Optimism',
+    source: portalSource('optimism-mainnet'),
+    contractEnvVar: 'CONTRACT_OPTIMISM',
+    startBlockEnvVar: 'START_BLOCK_OPTIMISM',
+    finalityConfirmation: 75,
   },
   arbitrum: {
     chainId: 42161,
     slug: 'arbitrum',
     name: 'Arbitrum One',
-    gateway: 'https://v2.archive.subsquid.io/network/arbitrum-one',
-    rpcEnvVar: 'RPC_ARBITRUM_HTTP',
+    source: portalSource('arbitrum-one'),
     contractEnvVar: 'CONTRACT_ARBITRUM',
     startBlockEnvVar: 'START_BLOCK_ARBITRUM',
     finalityConfirmation: 75,
-    rpcRateLimit: 10,
-    rpcIngestion: false,
   },
   bsc: {
-    // BNB Chain (BSC) — PoSA consensus, ~3s block time, 21-validator set.
-    // thatsRekt canonical proxy deployed at block 101156350.
-    // Subsquid archive: https://v2.archive.subsquid.io/network/binance-mainnet
-    // (slug confirmed live via /height probe; "binance" in archive-registry maps
-    // to "binance-mainnet" in the v2.archive URL namespace).
     chainId: 56,
     slug: 'bsc',
     name: 'BNB Chain',
-    gateway: 'https://v2.archive.subsquid.io/network/binance-mainnet',
-    rpcEnvVar: 'RPC_BSC_HTTP',
+    source: portalSource('binance-mainnet'),
     contractEnvVar: 'CONTRACT_BSC',
     startBlockEnvVar: 'START_BLOCK_BSC',
-    // PoSA BFT finality: blocks are finalized after 2/3+1 validators sign off,
-    // which takes ~15 blocks (~45s). Use 15 for a safe margin.
     finalityConfirmation: 15,
-    rpcRateLimit: 10,
-    rpcIngestion: false,
   },
   polygon: {
-    // Polygon PoS — BOR/Heimdall consensus, ~2s block time, reorgs can run
-    // deeper than BSC due to the checkpoint-based finality model. 100-block
-    // window is the safe industry standard used by major Polygon integrators.
-    // thatsRekt canonical proxy deployed at block 87634893.
-    // Subsquid archive: https://v2.archive.subsquid.io/network/polygon-mainnet
-    // (ArrowSquid tier-1 archive, verified present).
     chainId: 137,
     slug: 'polygon',
     name: 'Polygon',
-    gateway: 'https://v2.archive.subsquid.io/network/polygon-mainnet',
-    rpcEnvVar: 'RPC_POLYGON_HTTP',
+    source: portalSource('polygon-mainnet'),
     contractEnvVar: 'CONTRACT_POLYGON',
     startBlockEnvVar: 'START_BLOCK_POLYGON',
     finalityConfirmation: 100,
-    rpcRateLimit: 10,
-    rpcIngestion: false,
   },
 })
 
@@ -223,13 +182,21 @@ export const CHAIN_SLUGS: readonly ChainSlug[] = Object.freeze(
   Object.keys(CHAINS) as ChainSlug[],
 )
 
-const isChainSlug = (s: string): s is ChainSlug =>
-  (CHAIN_SLUGS as readonly string[]).includes(s)
+export const PRODUCTION_CHAIN_SLUGS = Object.freeze([
+  'ethereum',
+  'base',
+  'arbitrum',
+  'optimism',
+  'bsc',
+  'polygon',
+] as const satisfies readonly ChainSlug[])
+
+const isChainSlug = (slug: string): slug is ChainSlug =>
+  (CHAIN_SLUGS as readonly string[]).includes(slug)
 
 /**
- * Look up a chain by slug. Throws on unknown slug — fail fast, fail loudly.
- * Never silently default; misconfigured CHAIN env should never index the
- * "wrong" chain by accident.
+ * Look up a chain by slug. Invalid configuration never silently selects
+ * another chain.
  */
 export const getChain = (slug: string): ChainConfig => {
   if (!isChainSlug(slug)) {

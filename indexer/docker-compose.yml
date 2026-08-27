@@ -250,7 +250,8 @@ services:
       DB_USER: ${DB_USER:-postgres}
       DB_PASS: ${DB_PASS:-postgres}
       CHAIN: base
-      RPC_BASE_HTTP: ${RPC_BASE_HTTP:-}
+      PORTAL_URL: ${PORTAL_URL:-}
+      PORTAL_API_KEY: ${PORTAL_API_KEY:-}
       CONTRACT_BASE: ${CONTRACT_BASE:-}
       START_BLOCK_BASE: ${START_BLOCK_BASE:-}
     restart: unless-stopped
@@ -307,7 +308,8 @@ services:
       DB_USER: ${DB_USER:-postgres}
       DB_PASS: ${DB_PASS:-postgres}
       CHAIN: optimism
-      RPC_OPTIMISM_HTTP: ${RPC_OPTIMISM_HTTP:-}
+      PORTAL_URL: ${PORTAL_URL:-}
+      PORTAL_API_KEY: ${PORTAL_API_KEY:-}
       CONTRACT_OPTIMISM: ${CONTRACT_OPTIMISM:-}
       START_BLOCK_OPTIMISM: ${START_BLOCK_OPTIMISM:-}
     restart: unless-stopped
@@ -364,7 +366,8 @@ services:
       DB_USER: ${DB_USER:-postgres}
       DB_PASS: ${DB_PASS:-postgres}
       CHAIN: ethereum
-      RPC_ETHEREUM_HTTP: ${RPC_ETHEREUM_HTTP:-}
+      PORTAL_URL: ${PORTAL_URL:-}
+      PORTAL_API_KEY: ${PORTAL_API_KEY:-}
       CONTRACT_ETHEREUM: ${CONTRACT_ETHEREUM:-}
       START_BLOCK_ETHEREUM: ${START_BLOCK_ETHEREUM:-}
     restart: unless-stopped
@@ -421,7 +424,8 @@ services:
       DB_USER: ${DB_USER:-postgres}
       DB_PASS: ${DB_PASS:-postgres}
       CHAIN: arbitrum
-      RPC_ARBITRUM_HTTP: ${RPC_ARBITRUM_HTTP:-}
+      PORTAL_URL: ${PORTAL_URL:-}
+      PORTAL_API_KEY: ${PORTAL_API_KEY:-}
       CONTRACT_ARBITRUM: ${CONTRACT_ARBITRUM:-}
       START_BLOCK_ARBITRUM: ${START_BLOCK_ARBITRUM:-}
     restart: unless-stopped
@@ -478,7 +482,8 @@ services:
       DB_USER: ${DB_USER:-postgres}
       DB_PASS: ${DB_PASS:-postgres}
       CHAIN: bsc
-      RPC_BSC_HTTP: ${RPC_BSC_HTTP:-}
+      PORTAL_URL: ${PORTAL_URL:-}
+      PORTAL_API_KEY: ${PORTAL_API_KEY:-}
       CONTRACT_BSC: ${CONTRACT_BSC:-}
       START_BLOCK_BSC: ${START_BLOCK_BSC:-}
     restart: unless-stopped
@@ -535,7 +540,8 @@ services:
       DB_USER: ${DB_USER:-postgres}
       DB_PASS: ${DB_PASS:-postgres}
       CHAIN: polygon
-      RPC_POLYGON_HTTP: ${RPC_POLYGON_HTTP:-}
+      PORTAL_URL: ${PORTAL_URL:-}
+      PORTAL_API_KEY: ${PORTAL_API_KEY:-}
       CONTRACT_POLYGON: ${CONTRACT_POLYGON:-}
       START_BLOCK_POLYGON: ${START_BLOCK_POLYGON:-}
     restart: unless-stopped

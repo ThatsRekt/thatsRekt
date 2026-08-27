@@ -4,7 +4,7 @@
 # Final image is alpine-based and contains only production node_modules,
 # compiled JS in lib/, the ABI, the GraphQL schema, and committed migrations.
 
-ARG NODE_VERSION=20-alpine
+ARG NODE_VERSION=22-alpine
 ARG PNPM_VERSION=10.33.2
 
 # --- Stage 1: install all deps (needed for codegen + build) -----------------

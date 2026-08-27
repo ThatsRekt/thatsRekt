@@ -326,26 +326,24 @@ bsc: {
   chainId: 56,
   slug: 'bsc',
   name: 'BNB Smart Chain',
-  gateway: 'https://v2.archive.subsquid.io/network/binance-mainnet', // or null if no archive
-  rpcEnvVar: 'RPC_BSC_HTTP',
+  source: {
+    kind: 'portal',
+    dataset: 'binance-mainnet',
+  },
   contractEnvVar: 'CONTRACT_BSC',
   startBlockEnvVar: 'START_BLOCK_BSC',
   finalityConfirmation: 15,
-  rpcRateLimit: 10,
 },
 ```
 
-**`startBlock` = deploy block from step 1** (e.g. `101156350`). This prevents the processor
-from scanning from genesis and saves hours of sync time.
+Production Chains use a Portal Dataset Endpoint for all historical blocks.
+Each processor container receives the generic `PORTAL_URL` base and optional
+`PORTAL_API_KEY`; the runtime appends the selected dataset and sends the key
+only as `x-api-key`. Do not add an archive gateway or an RPC fallback.
 
-**`gateway`:** check Subsquid's archive list before assuming one exists:
-
-```bash
-curl -s https://cdn.subsquid.io/archives/evm.json | jq '.[] | select(.network | test("bsc|binance"))'
-```
-
-If no archive exists, set `gateway: null` and the processor falls back to RPC-only mode
-(slower initial sync, same correctness).
+Local Anvil Forks and testnets are explicit `source: { kind: 'rpc', ... }`
+entries. They remain the only registry paths allowed to use chain RPC for
+historical development data.
 
 Also add to `indexer/db/init.sql` (the DB init for the new chain's schema) and the
 `indexer/docker-compose.yml` production compose file (new `migrate-bsc`, `processor-bsc`,

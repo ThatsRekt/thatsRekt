@@ -9,12 +9,12 @@
 # `--ignore-scripts` skips package lifecycle scripts: the only deps with
 # install scripts here are the OPTIONAL native ws addons (utf-8-validate,
 # bufferutil, via websocket@1.0.35) which fail to node-gyp-compile under
-# bun's bundled node and aren't needed by an HTTP-RPC processor — websocket
+# bun's bundled node and aren't needed by the Portal processor — websocket
 # falls back to its pure-JS path when they're absent. No dep in this tree
-# requires a build step at install time. Runtime is node:20-alpine (same
-# musl base) since the entrypoint is `node lib/main.js`.
+# requires a build step at install time. Runtime is node:22-alpine. The
+# deadline wrapper terminates a hung scheduled run after 25 minutes.
 
-ARG NODE_VERSION=20-alpine
+ARG NODE_VERSION=22-alpine
 ARG BUN_IMAGE=oven/bun:1.1.14-alpine
 
 # --- Stage 1: install all deps (needed for build) ----------------------------
@@ -46,8 +46,9 @@ ENV NODE_ENV=production
 COPY --from=proddeps /app/node_modules ./node_modules
 COPY --from=builder /app/lib ./lib
 COPY package.json ./
+COPY runtime ./runtime
 
 # Use the unprivileged `node` user that ships with the official image.
 USER node
 
-CMD ["node", "lib/main.js"]
+CMD ["node", "runtime/with-deadline.cjs"]
