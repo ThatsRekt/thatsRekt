@@ -137,19 +137,35 @@ export const buildRegistryPortalDataSource = ({
   portal,
   contractAddress,
   startBlock,
+  endBlock,
 }: {
   readonly portal: PortalConfig
   readonly contractAddress: string
   readonly startBlock: number
-}): EVMDataSource<typeof LOG_FIELDS> =>
-  new DataSourceBuilder()
+  readonly endBlock?: number
+}): EVMDataSource<typeof LOG_FIELDS> => {
+  if (!Number.isInteger(startBlock) || startBlock < 0) {
+    throw new Error('Portal block range must start at a non-negative integer')
+  }
+  if (
+    endBlock !== undefined &&
+    (!Number.isInteger(endBlock) || endBlock < startBlock)
+  ) {
+    throw new Error('Portal block range end must be an integer at or after the start')
+  }
+
+  const range = endBlock === undefined
+    ? { from: startBlock }
+    : { from: startBlock, to: endBlock }
+
+  return new DataSourceBuilder()
     .setPortal({
       url: portal.url,
       http: portal.http,
     })
     .setFields(LOG_FIELDS)
-    .setBlockRange({ from: startBlock })
-    .includeAllBlocks({ from: startBlock })
+    .setBlockRange(range)
+    .includeAllBlocks(range)
     .addLog({
       where: {
         address: [contractAddress],
@@ -157,6 +173,7 @@ export const buildRegistryPortalDataSource = ({
       },
     })
     .build()
+}
 
 const buildPortalProcessor = ({
   chain,
