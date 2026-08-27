@@ -1,6 +1,6 @@
 # thatsRekt Mesh gateway
 
-Stitches the per-chain Subsquid GraphQL endpoints (`graphql-anvil`, `graphql-sepolia`, `graphql-base`) into one unified GraphQL endpoint on port `4350`. The single public GraphQL surface — frontends and integrators talk to Mesh, never directly to a squid.
+Stitches configured per-chain registry GraphQL endpoints into one unified GraphQL endpoint on port `4350`. Mesh is the public GraphQL surface; frontends and integrators do not query an individual registry indexer directly.
 
 ## Stack
 
@@ -11,20 +11,14 @@ Stitches the per-chain Subsquid GraphQL endpoints (`graphql-anvil`, `graphql-sep
 
 ## Schema shape
 
-Per upstream squid, every type and root field is renamed with a chain prefix:
-
-| Upstream | Mesh-side |
-|---|---|
-| `graphql-anvil:4351` | `Anvil_posts(...)`, `Anvil_Post`, `Anvil_addresses(...)`, ... |
-| `graphql-sepolia:4352` | `Sepolia_posts(...)`, `Sepolia_Post`, ... |
-| `graphql-base:4353` | `Base_posts(...)`, `Base_Post`, ... |
+Each enabled upstream has its types and root fields renamed with a chain prefix. Supported slugs are `anvil-eth`, `anvil-base`, `sepolia`, `ethereum`, `base`, `base-sepolia`, `optimism`, `arbitrum`, `bsc`, and `polygon`; [`src/chains.ts`](./src/chains.ts) is the source of truth for each endpoint and prefix.
 
 On top, two cross-chain queries:
 
 ```graphql
 type ChainInfo {
   chainId: Int!
-  slug: String!     # "anvil" | "sepolia" | "base"
+  slug: String!     # one supported ChainSlug, such as "ethereum", "base", or "polygon"
   name: String!
 }
 
@@ -51,15 +45,7 @@ extend type Query {
 
 ## Configuration
 
-| Env | Default | Purpose |
-|---|---|---|
-| `PORT` | `4350` | Mesh HTTP port |
-| `MESH_CHAINS` | `anvil,sepolia,base` | Comma-separated list of chain slugs to enable |
-| `GRAPHQL_ANVIL_URL` | `http://graphql-anvil:4351/graphql` | Upstream squid endpoint |
-| `GRAPHQL_SEPOLIA_URL` | `http://graphql-sepolia:4352/graphql` | Upstream squid endpoint |
-| `GRAPHQL_BASE_URL` | `http://graphql-base:4353/graphql` | Upstream squid endpoint |
-
-The defaults match `indexer/docker-compose.yml` service names, so no env is required when running in compose.
+`MESH_CHAINS` selects the comma-separated enabled chain slugs. Each enabled slug has a matching `GRAPHQL_<CHAIN>_URL` override declared in [`src/chains.ts`](./src/chains.ts). Local defaults serve Compose development and are not a statement of the production enabled set.
 
 ## Running
 
@@ -76,4 +62,4 @@ The fan-out resolver uses `Promise.allSettled` and treats any chain's failure as
 
 ## Why direct stitching, not the GraphQL Mesh framework?
 
-Mesh v1 is feature-complete but moving to maintenance mode (Hive Gateway is the new path). For our use case — three GraphQL upstreams, prefix transforms, one custom unified resolver — the direct `@graphql-tools/stitch` API is ~150 lines of TypeScript with full control. No framework to learn or upgrade.
+GraphQL Mesh v1 is feature-complete but moving to maintenance mode (Hive Gateway is the new path). For the configured registry upstream set, prefix transforms, and one custom unified resolver, direct `@graphql-tools/stitch` keeps the gateway small and under local control without introducing another framework.

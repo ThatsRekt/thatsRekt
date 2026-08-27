@@ -1,59 +1,44 @@
 # donations-indexer
 
-Subsquid processor watching native-coin and ERC20 donations to the `thatsrekt.eth` Safe on Ethereum mainnet. Persists donation rows to a dedicated Postgres database (`thatsrekt_donations`). No Squid GraphQL server — the mesh gateway reads via a second pool.
+Subsquid processor watching native-coin and allowlisted ERC20 donations to the `thatsrekt.eth` Safe across Ethereum, Base, Arbitrum One, Optimism, BNB Chain, and Polygon. It persists donation rows to the dedicated `thatsrekt_donations` Postgres database; Mesh reads that database directly rather than through a Squid GraphQL server.
 
 ## Stack
 
-- **Processor:** Subsquid `@subsquid/evm-processor` with a hand-rolled `HotDatabase<void>` (no TypeORM overhead — plain pg pool, schema managed by `ensureDonationTable`)
-- **Storage:** Postgres 16 (`donation` table + `donations_indexer_status` for cursor)
-- **Language:** TypeScript compiled to CJS via `tsc`
-- **Runtime:** Node 20
+- **Processor:** Subsquid `@subsquid/evm-processor` with a hand-rolled `HotDatabase<void>`.
+- **Storage:** Postgres 16 (`donation` plus `donations_indexer_status_v2`, keyed by chain ID, for cursor state).
+- **Language:** TypeScript compiled to CJS via `tsc`.
+- **Runtime:** Node 20.
 
 ## Scope
 
-- Slice #205: Ethereum mainnet + native ETH only.
-- Slice #207: ERC20 Transfer log subscriptions (~9 major tokens on Ethereum).
-- Slice #209: Additional chains (Base, Arbitrum, Optimism).
-- Top-level-tx value transfers only (slice #209 adds internal CALL traces).
+- Native-coin and allowlisted ERC20 transfers to the current `thatsrekt.eth` donation recipient across Ethereum, Base, Arbitrum One, Optimism, BNB Chain, and Polygon.
+- Direct transfers only; internal CALL traces are not indexed.
 
-## Quickstart — local anvil testbed
+## Quickstart — host development (processor + Postgres in Docker)
 
 ```bash
-cp .env.example .env
-# Edit .env if needed, then:
-docker compose -f docker-compose.anvil.yml up -d
-# Fund the donation Safe from the default anvil funded account:
-cast send \
-  --rpc-url http://127.0.0.1:18545 \
-  --private-key 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80 \
-  --value 10000000000000000 \
-  0x59E4DBc95BD312A882Bb36b7f3E8298682340679
-# Watch the processor index it:
-docker compose -f docker-compose.anvil.yml logs -f donations-indexer
-```
-
-## Quickstart — host dev (processor + Postgres in Docker)
-
-```bash
-docker run --rm -d -p 5432:5432 \
-  -e POSTGRES_PASSWORD=postgres postgres:16-alpine
+docker run --rm -d -p 5432:5432 -e POSTGRES_PASSWORD=postgres postgres:16-alpine
 bun install
 bun run build
-cp .env.example .env  # fill in RPC_ETHEREUM_HTTP + DONATIONS_DB_URL
+cp .env.example .env
+# Set CHAIN_SLUG, the selected chain's RPC and start-block variables, and DONATIONS_DB_URL.
 bun run process
 ```
 
 ## Configuration
 
-| Variable | Required | Default | Purpose |
-|---|---|---|---|
-| `RPC_ETHEREUM_HTTP` | yes | — | Ethereum RPC endpoint |
-| `DONATIONS_DB_URL` | yes | — | Postgres connection string |
-| `GATEWAY_URL` | no | — | Subsquid Network archive URL (omit for RPC-only) |
-| `START_BLOCK_ETHEREUM` | no | `19000000` | First block to index |
-| `FINALITY_CONFIRMATION` | no | `75` | Blocks before a block is treated as final |
+`CHAIN_SLUG` is required and selects one of `ethereum`, `base`, `arbitrum`, `optimism`, `bsc`, or `polygon`. The selected entry in `src/chainConfig.ts` determines its required RPC variable and optional start-block override:
 
-Set `FINALITY_CONFIRMATION=0` for local anvil testing to treat all blocks as final.
+| `CHAIN_SLUG` | Required RPC variable | Optional start-block override |
+|---|---|---|
+| `ethereum` | `RPC_ETHEREUM_HTTP` | `START_BLOCK_ETHEREUM` |
+| `base` | `RPC_BASE_HTTP` | `START_BLOCK_BASE` |
+| `arbitrum` | `RPC_ARBITRUM_HTTP` | `START_BLOCK_ARBITRUM` |
+| `optimism` | `RPC_OPTIMISM_HTTP` | `START_BLOCK_OPTIMISM` |
+| `bsc` | `RPC_BSC_HTTP` | `START_BLOCK_BSC` |
+| `polygon` | `RPC_POLYGON_HTTP` | `START_BLOCK_POLYGON` |
+
+`DONATIONS_DB_URL` is required. `ENS_RPC_URL`, `DONEE_OVERRIDE`, `GATEWAY_URL`, and `FINALITY_CONFIRMATION` are optional operational overrides; `GATEWAY_URL` is omitted for local RPC-only use. The current runtime remains Node 20. Portal variable names and Node 22 documentation remain deferred until the runtime contract is implemented.
 
 ## Testing
 
@@ -101,7 +86,7 @@ The processor creates and owns two tables on startup:
 | Table | Purpose |
 |---|---|
 | `donation` | One row per indexed donation. PK: `${chainId}-${txHash}-native` for native, `${chainId}-${txHash}-${logIndex}` for ERC20. |
-| `donations_indexer_status` | Single-row cursor: `height` + `hash` of last committed finalized block. |
+| `donations_indexer_status_v2` | Per-chain cursor: `height` + `hash` of the last committed finalized block, keyed by `chain_id`. |
 
 Both tables are created with `IF NOT EXISTS` — safe to restart on an existing database.
 
