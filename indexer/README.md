@@ -1,6 +1,6 @@
 # thatsRekt Subsquid Indexer
 
-TypeScript indexer of `thatsRekt` contract events. Persists state into Postgres and exposes a GraphQL API for the upcoming frontend and any external consumers.
+TypeScript indexer of `thatsRekt` contract events. Each configured chain has its own logical Postgres database, processor, and internal GraphQL service; Mesh is the unified public GraphQL read surface.
 
 ## Stack
 
@@ -17,47 +17,39 @@ TypeScript indexer of `thatsRekt` contract events. Persists state into Postgres 
 
 ## Quickstart — full Docker stack
 
-The indexer is sovereign-per-chain: one Postgres process holds one logical
-database per chain (`thatsrekt_anvil`, `thatsrekt_sepolia`, `thatsrekt_base`),
-and each chain gets its own processor + GraphQL service from the same image.
-Squid GraphQL ports are **compose-internal only** — Phase 5 of the multichain
-plan introduces a Mesh gateway as the single public surface.
+One Postgres process hosts isolated logical databases for the Compose chain services. The exact slug-to-database map is: `anvil-eth` → `thatsrekt_anvil_eth`, `anvil-base` → `thatsrekt_anvil_base`, `sepolia` → `thatsrekt_sepolia`, `ethereum` → `thatsrekt_ethereum`, `base` → `thatsrekt_base`, `optimism` → `thatsrekt_optimism`, `arbitrum` → `thatsrekt_arbitrum`, `bsc` → `thatsrekt_bsc`, and `polygon` → `thatsrekt_polygon`. Each has `migrate-<slug>`, `processor-<slug>`, and `graphql-<slug>` services; `mesh` stitches configured registry GraphQL services into the unified public read surface on port `4350`.
 
 ```bash
 cp .env.example .env
-$EDITOR .env  # fill in RPC + contract + start-block for each chain you want indexed
+$EDITOR .env  # fill in RPC, contract, and start-block variables for services to run
 docker compose up -d --build
 ```
 
-What that brings up:
-
 | Service | Role | Listens on |
 |---|---|---|
-| `db` | Postgres 16. Provisions `thatsrekt_anvil` / `thatsrekt_sepolia` / `thatsrekt_base` from `init.sql` on first boot. | `127.0.0.1:5432` (host loopback only) |
-| `migrate-{chain}` | One-shot — applies migrations to `thatsrekt_{chain}`, then exits. | n/a |
-| `processor-{chain}` | Long-running — indexes `{chain}` into `thatsrekt_{chain}`. | n/a |
-| `graphql-{chain}` | Squid GraphQL on internal port — **not** exposed to the host. | compose net only: `4351` (anvil), `4352` (sepolia), `4353` (base) |
+| `db` | Postgres 16; provisions the exact databases listed above on first boot. | `127.0.0.1:5432` |
+| `migrate-<slug>` | One-shot migrations for that slug's mapped logical database. | n/a |
+| `processor-<slug>` | Long-running registry processor for one slug. | n/a |
+| `graphql-<slug>` | Internal registry GraphQL service for one slug. | Compose network only |
+| `mesh` | Unified registry GraphQL gateway over configured internal upstreams. | Compose network port `4350` |
 
 ```bash
-docker compose ps                          # status of all services
-docker compose logs -f processor-base      # tail one chain's processor
-docker compose down                        # stop, keep data volume
-docker compose down -v                     # stop + wipe pgdata (forces init.sql to re-run)
+docker compose ps
+docker compose logs -f processor-base
+docker compose down  # stops services but preserves the database volume
 ```
 
-### Running a single chain (regression / dev)
+### Running a single chain (regression / development)
 
 ```bash
 docker compose up -d db migrate-base processor-base graphql-base
 ```
 
-Same pattern for `anvil` or `sepolia`. The other chains' services stay
-stopped; their databases exist but are unused until those services run.
+The same pattern applies to any Compose slug. Other services remain stopped; their mapped databases remain isolated until started.
 
-### Talking to a squid GraphQL endpoint (before Phase 5 / Mesh)
+### Querying a registry GraphQL service
 
-The squid GraphQL ports are compose-internal. Until Phase 5 introduces the
-public Mesh gateway, query a squid directly via `docker compose exec`:
+Mesh is the unified read surface. For local upstream diagnosis, query an individual internal `graphql-<slug>` service through `docker compose exec`:
 
 ```bash
 docker compose exec graphql-base sh -c \
@@ -76,7 +68,7 @@ docker compose up -d db
 pnpm install
 pnpm codegen
 pnpm build
-cp .env.example .env       # ensure DB_HOST=localhost, DB_NAME=thatsrekt_<chain>
+cp .env.example .env       # for CHAIN=base, ensure DB_HOST=localhost and DB_NAME=thatsrekt_base
 pnpm db:migrate
 CHAIN=base pnpm process    # one terminal
 pnpm serve                 # another — http://localhost:4350/graphql
@@ -84,21 +76,9 @@ pnpm serve                 # another — http://localhost:4350/graphql
 
 ## Configuration
 
-The indexer is **multichain-ready**: a single `CHAIN` env (one of `anvil` / `sepolia` / `base`) selects which chain a processor instance indexes. The chain registry at [`src/chains.ts`](./src/chains.ts) is the source of truth — chain ids, gateway URLs, finality settings, and per-chain env var names are all declared there. Adding a new chain is a registry entry plus a matching env block.
+The required `CHAIN` environment variable selects one registry processor instance. [`src/chains.ts`](./src/chains.ts) is the source of truth for all supported slugs, chain IDs, source configuration, finality settings, and chain-specific environment variable names.
 
-`.env` (see `.env.example`):
-
-| Variable | Purpose |
-|----------|---------|
-| `CHAIN` | Which chain this processor instance is for: `anvil` \| `sepolia` \| `base`. Default: `base`. |
-| `RPC_BASE_HTTP` / `CONTRACT_BASE` / `START_BLOCK_BASE` | Base mainnet config. RPC pattern: `https://lb.routeme.sh/rpc/8453/{api-key}` (key in DAMM secrets — never commit). |
-| `RPC_SEPOLIA_HTTP` / `CONTRACT_SEPOLIA` / `START_BLOCK_SEPOLIA` | Ethereum Sepolia config (filled in once Phase 3 deploys to Sepolia). |
-| `RPC_ANVIL_HTTP` / `CONTRACT_ANVIL` / `START_BLOCK_ANVIL` | Local Anvil fork (filled in by Phase 4 bootstrap script). |
-| `DB_*`, `GQL_PORT` | Postgres + GraphQL server ports. |
-
-Only the block matching `CHAIN` is required at runtime. Other blocks can stay blank.
-
-The full multichain stack (parallel processors per chain, Mesh gateway, frontend chain filter) lands in Phases 2-7 — see [`tasks/multichain-testnet-plan.md`](../tasks/multichain-testnet-plan.md).
+`CHAIN` accepts `anvil-eth`, `anvil-base`, `sepolia`, `ethereum`, `base`, `base-sepolia`, `optimism`, `arbitrum`, `bsc`, or `polygon`; invalid or absent values fail fast. Only the selected chain's configuration is required at runtime. The six Production Chains are separate processor instances; testnets and Local Anvil Forks remain separate environments.
 
 ## Schema
 
@@ -169,18 +149,21 @@ pnpm db:create      # generate a new migration from the schema diff
 pnpm db:migrate     # apply
 ```
 
-For a clean reset:
+### Destructive local-only reset
+
+Only for an isolated local development volume that may be discarded; **never** run this against production, a preserved database, or any state used for migration proof:
 
 ```bash
-pnpm db:reset            # revert all migrations
-docker compose down -v   # nuke postgres volume
+pnpm db:reset
+# LOCAL DEVELOPMENT ONLY: deletes the local Compose Postgres volume.
+docker compose down -v
 docker compose up -d
 pnpm db:migrate
 ```
 
 ## Hosting
 
-**Local development only** for now. Production hosting (self-hosted on AWS, or one-squid-per-chain on SQD Cloud) is a future workstream — see [`tasks/multichain-testnet-plan.md`](../tasks/multichain-testnet-plan.md).
+Production registry processing is self-hosted as separate chain services, with Mesh as the unified public read surface. Local Compose remains the development workflow. Portal variable names and Node 22 documentation remain deferred until the runtime contract is implemented.
 
 ## Plan
 
