@@ -1,25 +1,56 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
-import pkg from 'pg'
-import {
-  createDonationDatabase,
-  ensureDonationCursorTable,
-} from '../src/cursor.ts'
+import { describe, expect, test } from 'bun:test'
+import type { FinalDatabase } from '@subsquid/batch-processor'
+import type { PoolClient } from 'pg'
+import { chainConfigFor } from '../src/chainConfig.ts'
+import { createDonationDatabase } from '../src/cursor.ts'
 import { ensureDonationTable } from '../src/donationStore.ts'
-import { indexDonationBlocks, type DonationBlock } from '../src/processor.ts'
+import {
+  createPortalHttpClient,
+  type PortalConfig,
+} from '../src/portal.ts'
+import {
+  buildDonationPortalPlan,
+  indexDonationBlocks,
+  type DonationBlock,
+  type DonationPortalPlan,
+} from '../src/processor.ts'
 import { TRANSFER_TOPIC0 } from '../src/tokenAllowlist.ts'
+import {
+  createIsolatedPortalTestPool,
+  type IsolatedPortalTestPool,
+} from './support/isolatedPostgres.ts'
 
-const { Pool } = pkg
-const CHAIN_ID = 8453
-const CHAIN_SLUG = 'base'
 const DONEE = '0x59e4dbc95bd312a882bb36b7f3e8298682340679'
-const TEST_DB_URL =
-  process.env.PORTAL_INTEGRITY_TEST_DB_URL ??
-  'postgres://postgres:postgres@localhost:5433/donations_portal_integrity_test'
-const SUPERUSER_URL =
-  process.env.TEST_SUPERUSER_URL ??
-  'postgres://postgres:postgres@localhost:5433/postgres'
+const BASE_RESTART_BLOCK = 50_527_337
 
-export const FROZEN_PORTAL_HEIGHT_BASELINES = Object.freeze({
+interface ExpectedDonationRow {
+  readonly tokenSymbol: string
+  readonly amountNorm: string
+  readonly chainId: number
+  readonly blockNumber: number
+}
+
+interface ProductionDonationFixture {
+  readonly slug: string
+  readonly chainId: number
+  readonly dataset: string
+  readonly height: number
+  readonly native: {
+    readonly symbol: string
+    readonly amountRaw: bigint
+    readonly amountNorm: string
+  }
+  readonly erc20: {
+    readonly address: string
+    readonly symbol: string
+    readonly decimals: number
+    readonly amountRaw: bigint
+    readonly amountNorm: string
+  }
+  readonly expectedRows: readonly ExpectedDonationRow[]
+}
+
+const FROZEN_PORTAL_HEIGHT_BASELINES = Object.freeze({
   ethereum: 19_000_000,
   base: 50_517_211,
   arbitrum: 457_275_000,
@@ -28,59 +59,441 @@ export const FROZEN_PORTAL_HEIGHT_BASELINES = Object.freeze({
   polygon: 86_136_000,
 })
 
-const topicFor = (address: string): string => `0x${address.slice(2).padStart(64, '0')}`
-const donor = '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
-const CAPTURED_BASE_PORTAL_BLOCKS: readonly DonationBlock[] = Object.freeze([
+const PRODUCTION_DONATION_FIXTURES: readonly ProductionDonationFixture[] = Object.freeze([
   Object.freeze({
-    header: Object.freeze({ height: 50_517_211, timestamp: 1_735_689_600_000 }),
-    transactions: Object.freeze([
-      Object.freeze({
-        to: DONEE,
-        from: donor,
-        hash: `0x${'a'.repeat(64)}`,
-        value: 1_000_000_000_000_000_000n,
-      }),
+    slug: 'ethereum',
+    chainId: 1,
+    dataset: 'ethereum-mainnet',
+    height: 19_000_000,
+    native: Object.freeze({ symbol: 'ETH', amountRaw: 1_000_000_000_000_000_000n, amountNorm: '1' }),
+    erc20: Object.freeze({
+      address: '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48',
+      symbol: 'USDC',
+      decimals: 6,
+      amountRaw: 50_000_000n,
+      amountNorm: '50',
+    }),
+    expectedRows: Object.freeze([
+      Object.freeze({ tokenSymbol: 'ETH', amountNorm: '1', chainId: 1, blockNumber: 19_000_000 }),
+      Object.freeze({ tokenSymbol: 'USDC', amountNorm: '50', chainId: 1, blockNumber: 19_000_000 }),
     ]),
-    logs: Object.freeze([
-      Object.freeze({
-        address: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913',
-        topics: Object.freeze([TRANSFER_TOPIC0, topicFor(donor), topicFor(DONEE)]),
-        data: '0x2faf080',
-        transactionHash: `0x${'b'.repeat(64)}`,
-        logIndex: 3,
-      }),
+  }),
+  Object.freeze({
+    slug: 'base',
+    chainId: 8453,
+    dataset: 'base-mainnet',
+    height: 50_517_211,
+    native: Object.freeze({ symbol: 'ETH', amountRaw: 1_000_000_000_000_000_000n, amountNorm: '1' }),
+    erc20: Object.freeze({
+      address: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913',
+      symbol: 'USDC',
+      decimals: 6,
+      amountRaw: 50_000_000n,
+      amountNorm: '50',
+    }),
+    expectedRows: Object.freeze([
+      Object.freeze({ tokenSymbol: 'ETH', amountNorm: '1', chainId: 8453, blockNumber: 50_517_211 }),
+      Object.freeze({ tokenSymbol: 'USDC', amountNorm: '50', chainId: 8453, blockNumber: 50_517_211 }),
+    ]),
+  }),
+  Object.freeze({
+    slug: 'arbitrum',
+    chainId: 42161,
+    dataset: 'arbitrum-one',
+    height: 457_275_000,
+    native: Object.freeze({ symbol: 'ETH', amountRaw: 1_000_000_000_000_000_000n, amountNorm: '1' }),
+    erc20: Object.freeze({
+      address: '0xaf88d065e77c8cc2239327c5edb3a432268e5831',
+      symbol: 'USDC',
+      decimals: 6,
+      amountRaw: 50_000_000n,
+      amountNorm: '50',
+    }),
+    expectedRows: Object.freeze([
+      Object.freeze({ tokenSymbol: 'ETH', amountNorm: '1', chainId: 42161, blockNumber: 457_275_000 }),
+      Object.freeze({ tokenSymbol: 'USDC', amountNorm: '50', chainId: 42161, blockNumber: 457_275_000 }),
+    ]),
+  }),
+  Object.freeze({
+    slug: 'optimism',
+    chainId: 10,
+    dataset: 'optimism-mainnet',
+    height: 150_896_000,
+    native: Object.freeze({ symbol: 'ETH', amountRaw: 1_000_000_000_000_000_000n, amountNorm: '1' }),
+    erc20: Object.freeze({
+      address: '0x0b2c639c533813f4aa9d7837caf62653d097ff85',
+      symbol: 'USDC',
+      decimals: 6,
+      amountRaw: 50_000_000n,
+      amountNorm: '50',
+    }),
+    expectedRows: Object.freeze([
+      Object.freeze({ tokenSymbol: 'ETH', amountNorm: '1', chainId: 10, blockNumber: 150_896_000 }),
+      Object.freeze({ tokenSymbol: 'USDC', amountNorm: '50', chainId: 10, blockNumber: 150_896_000 }),
+    ]),
+  }),
+  Object.freeze({
+    slug: 'bsc',
+    chainId: 56,
+    dataset: 'binance-mainnet',
+    height: 95_195_000,
+    native: Object.freeze({ symbol: 'BNB', amountRaw: 1_000_000_000_000_000_000n, amountNorm: '1' }),
+    erc20: Object.freeze({
+      address: '0x8ac76a51cc950d9822d68b83fe1ad97b32cd580d',
+      symbol: 'USDC',
+      decimals: 18,
+      amountRaw: 50_000_000_000_000_000_000n,
+      amountNorm: '50',
+    }),
+    expectedRows: Object.freeze([
+      Object.freeze({ tokenSymbol: 'BNB', amountNorm: '1', chainId: 56, blockNumber: 95_195_000 }),
+      Object.freeze({ tokenSymbol: 'USDC', amountNorm: '50', chainId: 56, blockNumber: 95_195_000 }),
+    ]),
+  }),
+  Object.freeze({
+    slug: 'polygon',
+    chainId: 137,
+    dataset: 'polygon-mainnet',
+    height: 86_136_000,
+    native: Object.freeze({ symbol: 'POL', amountRaw: 1_000_000_000_000_000_000n, amountNorm: '1' }),
+    erc20: Object.freeze({
+      address: '0x3c499c542cef5e3811e1192ce70d8cc03d5c3359',
+      symbol: 'USDC',
+      decimals: 6,
+      amountRaw: 50_000_000n,
+      amountNorm: '50',
+    }),
+    expectedRows: Object.freeze([
+      Object.freeze({ tokenSymbol: 'POL', amountNorm: '1', chainId: 137, blockNumber: 86_136_000 }),
+      Object.freeze({ tokenSymbol: 'USDC', amountNorm: '50', chainId: 137, blockNumber: 86_136_000 }),
     ]),
   }),
 ])
 
-let pool: InstanceType<typeof Pool>
+interface PortalRawBlock {
+  readonly header: {
+    readonly number: number
+    readonly hash: string
+    readonly parentHash: string
+    readonly timestamp: number
+  }
+  readonly transactions: readonly {
+    readonly transactionIndex: number
+    readonly to: string
+    readonly from: string
+    readonly hash: string
+    readonly value: string
+  }[]
+  readonly logs: readonly {
+    readonly transactionIndex: number
+    readonly address: string
+    readonly topics: readonly string[]
+    readonly data: string
+    readonly transactionHash: string
+    readonly logIndex: number
+  }[]
+}
 
-beforeAll(async () => {
-  const superPool = new Pool({ connectionString: SUPERUSER_URL, max: 1 })
-  try {
-    await superPool.query(`CREATE DATABASE donations_portal_integrity_test`)
-  } catch (error: unknown) {
-    const candidate = error as { code?: string }
-    if (candidate.code !== '42P04') throw error
-  } finally {
-    await superPool.end()
+type PortalMode = 'data' | 'retry' | 'malformed' | 'idle'
+
+interface ControlledPortalServer {
+  readonly url: string
+  readonly requests: readonly {
+    readonly path: string
+    readonly query: unknown
+  }[]
+  setMode(mode: PortalMode): void
+  setBlock(dataset: string, block: PortalRawBlock): void
+  close(): void
+}
+
+interface SourcedDonationBlock extends DonationBlock {
+  readonly header: DonationBlock['header'] & { readonly hash: string }
+}
+
+interface IsolatedDonationDatabase {
+  readonly fixture: IsolatedPortalTestPool
+  readonly pool: IsolatedPortalTestPool['pool']
+  readonly database: FinalDatabase<PoolClient>
+}
+
+const topicFor = (address: string): string => `0x${address.slice(2).padStart(64, '0')}`
+const hashFor = (value: number): string => `0x${value.toString(16).padStart(64, '0')}`
+const amountHex = (value: bigint): string => `0x${value.toString(16)}`
+const donorFor = (chainId: number): string => `0x${(chainId + 50_000).toString(16).padStart(40, '0')}`
+
+const portalBlockFor = ({
+  fixture,
+  height = fixture.height,
+  includeTransfers = true,
+}: {
+  readonly fixture: ProductionDonationFixture
+  readonly height?: number
+  readonly includeTransfers?: boolean
+}): PortalRawBlock => {
+  const donor = donorFor(fixture.chainId)
+  return {
+    header: {
+      number: height,
+      hash: hashFor(height),
+      parentHash: hashFor(height - 1),
+      timestamp: 1_735_689_600,
+    },
+    transactions: includeTransfers
+      ? [
+          {
+            transactionIndex: 0,
+            to: DONEE,
+            from: donor,
+            hash: hashFor(fixture.chainId + 10_000),
+            value: amountHex(fixture.native.amountRaw),
+          },
+        ]
+      : [],
+    logs: includeTransfers
+      ? [
+          {
+            transactionIndex: 0,
+            address: fixture.erc20.address,
+            topics: [TRANSFER_TOPIC0, topicFor(donor), topicFor(DONEE)],
+            data: amountHex(fixture.erc20.amountRaw),
+            transactionHash: hashFor(fixture.chainId + 20_000),
+            logIndex: 3,
+          },
+        ]
+      : [],
+  }
+}
+
+const createControlledPortalServer = (
+  fixtures: readonly ProductionDonationFixture[],
+): ControlledPortalServer => {
+  let mode: PortalMode = 'data'
+  const blocks = new Map<string, PortalRawBlock>()
+  const requests: {
+    path: string
+    query: unknown
+  }[] = []
+  for (const fixture of fixtures) {
+    blocks.set(fixture.dataset, portalBlockFor({ fixture }))
   }
 
-  pool = new Pool({ connectionString: TEST_DB_URL, max: 2 })
-  await ensureDonationTable(pool)
-  await ensureDonationCursorTable(pool, CHAIN_ID)
-})
+  const server = Bun.serve({
+    hostname: '127.0.0.1',
+    port: 0,
+    async fetch(request) {
+      const body = await request.text()
+      const url = new URL(request.url)
+      const dataset = url.pathname.split('/').at(-2)
+      const block = dataset === undefined ? undefined : blocks.get(dataset)
+      const query: unknown = body === '' ? undefined : JSON.parse(body)
+      requests.push({ path: url.pathname, query })
 
-beforeEach(async () => {
-  await pool.query(`DELETE FROM donation`)
-  await pool.query(`DELETE FROM donations_indexer_status_v2 WHERE chain_id = $1`, [CHAIN_ID])
-})
+      if (block === undefined) {
+        return new Response('unknown fixture dataset', { status: 404 })
+      }
+      if (mode === 'retry') {
+        return new Response('retry later', {
+          status: 529,
+          headers: { 'Retry-After': '10' },
+        })
+      }
+      if (mode === 'malformed') {
+        return new Response('{not-json}\n', {
+          status: 200,
+          headers: { 'Content-Type': 'application/x-ndjson' },
+        })
+      }
+      if (mode === 'idle') {
+        return new Response(null, {
+          status: 204,
+          headers: {
+            'x-sqd-finalized-head-number': String(block.header.number),
+            'x-sqd-finalized-head-hash': block.header.hash,
+          },
+        })
+      }
+      return new Response(`${JSON.stringify(block)}\n`, {
+        status: 200,
+        headers: { 'Content-Type': 'application/x-ndjson' },
+      })
+    },
+  })
 
-afterAll(async () => {
-  await pool.end()
-})
+  return Object.freeze({
+    url: `http://127.0.0.1:${server.port}`,
+    requests,
+    setMode(nextMode: PortalMode): void {
+      mode = nextMode
+    },
+    setBlock(dataset: string, block: PortalRawBlock): void {
+      blocks.set(dataset, block)
+    },
+    close(): void {
+      server.stop(true)
+    },
+  })
+}
 
-describe('captured Portal integrity harness', () => {
+const createIsolatedDonationDatabase = async ({
+  chainId,
+}: {
+  readonly chainId: number
+}): Promise<IsolatedDonationDatabase> => {
+  const fixture = await createIsolatedPortalTestPool()
+  try {
+    const pool = fixture.pool
+    await ensureDonationTable(pool)
+    const database = createDonationDatabase({ pool, chainId })
+    await database.connect()
+    return Object.freeze({ fixture, pool, database })
+  } catch (error) {
+    await fixture.close()
+    throw error
+  }
+}
+
+const portalPlanFor = ({
+  fixture,
+  server,
+  deadlineMs,
+  retryScheduleMs,
+  startBlock = fixture.height,
+  toBlock = fixture.height,
+}: {
+  readonly fixture: ProductionDonationFixture
+  readonly server: ControlledPortalServer
+  readonly deadlineMs?: number
+  readonly retryScheduleMs?: readonly number[]
+  readonly startBlock?: number
+  readonly toBlock?: number
+}): DonationPortalPlan => {
+  const chain = chainConfigFor(fixture.slug)
+  expect(chain?.portalDataset).toBe(fixture.dataset)
+  const portal: PortalConfig = {
+    url: `${server.url}/${fixture.dataset}`,
+    headers: {},
+    http: createPortalHttpClient({
+      headers: {},
+      ...(deadlineMs === undefined ? {} : { deadlineMs }),
+      ...(retryScheduleMs === undefined ? {} : { retryScheduleMs }),
+    }),
+  }
+
+  return buildDonationPortalPlan({
+    portal,
+    startBlock,
+    toBlock,
+    donee: DONEE,
+    doneeTopic: topicFor(DONEE),
+    erc20TokenAddresses: [fixture.erc20.address],
+  })
+}
+
+const readPortalBlocks = async ({
+  plan,
+  allowEmpty = false,
+}: {
+  readonly plan: DonationPortalPlan
+  readonly allowEmpty?: boolean
+}): Promise<readonly SourcedDonationBlock[]> => {
+  const iterator = plan.source.getFinalizedStream({
+    from: plan.range.from,
+    to: plan.range.to,
+  })[Symbol.asyncIterator]()
+  try {
+    while (true) {
+      const next = await iterator.next()
+      if (next.done) throw new Error('Controlled Portal source ended before yielding a batch')
+      if (allowEmpty || next.value.blocks.length > 0) return next.value.blocks
+    }
+  } finally {
+    await iterator.return?.()
+  }
+}
+
+const runPortalFixture = async ({
+  fixture,
+  plan,
+  database,
+}: {
+  readonly fixture: ProductionDonationFixture
+  readonly plan: DonationPortalPlan
+  readonly database: FinalDatabase<PoolClient>
+}): Promise<void> => {
+  const blocks = await readPortalBlocks({ plan })
+  const lastBlock = blocks.at(-1)
+  if (lastBlock === undefined) throw new Error('Controlled Portal fixture returned no blocks')
+
+  await database.transact(
+    {
+      prevHead: { height: plan.range.from - 1, hash: hashFor(plan.range.from - 1) },
+      nextHead: { height: lastBlock.header.height, hash: lastBlock.header.hash },
+      isOnTop: true,
+    },
+    async (store) =>
+      indexDonationBlocks({
+        blocks,
+        store,
+        chainId: fixture.chainId,
+        chainSlug: fixture.slug,
+        donee: DONEE,
+      }),
+  )
+}
+
+const readCursor = async ({
+  pool,
+  chainId,
+}: {
+  readonly pool: IsolatedPortalTestPool['pool']
+  readonly chainId: number
+}): Promise<{ height: number; hash: string }> => {
+  const { rows } = await pool.query<{ height: number; hash: string }>(
+    `SELECT height, hash FROM donations_indexer_status_v2 WHERE chain_id = $1`,
+    [chainId],
+  )
+  return rows[0]!
+}
+
+const readRows = async ({
+  pool,
+  chainId,
+}: {
+  readonly pool: IsolatedPortalTestPool['pool']
+  readonly chainId: number
+}): Promise<readonly ExpectedDonationRow[]> => {
+  const { rows } = await pool.query<{
+    token_symbol: string
+    amount_norm: string
+    chain_id: number
+    block_number: number
+  }>(`
+    SELECT token_symbol, amount_norm::text AS amount_norm, chain_id, block_number
+    FROM donation
+    WHERE chain_id = $1
+    ORDER BY token_symbol
+  `, [chainId])
+  return rows.map((row) => ({
+    tokenSymbol: row.token_symbol,
+    amountNorm: row.amount_norm,
+    chainId: row.chain_id,
+    blockNumber: row.block_number,
+  }))
+}
+
+const assertNoDurableProgress = async ({
+  pool,
+  fixture,
+}: {
+  readonly pool: IsolatedPortalTestPool['pool']
+  readonly fixture: ProductionDonationFixture
+}): Promise<void> => {
+  expect(await readCursor({ pool, chainId: fixture.chainId })).toEqual({ height: -1, hash: '' })
+  expect(await readRows({ pool, chainId: fixture.chainId })).toEqual([])
+}
+
+describe('deterministic Donations Portal integrity harness', () => {
   test('freezes one baseline height for every Production Chain', () => {
     expect(FROZEN_PORTAL_HEIGHT_BASELINES).toEqual({
       ethereum: 19_000_000,
@@ -92,59 +505,146 @@ describe('captured Portal integrity harness', () => {
     })
   })
 
+  for (const fixture of PRODUCTION_DONATION_FIXTURES) {
+    test(`maps frozen ${fixture.slug} native and ERC20 Portal output exactly`, async () => {
+      const server = createControlledPortalServer([fixture])
+      const isolated = await createIsolatedDonationDatabase({ chainId: fixture.chainId })
+      try {
+        const plan = portalPlanFor({ fixture, server })
+        await runPortalFixture({ fixture, plan, database: isolated.database })
+
+        expect(server.requests[0]?.path).toBe(`/${fixture.dataset}/finalized-stream`)
+        expect(server.requests[0]?.query).toEqual(expect.objectContaining({
+          type: 'evm',
+          fromBlock: fixture.height,
+          toBlock: fixture.height,
+        }))
+        expect(JSON.stringify(server.requests[0]?.query)).toContain(fixture.erc20.address)
+        expect(JSON.stringify(server.requests[0]?.query)).toContain(DONEE)
+        expect(await readRows({ pool: isolated.pool, chainId: fixture.chainId })).toEqual(
+          fixture.expectedRows,
+        )
+        expect(await readCursor({ pool: isolated.pool, chainId: fixture.chainId })).toEqual({
+          height: fixture.height,
+          hash: hashFor(fixture.height),
+        })
+      } finally {
+        server.close()
+        await isolated.fixture.close()
+      }
+    })
+  }
+
   test('maps captured Base native and ERC20 donations exactly once across restart', async () => {
-    const database = createDonationDatabase({ pool, chainId: CHAIN_ID })
-    await database.connect()
-    await database.transact(
-      {
-        prevHead: { height: 50_517_210, hash: '0xbase-prev' },
-        nextHead: { height: 50_517_211, hash: '0xbase-moonwell' },
-        isOnTop: true,
-      },
-      async (store) =>
-        indexDonationBlocks({
-          blocks: CAPTURED_BASE_PORTAL_BLOCKS,
-          store,
-          chainId: CHAIN_ID,
-          chainSlug: CHAIN_SLUG,
-          donee: DONEE,
-        }),
-    )
-    await database.transact(
-      {
-        prevHead: { height: 50_517_211, hash: '0xbase-moonwell' },
-        nextHead: { height: 50_527_337, hash: '0xbase-restart' },
-        isOnTop: true,
-      },
-      async (store) =>
-        indexDonationBlocks({
-          blocks: CAPTURED_BASE_PORTAL_BLOCKS,
-          store,
-          chainId: CHAIN_ID,
-          chainSlug: CHAIN_SLUG,
-          donee: DONEE,
-        }),
-    )
+    const fixture = PRODUCTION_DONATION_FIXTURES.find(({ slug }) => slug === 'base')
+    if (fixture === undefined) throw new Error('Base frozen fixture is required')
 
-    const { rows } = await pool.query<{
-      token_symbol: string
-      amount_norm: string
-      chain_id: number
-      block_number: number
-    }>(`
-      SELECT token_symbol, amount_norm::text AS amount_norm, chain_id, block_number
-      FROM donation
-      ORDER BY token_symbol
-    `)
-    expect(rows).toEqual([
-      { token_symbol: 'ETH', amount_norm: '1', chain_id: 8453, block_number: 50_517_211 },
-      { token_symbol: 'USDC', amount_norm: '50', chain_id: 8453, block_number: 50_517_211 },
-    ])
+    const server = createControlledPortalServer([fixture])
+    const isolated = await createIsolatedDonationDatabase({ chainId: fixture.chainId })
+    try {
+      await runPortalFixture({
+        fixture,
+        plan: portalPlanFor({ fixture, server }),
+        database: isolated.database,
+      })
 
-    const { rows: cursorRows } = await pool.query<{ height: number; hash: string }>(
-      `SELECT height, hash FROM donations_indexer_status_v2 WHERE chain_id = $1`,
-      [CHAIN_ID],
-    )
-    expect(cursorRows).toEqual([{ height: 50_527_337, hash: '0xbase-restart' }])
+      server.setBlock(
+        fixture.dataset,
+        portalBlockFor({ fixture, height: BASE_RESTART_BLOCK, includeTransfers: false }),
+      )
+      await runPortalFixture({
+        fixture,
+        plan: portalPlanFor({
+          fixture,
+          server,
+          startBlock: BASE_RESTART_BLOCK,
+          toBlock: BASE_RESTART_BLOCK,
+        }),
+        database: isolated.database,
+      })
+
+      server.setBlock(fixture.dataset, portalBlockFor({ fixture }))
+      await runPortalFixture({
+        fixture,
+        plan: portalPlanFor({ fixture, server }),
+        database: isolated.database,
+      })
+
+      expect(await readRows({ pool: isolated.pool, chainId: fixture.chainId })).toEqual(
+        fixture.expectedRows,
+      )
+      expect(await readCursor({ pool: isolated.pool, chainId: fixture.chainId })).toEqual({
+        height: BASE_RESTART_BLOCK,
+        hash: hashFor(BASE_RESTART_BLOCK),
+      })
+    } finally {
+      server.close()
+      await isolated.fixture.close()
+    }
+  })
+
+  test('keeps a controlled 529 Retry-After deadline visible before Donations state advances, then resumes', async () => {
+    const fixture = PRODUCTION_DONATION_FIXTURES[0]!
+    const server = createControlledPortalServer([fixture])
+    const isolated = await createIsolatedDonationDatabase({ chainId: fixture.chainId })
+    try {
+      const plan = portalPlanFor({
+        fixture,
+        server,
+        deadlineMs: 9_999,
+        retryScheduleMs: [1],
+      })
+      server.setMode('retry')
+      await expect(runPortalFixture({ fixture, plan, database: isolated.database })).rejects.toThrow(
+        'Portal retry deadline exceeded after 20 minutes',
+      )
+      await assertNoDurableProgress({ pool: isolated.pool, fixture })
+      expect(server.requests).toHaveLength(1)
+
+      server.setMode('data')
+      await runPortalFixture({ fixture, plan, database: isolated.database })
+      expect(await readRows({ pool: isolated.pool, chainId: fixture.chainId })).toEqual(
+        fixture.expectedRows,
+      )
+    } finally {
+      server.close()
+      await isolated.fixture.close()
+    }
+  })
+
+  test('keeps malformed Portal data visible before Donations state advances, then resumes', async () => {
+    const fixture = PRODUCTION_DONATION_FIXTURES[2]!
+    const server = createControlledPortalServer([fixture])
+    const isolated = await createIsolatedDonationDatabase({ chainId: fixture.chainId })
+    try {
+      const plan = portalPlanFor({ fixture, server })
+      server.setMode('malformed')
+      await expect(runPortalFixture({ fixture, plan, database: isolated.database })).rejects.toThrow()
+      await assertNoDurableProgress({ pool: isolated.pool, fixture })
+
+      server.setMode('data')
+      await runPortalFixture({ fixture, plan, database: isolated.database })
+      expect(await readRows({ pool: isolated.pool, chainId: fixture.chainId })).toEqual(
+        fixture.expectedRows,
+      )
+    } finally {
+      server.close()
+      await isolated.fixture.close()
+    }
+  })
+
+  test('leaves Donations state untouched for a controlled idle Portal response', async () => {
+    const fixture = PRODUCTION_DONATION_FIXTURES[4]!
+    const server = createControlledPortalServer([fixture])
+    const isolated = await createIsolatedDonationDatabase({ chainId: fixture.chainId })
+    try {
+      const plan = portalPlanFor({ fixture, server })
+      server.setMode('idle')
+      expect(await readPortalBlocks({ plan, allowEmpty: true })).toEqual([])
+      await assertNoDurableProgress({ pool: isolated.pool, fixture })
+    } finally {
+      server.close()
+      await isolated.fixture.close()
+    }
   })
 })

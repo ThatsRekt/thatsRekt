@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import { CHAINS } from '../src/chains'
 import {
   buildPortalConfig,
+  createPortalHttpClient,
   PortalConfigurationError,
   PortalRetryDeadlineError,
   retryDelayMs,
@@ -176,6 +177,36 @@ describe('Registry Portal retry deadline', () => {
         deadlineMs: REGISTRY_PORTAL_RETRY_DEADLINE_MS,
       }),
     ).toThrow(PortalRetryDeadlineError)
+  })
+
+  test('uses Retry-After=10 from a controlled 529 transport response', async () => {
+    let requests = 0
+    const server = Bun.serve({
+      hostname: '127.0.0.1',
+      port: 0,
+      fetch() {
+        requests += 1
+        return new Response('retry later', {
+          status: 529,
+          headers: { 'Retry-After': '10' },
+        })
+      },
+    })
+
+    try {
+      const http = createPortalHttpClient({
+        headers: {},
+        deadlineMs: 9_999,
+        retryScheduleMs: [1],
+      })
+      await expect(http.get(`http://127.0.0.1:${server.port}`)).rejects.toThrow(
+        PortalRetryDeadlineError,
+      )
+    } finally {
+      server.stop(true)
+    }
+
+    expect(requests).toBe(1)
   })
 })
 

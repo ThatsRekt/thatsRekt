@@ -63,13 +63,15 @@ class DeadlineHttpClient extends HttpClient {
   constructor({
     headers,
     deadlineMs,
+    retryScheduleMs,
   }: {
     readonly headers: Readonly<Record<string, string>>
     readonly deadlineMs: number
+    readonly retryScheduleMs: readonly number[]
   }) {
     super({
       headers,
-      retrySchedule: [DONATIONS_PORTAL_RETRY_AFTER_MS],
+      retrySchedule: [...retryScheduleMs],
       httpTimeout: 30_000,
       log: null,
       retryAttempts: Number.MAX_SAFE_INTEGER,
@@ -98,6 +100,21 @@ class DeadlineHttpClient extends HttpClient {
     super.afterResponse(request, response)
   }
 }
+
+export const createPortalHttpClient = ({
+  headers,
+  deadlineMs = DONATIONS_PORTAL_RETRY_DEADLINE_MS,
+  retryScheduleMs = [DONATIONS_PORTAL_RETRY_AFTER_MS],
+}: {
+  readonly headers: Readonly<Record<string, string>>
+  readonly deadlineMs?: number
+  readonly retryScheduleMs?: readonly number[]
+}): HttpClient =>
+  new DeadlineHttpClient({
+    headers,
+    deadlineMs,
+    retryScheduleMs,
+  })
 
 const portalEndpoint = ({
   baseUrl,
@@ -148,9 +165,8 @@ export const buildPortalConfig = ({
   return {
     url,
     headers,
-    http: new DeadlineHttpClient({
+    http: createPortalHttpClient({
       headers,
-      deadlineMs: DONATIONS_PORTAL_RETRY_DEADLINE_MS,
     }),
   }
 }

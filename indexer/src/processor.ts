@@ -11,7 +11,7 @@ import { EvmBatchProcessor } from '@subsquid/evm-processor'
 import { type Store, type TypeormDatabase } from '@subsquid/typeorm-store'
 import { events } from './abi/ThatsRekt'
 import type { ChainConfig } from './chains'
-import { buildPortalConfig } from './portal'
+import { buildPortalConfig, type PortalConfig } from './portal'
 
 const requireEnv = (key: string): string => {
   const value = process.env[key]
@@ -133,6 +133,31 @@ const buildRpcProcessor = ({
   }
 }
 
+export const buildRegistryPortalDataSource = ({
+  portal,
+  contractAddress,
+  startBlock,
+}: {
+  readonly portal: PortalConfig
+  readonly contractAddress: string
+  readonly startBlock: number
+}): EVMDataSource<typeof LOG_FIELDS> =>
+  new DataSourceBuilder()
+    .setPortal({
+      url: portal.url,
+      http: portal.http,
+    })
+    .setFields(LOG_FIELDS)
+    .setBlockRange({ from: startBlock })
+    .includeAllBlocks({ from: startBlock })
+    .addLog({
+      where: {
+        address: [contractAddress],
+        topic0: [...SUBSCRIBED_TOPICS],
+      },
+    })
+    .build()
+
 const buildPortalProcessor = ({
   chain,
   contractAddress,
@@ -150,21 +175,11 @@ const buildPortalProcessor = ({
     source: chain.source,
     environment: process.env,
   })
-  const dataSource = new DataSourceBuilder()
-    .setPortal({
-      url: portal.url,
-      http: portal.http,
-    })
-    .setFields(LOG_FIELDS)
-    .setBlockRange({ from: startBlock })
-    .includeAllBlocks({ from: startBlock })
-    .addLog({
-      where: {
-        address: [contractAddress],
-        topic0: [...SUBSCRIBED_TOPICS],
-      },
-    })
-    .build()
+  const dataSource = buildRegistryPortalDataSource({
+    portal,
+    contractAddress,
+    startBlock,
+  })
 
   return {
     kind: 'portal',
