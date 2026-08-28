@@ -12,10 +12,19 @@ export interface PortalEnvironment {
   readonly PORTAL_API_KEY?: string
 }
 
+export interface PortalRetryObserver {
+  onRetry(input: {
+    readonly retryAfterSeconds: number
+    readonly retryCount: number
+  }): void
+  onDeadline(input: { readonly retryCount: number }): void
+}
+
 export interface PortalConfig {
   readonly url: string
   readonly headers: Readonly<Record<string, string>>
   readonly http: HttpClient
+  readonly bindRetryObserver: (observer: PortalRetryObserver) => void
 }
 
 export class DonationsPortalConfigurationError extends Error {
@@ -79,29 +88,53 @@ class DeadlineHttpClient extends HttpClient {
     this.#deadlineMs = deadlineMs
   }
 
+  #retryObserver: PortalRetryObserver | undefined
+  #retryCount = 0
+
+  setRetryObserver(observer: PortalRetryObserver): void {
+    this.#retryObserver = observer
+  }
+
   protected override beforeRetryPause(
     request: FetchRequest,
     reason: Error | HttpResponse,
     pause: number,
   ): void {
     const nowMs = Date.now()
+    const retryCount = this.#retryCount + 1
     this.#failureStartedAtMs ??= nowMs
-    assertRetryWithinDeadline({
-      startedAtMs: this.#failureStartedAtMs,
-      nowMs,
-      retryAfterMs: pause,
-      deadlineMs: this.#deadlineMs,
+    try {
+      assertRetryWithinDeadline({
+        startedAtMs: this.#failureStartedAtMs,
+        nowMs,
+        retryAfterMs: pause,
+        deadlineMs: this.#deadlineMs,
+      })
+    } catch (error) {
+      if (error instanceof DonationsPortalRetryDeadlineError) {
+        this.#retryCount = retryCount
+        this.#retryObserver?.onDeadline({ retryCount })
+      }
+      throw error
+    }
+    this.#retryCount = retryCount
+    this.#retryObserver?.onRetry({
+      retryAfterSeconds: pause / 1_000,
+      retryCount,
     })
     super.beforeRetryPause(request, reason, pause)
   }
 
   protected override afterResponse(request: FetchRequest, response: HttpResponse): void {
-    if (response.ok) this.#failureStartedAtMs = undefined
+    if (response.ok) {
+      this.#failureStartedAtMs = undefined
+      this.#retryCount = 0
+    }
     super.afterResponse(request, response)
   }
 }
 
-export const createPortalHttpClient = ({
+const createDeadlineHttpClient = ({
   headers,
   deadlineMs = DONATIONS_PORTAL_RETRY_DEADLINE_MS,
   retryScheduleMs = [DONATIONS_PORTAL_RETRY_AFTER_MS],
@@ -109,12 +142,32 @@ export const createPortalHttpClient = ({
   readonly headers: Readonly<Record<string, string>>
   readonly deadlineMs?: number
   readonly retryScheduleMs?: readonly number[]
-}): HttpClient =>
+}): DeadlineHttpClient =>
   new DeadlineHttpClient({
     headers,
     deadlineMs,
     retryScheduleMs,
   })
+
+export const createPortalHttpClient = ({
+  headers,
+  deadlineMs = DONATIONS_PORTAL_RETRY_DEADLINE_MS,
+  retryScheduleMs = [DONATIONS_PORTAL_RETRY_AFTER_MS],
+  retryObserver,
+}: {
+  readonly headers: Readonly<Record<string, string>>
+  readonly deadlineMs?: number
+  readonly retryScheduleMs?: readonly number[]
+  readonly retryObserver?: PortalRetryObserver
+}): HttpClient => {
+  const http = createDeadlineHttpClient({
+    headers,
+    deadlineMs,
+    retryScheduleMs,
+  })
+  if (retryObserver !== undefined) http.setRetryObserver(retryObserver)
+  return http
+}
 
 const portalEndpoint = ({
   baseUrl,
@@ -162,11 +215,15 @@ export const buildPortalConfig = ({
       ? {}
       : { 'x-api-key': apiKey }
 
+  const http = createDeadlineHttpClient({
+    headers,
+  })
   return {
     url,
     headers,
-    http: createPortalHttpClient({
-      headers,
-    }),
+    http,
+    bindRetryObserver(observer: PortalRetryObserver): void {
+      http.setRetryObserver(observer)
+    },
   }
 }

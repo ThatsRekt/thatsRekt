@@ -97,6 +97,21 @@ describe('conditional donation cursor commits', () => {
     expect(await donationCount(chainId)).toBe('1')
   })
 
+  test('exposes the exact durable classification only after the cursor transaction commits', async () => {
+    const chainId = allocateTestChainId()
+    const database = createDonationDatabase({ pool, chainId })
+    await database.connect()
+
+    await database.transact(infoAt(101, '0x101'), async (client) => {
+      await upsertDonation(client, rowAt({ chainId, blockNumber: 101 }))
+    })
+
+    expect(database.lastCommittedCursor).toEqual({
+      cursor: { height: 101, hash: '0x101' },
+      classification: 'advanced',
+    })
+  })
+
 
   test('keeps the higher cursor during delayed replays while donations remain idempotent', async () => {
     const { chainId, database } = await createCursorTestDatabase()

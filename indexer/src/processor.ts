@@ -1,5 +1,5 @@
 import 'dotenv/config'
-import { run as runBatchProcessor } from '@subsquid/batch-processor'
+import { Processor as BatchProcessor } from '@subsquid/batch-processor'
 import { augmentBlock } from '@subsquid/evm-objects'
 import {
   DataSourceBuilder,
@@ -11,7 +11,16 @@ import { EvmBatchProcessor } from '@subsquid/evm-processor'
 import { type Store, type TypeormDatabase } from '@subsquid/typeorm-store'
 import { events } from './abi/ThatsRekt'
 import type { ChainConfig } from './chains'
-import { buildPortalConfig, type PortalConfig } from './portal'
+import {
+  buildPortalConfig,
+  PortalRetryDeadlineError,
+  type PortalConfig,
+} from './portal'
+import {
+  createObservedFinalDatabase,
+  createObservedPortalDataSource,
+  createPortalIngestionEvents,
+} from './ingestionEvents'
 
 const requireEnv = (key: string): string => {
   const value = process.env[key]
@@ -83,6 +92,9 @@ export interface BuiltPortalProcessor {
   readonly chain: ChainConfig
   readonly contractAddress: string
   readonly dataSource: EVMDataSource<typeof LOG_FIELDS>
+  // Test fixtures can provide a directly built source. Production sources always
+  // retain this binding so retry events use the same authenticated transport.
+  readonly portal?: PortalConfig
 }
 
 export type BuiltProcessor = BuiltRpcProcessor | BuiltPortalProcessor
@@ -203,6 +215,7 @@ const buildPortalProcessor = ({
     chain,
     contractAddress,
     dataSource,
+    portal,
   }
 }
 
@@ -230,11 +243,66 @@ export const runProcessor = ({
   }
 
   const logger = createLogger('thatsrekt:registry-portal')
-  runBatchProcessor(built.dataSource, database, async (context) =>
-    handler({
-      log: logger,
-      store: context.store,
-      blocks: context.blocks.map(augmentBlock),
-    }),
-  )
+  const ingestion = createPortalIngestionEvents({
+    family: 'registry',
+    chain: built.chain.slug,
+    writeEvent: (event) => logger.info(event, 'Portal ingestion event'),
+  })
+  built.portal?.bindRetryObserver({
+    onRetry: ({ retryAfterSeconds, retryCount }) => {
+      ingestion.emitPortalRetry({ retryAfterSeconds, retryCount })
+    },
+    onDeadline: () => {
+      ingestion.emitPortalDeadline()
+    },
+  })
+  const observedDatabase = createObservedFinalDatabase({
+    database,
+    ingestion,
+    afterCommit: ({ nextHead }) => {
+      ingestion.recordDurableCursor({ height: nextHead.height })
+      ingestion.emitCursorAdvanced()
+      ingestion.emitCursorClassification({ classification: 'advanced' })
+      ingestion.emitFreshnessSample()
+    },
+  })
+  const observedSource = createObservedPortalDataSource({
+    source: built.dataSource,
+    ingestion,
+    isDeadlineError: (error) => error instanceof PortalRetryDeadlineError,
+  })
+
+  const runPortalProcessor = async (): Promise<void> => {
+    let exitCode = 0
+    try {
+      await new BatchProcessor(
+        observedSource,
+        observedDatabase,
+        async (context) =>
+          handler({
+            log: logger,
+            store: context.store,
+            blocks: context.blocks.map(augmentBlock),
+          }),
+      ).run()
+      ingestion.emitRunOutcome({ outcome: 'success' })
+    } catch {
+      ingestion.emitFatal()
+      ingestion.emitRunOutcome({ outcome: 'failed' })
+      logger.fatal({}, 'Registry Portal ingestion failed')
+      exitCode = 1
+    } finally {
+      try {
+        await database.disconnect()
+      } catch {
+        ingestion.emitFatal()
+        ingestion.emitRunOutcome({ outcome: 'failed' })
+        logger.error({}, 'Registry Portal database shutdown failed')
+        exitCode = 1
+      }
+    }
+    process.exit(exitCode)
+  }
+
+  void runPortalProcessor()
 }

@@ -132,4 +132,64 @@ describe('Donations Portal retry deadline', () => {
 
     expect(requests).toBe(1)
   })
+
+  test('reports only numeric retry and deadline state to its observer', async () => {
+    const retryEvents: {
+      readonly retryAfterSeconds: number
+      readonly retryCount: number
+    }[] = []
+    let retryRequests = 0
+    const retryServer = Bun.serve({
+      hostname: '127.0.0.1',
+      port: 0,
+      fetch() {
+        retryRequests += 1
+        return retryRequests === 1
+          ? new Response('retry', {
+            status: 529,
+            headers: { 'Retry-After': '0' },
+          })
+          : Response.json({})
+      },
+    })
+    const deadlineEvents: { readonly retryCount: number }[] = []
+    const deadlineServer = Bun.serve({
+      hostname: '127.0.0.1',
+      port: 0,
+      fetch() {
+        return new Response('retry', {
+          status: 529,
+          headers: { 'Retry-After': '10' },
+        })
+      },
+    })
+
+    try {
+      await createPortalHttpClient({
+        headers: {},
+        retryScheduleMs: [1],
+        retryObserver: {
+          onRetry: (event) => retryEvents.push(event),
+          onDeadline: () => {},
+        },
+      }).get(`http://127.0.0.1:${retryServer.port}`)
+      await expect(
+        createPortalHttpClient({
+          headers: {},
+          deadlineMs: 9_999,
+          retryScheduleMs: [1],
+          retryObserver: {
+            onRetry: () => {},
+            onDeadline: (event) => deadlineEvents.push(event),
+          },
+        }).get(`http://127.0.0.1:${deadlineServer.port}`),
+      ).rejects.toThrow(DonationsPortalRetryDeadlineError)
+    } finally {
+      retryServer.stop(true)
+      deadlineServer.stop(true)
+    }
+
+    expect(retryEvents).toEqual([{ retryAfterSeconds: 0, retryCount: 1 }])
+    expect(deadlineEvents).toEqual([{ retryCount: 1 }])
+  })
 })

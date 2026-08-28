@@ -1,13 +1,21 @@
 import 'dotenv/config'
-import { run as runBatchProcessor } from '@subsquid/batch-processor'
+import { Processor as BatchProcessor } from '@subsquid/batch-processor'
 import { createLogger } from '@subsquid/logger'
 import pkg from 'pg'
 import { resolveToBlock } from './blockRange.js'
 import { chainConfigFor } from './chainConfig.js'
 import { createDonationDatabase } from './cursor.js'
+import {
+  createObservedFinalDatabase,
+  createObservedPortalDataSource,
+  createPortalIngestionEvents,
+} from './ingestionEvents.js'
 import { resolveCurrentDonee } from './doneeResolver.js'
 import { ensureDonationTable } from './donationStore.js'
-import { buildPortalConfig } from './portal.js'
+import {
+  buildPortalConfig,
+  DonationsPortalRetryDeadlineError,
+} from './portal.js'
 import { buildDonationPortalPlan, indexDonationBlocks } from './processor.js'
 import { erc20Addresses } from './tokenAllowlist.js'
 
@@ -80,11 +88,24 @@ const main = async (): Promise<void> => {
     )
   }
 
+  const ingestion = createPortalIngestionEvents({
+    family: 'donations',
+    chain: chain.slug,
+    writeEvent: (event) => logger.info(event, 'Portal ingestion event'),
+  })
   const rpcUrl = requireEnv(chain.headRpcEnvKey)
   const databaseUrl = requireEnv('DONATIONS_DB_URL')
   const portal = buildPortalConfig({
     dataset: chain.portalDataset,
     environment: process.env,
+  })
+  portal.bindRetryObserver({
+    onRetry: ({ retryAfterSeconds, retryCount }) => {
+      ingestion.emitPortalRetry({ retryAfterSeconds, retryCount })
+    },
+    onDeadline: () => {
+      ingestion.emitPortalDeadline()
+    },
   })
   const startBlock = parseNonNegativeInteger({
     value: process.env[chain.startBlockEnvKey] ?? String(chain.defaultStartBlock),
@@ -101,8 +122,9 @@ const main = async (): Promise<void> => {
     idleTimeoutMillis: 30_000,
     connectionTimeoutMillis: 5_000,
   })
-  pool.on('error', (error) => {
-    logger.error({ err: error }, 'Donations database idle client error')
+  pool.on('error', () => {
+    ingestion.emitFatal()
+    logger.error({}, 'Donations database idle client error')
   })
 
   try {
@@ -114,6 +136,45 @@ const main = async (): Promise<void> => {
         fallback: doneeSeed,
       }))
     ).toLowerCase()
+    const database = createDonationDatabase({ pool, chainId: chain.chainId })
+    const observedDatabase = createObservedFinalDatabase({
+      database,
+      ingestion,
+      afterCommit: () => {
+        const committed = database.lastCommittedCursor
+        if (committed === undefined) {
+          throw new Error('Donation database committed without a cursor observation')
+        }
+        ingestion.recordDurableCursor({ height: committed.cursor.height })
+        if (committed.classification === 'advanced') {
+          ingestion.emitCursorAdvanced()
+          ingestion.emitFreshnessSample()
+        }
+        ingestion.emitCursorClassification({
+          classification: committed.classification,
+        })
+      },
+    })
+    await observedDatabase.connect()
+
+    // An idle run still samples a real Portal head; it never substitutes the
+    // RPC planning head for the Portal source's own observation.
+    const headProbe = buildDonationPortalPlan({
+      portal,
+      startBlock,
+      toBlock: startBlock,
+      donee,
+      doneeTopic: addressToTopic(donee),
+      erc20TokenAddresses: erc20Addresses(chain.chainId),
+    })
+    const observedHeadProbe = createObservedPortalDataSource({
+      source: headProbe.source,
+      ingestion,
+      isDeadlineError: (error) =>
+        error instanceof DonationsPortalRetryDeadlineError,
+    })
+    await observedHeadProbe.getFinalizedHead()
+
     const head = await fetchHeadHeight(rpcUrl)
     const toBlock = resolveToBlock({
       startBlock,
@@ -121,16 +182,7 @@ const main = async (): Promise<void> => {
       finalityConfirmation,
     })
     if (toBlock === undefined) {
-      logger.info(
-        {
-          chain: chain.slug,
-          startBlock,
-          head,
-          finalityConfirmation,
-        },
-        'No finalized Donations Portal blocks are ready',
-      )
-      await pool.end()
+      ingestion.emitRunOutcome({ outcome: 'idle' })
       return
     }
 
@@ -141,6 +193,12 @@ const main = async (): Promise<void> => {
       donee,
       doneeTopic: addressToTopic(donee),
       erc20TokenAddresses: erc20Addresses(chain.chainId),
+    })
+    const observedSource = createObservedPortalDataSource({
+      source: plan.source,
+      ingestion,
+      isDeadlineError: (error) =>
+        error instanceof DonationsPortalRetryDeadlineError,
     })
 
     await ensureDonationTable(pool)
@@ -155,18 +213,9 @@ const main = async (): Promise<void> => {
       'Starting finalized Donations Portal ingestion',
     )
 
-    process.on('exit', (code) => {
-      if (code === 0) {
-        logger.info(
-          { chain: chain.slug, to: plan.range.to },
-          'Reached finalized Portal range',
-        )
-      }
-    })
-
-    runBatchProcessor(
-      plan.source,
-      createDonationDatabase({ pool, chainId: chain.chainId }),
+    await new BatchProcessor(
+      observedSource,
+      observedDatabase,
       async (context) =>
         indexDonationBlocks({
           blocks: context.blocks,
@@ -175,17 +224,28 @@ const main = async (): Promise<void> => {
           chainSlug: chain.slug,
           donee,
         }),
-    )
-  } catch (error) {
-    await pool.end()
-    throw error
+    ).run()
+    ingestion.emitRunOutcome({ outcome: 'success' })
+  } catch {
+    ingestion.emitFatal()
+    ingestion.emitRunOutcome({ outcome: 'failed' })
+    logger.fatal({}, 'Donations Portal ingestion failed')
+    process.exitCode = 1
+  } finally {
+    try {
+      await pool.end()
+    } catch {
+      ingestion.emitFatal()
+      ingestion.emitRunOutcome({ outcome: 'failed' })
+      logger.error({}, 'Donations database shutdown failed')
+      process.exitCode = 1
+    }
   }
 }
 
-main().catch((error: unknown) => {
-  logger.fatal(
-    { err: error instanceof Error ? error : new Error('Unknown Donations Portal failure') },
-    'Donations Portal ingestion failed',
-  )
-  process.exitCode = 1
-})
+void main()
+  .then(() => process.exit(process.exitCode ?? 0))
+  .catch(() => {
+    logger.fatal({}, 'Donations Portal ingestion failed before initialization')
+    process.exit(1)
+  })

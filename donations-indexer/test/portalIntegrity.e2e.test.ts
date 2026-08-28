@@ -378,6 +378,7 @@ const portalPlanFor = ({
       ...(deadlineMs === undefined ? {} : { deadlineMs }),
       ...(retryScheduleMs === undefined ? {} : { retryScheduleMs }),
     }),
+    bindRetryObserver() {},
   }
 
   return buildDonationPortalPlan({

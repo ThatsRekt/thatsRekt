@@ -118,6 +118,7 @@ const startChildProcessor = () => {
           deadlineMs: 9_999,
           retryScheduleMs: [1],
         }),
+        bindRetryObserver() {},
       },
       contractAddress,
       startBlock,

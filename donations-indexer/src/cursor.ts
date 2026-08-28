@@ -12,6 +12,15 @@ export interface DonationCursor {
 
 export type CursorCommitOutcome = 'advanced' | 'idempotent' | 'stale'
 
+export interface DonationCursorCommit {
+  readonly cursor: DonationCursor
+  readonly classification: CursorCommitOutcome
+}
+
+export interface DonationDatabase extends FinalDatabase<PoolClient> {
+  readonly lastCommittedCursor: DonationCursorCommit | undefined
+}
+
 export class CursorConsistencyError extends Error {
   constructor(message: string) {
     super(message)
@@ -112,7 +121,7 @@ const commitCursor = async ({
   readonly client: PoolClient
   readonly chainId: number
   readonly next: DonationCursor
-}): Promise<CursorCommitOutcome> => {
+}): Promise<DonationCursorCommit> => {
   const before = await readCursor(client, chainId)
   const update = await client.query(CONDITIONAL_CURSOR_UPDATE_SQL, [
     next.height,
@@ -120,14 +129,26 @@ const commitCursor = async ({
     chainId,
   ])
   if (update.rowCount === 1) {
-    return before?.height === next.height && before.hash === next.hash
-      ? 'idempotent'
-      : 'advanced'
+    return Object.freeze({
+      cursor: Object.freeze({ ...next }),
+      classification:
+        before?.height === next.height && before.hash === next.hash
+          ? 'idempotent'
+          : 'advanced',
+    })
   }
 
-  return classifyZeroRowCursorUpdate({
-    stored: await readCursor(client, chainId),
+  const stored = await readCursor(client, chainId)
+  const classification = classifyZeroRowCursorUpdate({
+    stored,
     next,
+  })
+  if (stored === undefined) {
+    throw new CursorConsistencyError('Donation cursor row is missing')
+  }
+  return Object.freeze({
+    cursor: Object.freeze({ ...stored }),
+    classification,
   })
 }
 
@@ -155,36 +176,45 @@ export const createDonationDatabase = ({
 }: {
   readonly pool: Pool
   readonly chainId: number
-}): FinalDatabase<PoolClient> => ({
-  supportsHotBlocks: false,
+}): DonationDatabase => {
+  let lastCommittedCursor: DonationCursorCommit | undefined
 
-  async connect(): Promise<FinalDatabaseState> {
-    await ensureDonationCursorTable(pool, chainId)
-    const cursor = await readCursor(pool, chainId)
-    if (cursor === undefined) {
-      throw new CursorConsistencyError('Donation cursor seed was not persisted')
-    }
-    return cursor
-  },
+  return {
+    get lastCommittedCursor(): DonationCursorCommit | undefined {
+      return lastCommittedCursor
+    },
+    supportsHotBlocks: false,
 
-  async transact(
-    info: FinalTxInfo,
-    callback: (store: PoolClient) => Promise<void>,
-  ): Promise<void> {
-    const client = await pool.connect()
-    try {
-      await client.query('BEGIN')
-      await callback(client)
-      await commitCursor({
-        client,
-        chainId,
-        next: info.nextHead,
-      })
-      await client.query('COMMIT')
-    } catch (error) {
-      await rollbackAndRethrow({ client, error })
-    } finally {
-      client.release()
-    }
-  },
-})
+    async connect(): Promise<FinalDatabaseState> {
+      await ensureDonationCursorTable(pool, chainId)
+      const cursor = await readCursor(pool, chainId)
+      if (cursor === undefined) {
+        throw new CursorConsistencyError('Donation cursor seed was not persisted')
+      }
+      return cursor
+    },
+
+    async transact(
+      info: FinalTxInfo,
+      callback: (store: PoolClient) => Promise<void>,
+    ): Promise<void> {
+      let committedCursor: DonationCursorCommit | undefined
+      const client = await pool.connect()
+      try {
+        await client.query('BEGIN')
+        await callback(client)
+        committedCursor = await commitCursor({
+          client,
+          chainId,
+          next: info.nextHead,
+        })
+        await client.query('COMMIT')
+      } catch (error) {
+        await rollbackAndRethrow({ client, error })
+      } finally {
+        client.release()
+      }
+      lastCommittedCursor = committedCursor
+    },
+  }
+}
