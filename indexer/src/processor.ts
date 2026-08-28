@@ -10,6 +10,7 @@ import {
 import { createLogger, type Logger } from '@subsquid/logger'
 import { EvmBatchProcessor } from '@subsquid/evm-processor'
 import { type Store, type TypeormDatabase } from '@subsquid/typeorm-store'
+import { rollbackBlock } from '@subsquid/typeorm-store/lib/hot'
 import { DataSource } from 'typeorm'
 import { events } from './abi/ThatsRekt'
 import type { ChainConfig } from './chains'
@@ -232,6 +233,155 @@ export const buildProcessor = (chain: ChainConfig): BuiltProcessor => {
     : buildRpcProcessor({ chain, contractAddress, startBlock })
 }
 
+const asLogObject = (error: unknown): object =>
+  typeof error === 'object' && error !== null ? error : { error }
+
+const isObjectRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value)
+
+const assertValidLegacyHotChange = (change: unknown): void => {
+  if (!isObjectRecord(change)) {
+    throw new Error('Registry hot-change record is not an object')
+  }
+  if (
+    change.kind !== 'insert' &&
+    change.kind !== 'update' &&
+    change.kind !== 'delete'
+  ) {
+    throw new Error('Registry hot-change kind is invalid')
+  }
+  if (typeof change.table !== 'string' || change.table.length === 0) {
+    throw new Error('Registry hot-change table is invalid')
+  }
+  if (typeof change.id !== 'string' || change.id.length === 0) {
+    throw new Error('Registry hot-change entity id is invalid')
+  }
+  if (
+    'schema' in change &&
+    (typeof change.schema !== 'string' || change.schema.length === 0)
+  ) {
+    throw new Error('Registry hot-change schema is invalid')
+  }
+  if (
+    (change.kind === 'update' || change.kind === 'delete') &&
+    !isObjectRecord(change.fields)
+  ) {
+    throw new Error('Registry hot-change fields are invalid')
+  }
+}
+
+const reconcileLegacyHotBlocks = async (): Promise<number> => {
+  const dataSource = new DataSource(createOrmConfig())
+  try {
+    await dataSource.initialize()
+    return await dataSource.transaction('SERIALIZABLE', async (manager) => {
+      const relations = await manager.query<Array<{ relation: string | null }>>(
+        `SELECT to_regclass('squid_processor.hot_block')::text AS relation`,
+      )
+      if (relations.length !== 1) {
+        throw new Error('Registry hot-block catalog query returned an invalid result')
+      }
+      const relation = relations[0]?.relation
+      if (relation === null) return 0
+      if (relation !== 'squid_processor.hot_block') {
+        throw new Error('Registry hot-block catalog relation is invalid')
+      }
+
+      const hotBlocks = await manager.query<Array<{ height: number }>>(
+        `SELECT height
+           FROM squid_processor.hot_block
+          ORDER BY height DESC`,
+      )
+      if (hotBlocks.length === 0) return 0
+
+      const status = await manager.query<
+        Array<{ id: number; height: number; nonce: number }>
+      >(
+        `SELECT id, height, nonce
+           FROM squid_processor.status
+          WHERE id = 0
+          FOR UPDATE`,
+      )
+      if (
+        status.length !== 1 ||
+        !Number.isSafeInteger(status[0]?.height) ||
+        status[0].height < -1 ||
+        !Number.isSafeInteger(status[0]?.nonce)
+      ) {
+        throw new Error('Registry durable status row is missing or invalid')
+      }
+
+      // RPC ingestion leaves reversible unfinalized entity changes in hot_block.
+      // Portal ingestion is final-only, so atomically restore the durable status
+      // state before replaying those blocks from Portal.
+      const hotBlockHeights = new Set<number>()
+      for (const hotBlock of hotBlocks) {
+        if (
+          !Number.isSafeInteger(hotBlock.height) ||
+          hotBlock.height <= status[0].height
+        ) {
+          throw new Error(
+            'Registry hot-block height is invalid for the durable cursor',
+          )
+        }
+        hotBlockHeights.add(hotBlock.height)
+      }
+
+      const hotChanges = await manager.query<
+        Array<{ block_height: number; index: number; change: unknown }>
+      >(
+        `SELECT block_height, index, change
+           FROM squid_processor.hot_change_log
+          ORDER BY block_height DESC, index DESC`,
+      )
+      const hotChangeIndexes = new Map<number, number[]>()
+      for (const hotChange of hotChanges) {
+        if (
+          !Number.isSafeInteger(hotChange.block_height) ||
+          !hotBlockHeights.has(hotChange.block_height) ||
+          !Number.isSafeInteger(hotChange.index) ||
+          hotChange.index < 0
+        ) {
+          throw new Error('Registry hot-change position is invalid')
+        }
+        assertValidLegacyHotChange(hotChange.change)
+        const blockIndexes = hotChangeIndexes.get(hotChange.block_height) ?? []
+        blockIndexes.push(hotChange.index)
+        hotChangeIndexes.set(hotChange.block_height, blockIndexes)
+      }
+      for (const blockIndexes of hotChangeIndexes.values()) {
+        blockIndexes.sort((left, right) => left - right)
+        if (blockIndexes.some((index, position) => index !== position)) {
+          throw new Error('Registry hot-change indexes are not contiguous')
+        }
+      }
+
+      for (const hotBlock of hotBlocks) {
+        await rollbackBlock('squid_processor', manager, hotBlock.height)
+      }
+      await manager.query(
+        `UPDATE squid_processor.status
+            SET nonce = nonce + 1
+          WHERE id = 0`,
+      )
+      const updatedStatus = await manager.query<Array<{ nonce: number }>>(
+        `SELECT nonce
+           FROM squid_processor.status
+          WHERE id = 0`,
+      )
+      if (
+        updatedStatus.length !== 1 ||
+        updatedStatus[0]?.nonce !== status[0].nonce + 1
+      ) {
+        throw new Error('Registry durable status nonce was not incremented')
+      }
+      return hotBlocks.length
+    })
+  } finally {
+    if (dataSource.isInitialized) await dataSource.destroy()
+  }
+}
+
 export const runProcessor = ({
   built,
   database,
@@ -314,6 +464,13 @@ export const runProcessor = ({
   const runPortalProcessor = async (): Promise<void> => {
     let exitCode = 0
     try {
+      const reconciledHotBlocks = await reconcileLegacyHotBlocks()
+      if (reconciledHotBlocks > 0) {
+        logger.info(
+          { reconciled_hot_blocks: reconciledHotBlocks },
+          'Reconciled legacy Registry hot-block state',
+        )
+      }
       await new BatchProcessor(
         observedSource,
         observedDatabase,
@@ -325,10 +482,10 @@ export const runProcessor = ({
           }),
       ).run()
       ingestion.emitRunOutcome({ outcome: 'success' })
-    } catch {
+    } catch (error) {
       ingestion.emitFatal()
       ingestion.emitRunOutcome({ outcome: 'failed' })
-      logger.fatal({}, 'Registry Portal ingestion failed')
+      logger.fatal(asLogObject(error), 'Registry Portal ingestion failed')
       exitCode = 1
     } finally {
       freshnessSampler.stop()
@@ -336,18 +493,18 @@ export const runProcessor = ({
         if (durableProgressDataSource.isInitialized) {
           await durableProgressDataSource.destroy()
         }
-      } catch {
+      } catch (error) {
         ingestion.emitFatal()
         ingestion.emitRunOutcome({ outcome: 'failed' })
-        logger.error({}, 'Registry durable-progress database shutdown failed')
+        logger.error(asLogObject(error), 'Registry durable-progress database shutdown failed')
         exitCode = 1
       }
       try {
         await database.disconnect()
-      } catch {
+      } catch (error) {
         ingestion.emitFatal()
         ingestion.emitRunOutcome({ outcome: 'failed' })
-        logger.error({}, 'Registry Portal database shutdown failed')
+        logger.error(asLogObject(error), 'Registry Portal database shutdown failed')
         exitCode = 1
       }
     }

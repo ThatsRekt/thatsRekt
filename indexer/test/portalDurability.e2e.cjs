@@ -14,8 +14,10 @@ const {
 const BLOCK_HEIGHT = 50_517_211
 const BLOCK_HASH = `0x${BLOCK_HEIGHT.toString(16).padStart(64, '0')}`
 const PARENT_HASH = `0x${(BLOCK_HEIGHT - 1).toString(16).padStart(64, '0')}`
+const BASE_HASH = `0x${(BLOCK_HEIGHT - 2).toString(16).padStart(64, '0')}`
 const CONTRACT = '0xBfaEEE9662b4c037De24e5Caa65815350d57b89A'
 const WHITELISTER = '0x000000000000000000000000000000000000c0de'
+const HOT_ONLY_WHITELISTER = '0x000000000000000000000000000000000000dead'
 const TRANSACTION_HASH = `0x${'c0ffee'.padStart(64, '0')}`
 
 const addressWord = (address) => address.slice(2).padStart(64, '0')
@@ -42,6 +44,17 @@ const controlledRegistryBlock = Object.freeze({
       logIndex: 0,
     },
   ],
+})
+
+const controlledRegistryParentBlock = Object.freeze({
+  header: {
+    number: BLOCK_HEIGHT - 1,
+    hash: PARENT_HASH,
+    parentHash: BASE_HASH,
+    timestamp: controlledRegistryBlock.header.timestamp - 12,
+  },
+  transactions: [],
+  logs: [],
 })
 
 const createControlledPortalServer = async () => {
@@ -78,7 +91,9 @@ const createControlledPortalServer = async () => {
       typeof query.fromBlock === 'number'
         ? query.fromBlock
         : undefined
-    if (streamFromBlock !== BLOCK_HEIGHT) {
+    const canServeTarget =
+      streamFromBlock === BLOCK_HEIGHT || streamFromBlock === BLOCK_HEIGHT - 1
+    if (!canServeTarget) {
       const finalizedHeight =
         streamFromBlock !== undefined && streamFromBlock > BLOCK_HEIGHT
           ? BLOCK_HEIGHT
@@ -113,7 +128,10 @@ const createControlledPortalServer = async () => {
         'x-sqd-finalized-head-number': String(BLOCK_HEIGHT),
         'x-sqd-finalized-head-hash': BLOCK_HASH,
       })
-      response.end(`${JSON.stringify(controlledRegistryBlock)}\n`)
+      const blocks = streamFromBlock === BLOCK_HEIGHT - 1
+        ? [controlledRegistryParentBlock, controlledRegistryBlock]
+        : [controlledRegistryBlock]
+      response.end(`${blocks.map((block) => JSON.stringify(block)).join('\n')}\n`)
       return
     }
 
@@ -161,6 +179,52 @@ const assertNoDurableProgress = async (pool) => {
     const { rows } = await pool.query(`SELECT COUNT(*)::int AS count FROM ${table}`)
     assert.equal(rows[0].count, 0, `${table} must remain uncommitted`)
   }
+}
+const seedLegacyHotState = async ({
+  pool,
+  statusHeight,
+  statusHash,
+  hotHeight,
+  hotHash,
+  change,
+  hotChangeIndex = 0,
+}) => {
+  await pool.query(
+    `INSERT INTO squid_processor.status (id, height, hash, nonce)
+     VALUES (0, $1, $2, 1)`,
+    [statusHeight, statusHash],
+  )
+  await pool.query(
+    `CREATE TABLE squid_processor.hot_block (
+       height int4 PRIMARY KEY,
+       hash text NOT NULL
+     );
+     CREATE TABLE squid_processor.hot_change_log (
+       block_height int4 NOT NULL
+         REFERENCES squid_processor.hot_block ON DELETE CASCADE,
+       index int4 NOT NULL,
+       change jsonb NOT NULL,
+       PRIMARY KEY (block_height, index)
+     );
+     CREATE TABLE squid_processor.template_registry (
+       key text NOT NULL,
+       value text NOT NULL,
+       type boolean NOT NULL,
+       block_number int NOT NULL,
+       height int NOT NULL,
+       PRIMARY KEY (key, value, type, block_number)
+     )`,
+  )
+  await pool.query(
+    `INSERT INTO squid_processor.hot_block (height, hash)
+     VALUES ($1, $2)`,
+    [hotHeight, hotHash],
+  )
+  await pool.query(
+    `INSERT INTO squid_processor.hot_change_log (block_height, index, change)
+     VALUES ($1, $2, $3::jsonb)`,
+    [hotHeight, hotChangeIndex, JSON.stringify(change)],
+  )
 }
 
 test('refuses a non-loopback Registry durable fixture target before spawning a processor', () => {
@@ -266,6 +330,254 @@ test('persists Registry state only after a real Portal source succeeds through T
       added: true,
       block_number: BLOCK_HEIGHT,
       tx_hash: TRANSACTION_HASH,
+    }])
+  } finally {
+    await server.close()
+    await fixture.close()
+  }
+})
+
+test('reconciles legacy hot-block state before final-only Portal resume', async () => {
+  const fixture = await createIsolatedRegistryFixture()
+  const server = await createControlledPortalServer()
+  try {
+    await seedLegacyHotState({
+      pool: fixture.pool,
+      statusHeight: BLOCK_HEIGHT - 2,
+      statusHash: BASE_HASH,
+      hotHeight: BLOCK_HEIGHT - 1,
+      hotHash: PARENT_HASH,
+      change: {
+        kind: 'insert',
+        table: 'whitelister',
+        id: HOT_ONLY_WHITELISTER,
+      },
+    })
+    await fixture.pool.query(
+      `INSERT INTO whitelister (id, is_currently_whitelisted)
+       VALUES ($1, true)`,
+      [HOT_ONLY_WHITELISTER],
+    )
+
+    const seededStatus = await fixture.pool.query(
+      'SELECT height, hash FROM squid_processor.status WHERE id = 0',
+    )
+    assert.deepEqual(seededStatus.rows, [{
+      height: BLOCK_HEIGHT - 2,
+      hash: BASE_HASH,
+    }])
+    const seededHotBlocks = await fixture.pool.query(
+      'SELECT height, hash FROM squid_processor.hot_block',
+    )
+    assert.deepEqual(seededHotBlocks.rows, [{
+      height: BLOCK_HEIGHT - 1,
+      hash: PARENT_HASH,
+    }])
+
+    const resumed = await runRegistryPortalFixture({
+      databaseUrl: fixture.databaseUrl,
+      portalUrl: server.url,
+      startBlock: BLOCK_HEIGHT - 1,
+      endBlock: BLOCK_HEIGHT,
+      contractAddress: CONTRACT,
+    })
+    assert.equal(resumed.timedOut, false)
+    assert.equal(resumed.exitCode, 0, `${resumed.stdout}\n${resumed.stderr}`)
+
+    const status = await fixture.pool.query(
+      'SELECT height, hash FROM squid_processor.status WHERE id = 0',
+    )
+    assert.deepEqual(status.rows, [{ height: BLOCK_HEIGHT, hash: BLOCK_HASH }])
+    const hotBlocks = await fixture.pool.query(
+      'SELECT height, hash FROM squid_processor.hot_block',
+    )
+    const rolledBackHotEntity = await fixture.pool.query(
+      'SELECT id FROM whitelister WHERE id = $1',
+      [HOT_ONLY_WHITELISTER],
+    )
+    assert.deepEqual(rolledBackHotEntity.rows, [])
+    assert.deepEqual(hotBlocks.rows, [])
+    const changes = await fixture.pool.query(
+      'SELECT added, block_number, tx_hash FROM whitelist_change',
+    )
+    assert.deepEqual(changes.rows, [{
+      added: true,
+      block_number: BLOCK_HEIGHT,
+      tx_hash: TRANSACTION_HASH,
+    }])
+
+    const restarted = await runRegistryPortalFixture({
+      databaseUrl: fixture.databaseUrl,
+      portalUrl: server.url,
+      startBlock: BLOCK_HEIGHT - 1,
+      endBlock: BLOCK_HEIGHT,
+      contractAddress: CONTRACT,
+    })
+    assert.equal(restarted.timedOut, false)
+    assert.equal(restarted.exitCode, 0)
+    const changesAfterRestart = await fixture.pool.query(
+      'SELECT added, block_number, tx_hash FROM whitelist_change',
+    )
+    assert.deepEqual(changesAfterRestart.rows, changes.rows)
+  } finally {
+    await server.close()
+    await fixture.close()
+  }
+})
+
+test('rejects malformed legacy hot changes without mutating durable state', async () => {
+  const fixture = await createIsolatedRegistryFixture()
+  const server = await createControlledPortalServer()
+  try {
+    await seedLegacyHotState({
+      pool: fixture.pool,
+      statusHeight: BLOCK_HEIGHT - 2,
+      statusHash: BASE_HASH,
+      hotHeight: BLOCK_HEIGHT - 1,
+      hotHash: PARENT_HASH,
+      change: {
+        kind: 'invalid',
+        table: 'whitelister',
+        id: HOT_ONLY_WHITELISTER,
+      },
+    })
+    await fixture.pool.query(
+      `INSERT INTO whitelister (id, is_currently_whitelisted)
+       VALUES ($1, true)`,
+      [HOT_ONLY_WHITELISTER],
+    )
+
+    const rejected = await runRegistryPortalFixture({
+      databaseUrl: fixture.databaseUrl,
+      portalUrl: server.url,
+      startBlock: BLOCK_HEIGHT - 1,
+      endBlock: BLOCK_HEIGHT,
+      contractAddress: CONTRACT,
+    })
+    assert.equal(rejected.timedOut, false)
+    assert.notEqual(rejected.exitCode, 0)
+
+    const state = await fixture.pool.query(
+      `SELECT s.height, s.hash, s.nonce, h.height AS hot_height,
+              EXISTS (SELECT FROM whitelister WHERE id = $1) AS hot_entity_exists
+         FROM squid_processor.status s
+         JOIN squid_processor.hot_block h ON true
+        WHERE s.id = 0`,
+      [HOT_ONLY_WHITELISTER],
+    )
+    assert.deepEqual(state.rows, [{
+      height: BLOCK_HEIGHT - 2,
+      hash: BASE_HASH,
+      nonce: 1,
+      hot_height: BLOCK_HEIGHT - 1,
+      hot_entity_exists: true,
+    }])
+  } finally {
+    await server.close()
+    await fixture.close()
+  }
+})
+
+test('rejects hot blocks at or below the durable cursor without rollback', async () => {
+  const fixture = await createIsolatedRegistryFixture()
+  const server = await createControlledPortalServer()
+  try {
+    await seedLegacyHotState({
+      pool: fixture.pool,
+      statusHeight: BLOCK_HEIGHT - 1,
+      statusHash: PARENT_HASH,
+      hotHeight: BLOCK_HEIGHT - 1,
+      hotHash: PARENT_HASH,
+      change: {
+        kind: 'insert',
+        table: 'whitelister',
+        id: HOT_ONLY_WHITELISTER,
+      },
+    })
+    await fixture.pool.query(
+      `INSERT INTO whitelister (id, is_currently_whitelisted)
+       VALUES ($1, true)`,
+      [HOT_ONLY_WHITELISTER],
+    )
+
+    const rejected = await runRegistryPortalFixture({
+      databaseUrl: fixture.databaseUrl,
+      portalUrl: server.url,
+      startBlock: BLOCK_HEIGHT - 1,
+      endBlock: BLOCK_HEIGHT,
+      contractAddress: CONTRACT,
+    })
+    assert.equal(rejected.timedOut, false)
+    assert.notEqual(rejected.exitCode, 0)
+
+    const state = await fixture.pool.query(
+      `SELECT s.height, s.hash, s.nonce, h.height AS hot_height,
+              EXISTS (SELECT FROM whitelister WHERE id = $1) AS hot_entity_exists
+         FROM squid_processor.status s
+         JOIN squid_processor.hot_block h ON true
+        WHERE s.id = 0`,
+      [HOT_ONLY_WHITELISTER],
+    )
+    assert.deepEqual(state.rows, [{
+      height: BLOCK_HEIGHT - 1,
+      hash: PARENT_HASH,
+      nonce: 1,
+      hot_height: BLOCK_HEIGHT - 1,
+      hot_entity_exists: true,
+    }])
+  } finally {
+    await server.close()
+    await fixture.close()
+  }
+})
+
+test('rejects gapped legacy hot-change indexes without rollback', async () => {
+  const fixture = await createIsolatedRegistryFixture()
+  const server = await createControlledPortalServer()
+  try {
+    await seedLegacyHotState({
+      pool: fixture.pool,
+      statusHeight: BLOCK_HEIGHT - 2,
+      statusHash: BASE_HASH,
+      hotHeight: BLOCK_HEIGHT - 1,
+      hotHash: PARENT_HASH,
+      hotChangeIndex: 1,
+      change: {
+        kind: 'insert',
+        table: 'whitelister',
+        id: HOT_ONLY_WHITELISTER,
+      },
+    })
+    await fixture.pool.query(
+      `INSERT INTO whitelister (id, is_currently_whitelisted)
+       VALUES ($1, true)`,
+      [HOT_ONLY_WHITELISTER],
+    )
+
+    const rejected = await runRegistryPortalFixture({
+      databaseUrl: fixture.databaseUrl,
+      portalUrl: server.url,
+      startBlock: BLOCK_HEIGHT - 1,
+      endBlock: BLOCK_HEIGHT,
+      contractAddress: CONTRACT,
+    })
+    assert.equal(rejected.timedOut, false)
+    assert.notEqual(rejected.exitCode, 0)
+
+    const state = await fixture.pool.query(
+      `SELECT s.height, s.hash, s.nonce, h.height AS hot_height,
+              EXISTS (SELECT FROM whitelister WHERE id = $1) AS hot_entity_exists
+         FROM squid_processor.status s
+         JOIN squid_processor.hot_block h ON true
+        WHERE s.id = 0`,
+      [HOT_ONLY_WHITELISTER],
+    )
+    assert.deepEqual(state.rows, [{
+      height: BLOCK_HEIGHT - 2,
+      hash: BASE_HASH,
+      nonce: 1,
+      hot_height: BLOCK_HEIGHT - 1,
+      hot_entity_exists: true,
     }])
   } finally {
     await server.close()

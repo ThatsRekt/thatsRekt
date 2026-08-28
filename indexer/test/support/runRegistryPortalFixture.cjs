@@ -38,6 +38,7 @@ const runRegistryPortalFixture = ({
   databaseUrl,
   portalUrl,
   startBlock,
+  endBlock = startBlock,
   contractAddress,
 }) => {
   assertFixtureDatabaseUrl(databaseUrl)
@@ -55,12 +56,21 @@ const runRegistryPortalFixture = ({
         REGISTRY_FIXTURE_DB_URL: databaseUrl,
         REGISTRY_FIXTURE_PORTAL_URL: portalUrl,
         REGISTRY_FIXTURE_START_BLOCK: String(startBlock),
+        REGISTRY_FIXTURE_END_BLOCK: String(endBlock),
         REGISTRY_FIXTURE_CONTRACT_ADDRESS: contractAddress,
       },
       stdio: ['ignore', 'pipe', 'pipe'],
     })
-    child.stdout.resume()
-    child.stderr.resume()
+    let stdout = ''
+    let stderr = ''
+    child.stdout.setEncoding('utf8')
+    child.stderr.setEncoding('utf8')
+    child.stdout.on('data', (chunk) => {
+      stdout += chunk
+    })
+    child.stderr.on('data', (chunk) => {
+      stderr += chunk
+    })
 
     let timedOut = false
     const timeout = setTimeout(() => {
@@ -73,7 +83,7 @@ const runRegistryPortalFixture = ({
     })
     child.once('close', (exitCode) => {
       clearTimeout(timeout)
-      resolve(Object.freeze({ exitCode, timedOut }))
+      resolve(Object.freeze({ exitCode, timedOut, stdout, stderr }))
     })
   })
 }
@@ -82,11 +92,17 @@ const startChildProcessor = () => {
   const databaseUrl = requireFixtureValue('REGISTRY_FIXTURE_DB_URL')
   const portalUrl = requireFixtureValue('REGISTRY_FIXTURE_PORTAL_URL')
   const startBlock = Number.parseInt(requireFixtureValue('REGISTRY_FIXTURE_START_BLOCK'), 10)
+  const endBlock = Number.parseInt(requireFixtureValue('REGISTRY_FIXTURE_END_BLOCK'), 10)
   const contractAddress = requireFixtureValue('REGISTRY_FIXTURE_CONTRACT_ADDRESS').toLowerCase()
   assertFixtureDatabaseUrl(databaseUrl)
   assertFixturePortalUrl(portalUrl)
-  if (!Number.isSafeInteger(startBlock) || startBlock < 0) {
-    throw new Error('Registry fixture start block must be a non-negative integer')
+  if (
+    !Number.isSafeInteger(startBlock) ||
+    startBlock < 0 ||
+    !Number.isSafeInteger(endBlock) ||
+    endBlock < startBlock
+  ) {
+    throw new Error('Registry fixture block range must be non-negative and ordered')
   }
 
   // TypeormDatabase consumes DB_URL, so set it only after the fixture URI is validated.
@@ -122,7 +138,7 @@ const startChildProcessor = () => {
       },
       contractAddress,
       startBlock,
-      endBlock: startBlock,
+      endBlock,
     }),
   })
 
