@@ -11,8 +11,9 @@
  * This is the processor's primary idempotency guarantee.
  */
 
-import type { Pool as PoolType } from 'pg'
+import type { ClientBase, Pool as PoolType } from 'pg'
 import type { DonationRow } from './donationMapper.js'
+type DonationQueryExecutor = Pick<ClientBase, 'query'>
 
 /**
  * Idempotent schema bootstrap.
@@ -83,8 +84,11 @@ export async function ensureDonationTable(pool: PoolType): Promise<void> {
  * Idempotent upsert of a DonationRow.
  * ON CONFLICT (id) DO NOTHING guarantees safe re-runs.
  */
-export async function upsertDonation(pool: PoolType, row: DonationRow): Promise<void> {
-  await pool.query(
+export async function upsertDonation(
+  executor: DonationQueryExecutor,
+  row: DonationRow,
+): Promise<void> {
+  await executor.query(
     `INSERT INTO donation (
        id, chain_id, chain_slug, from_address,
        token_address, token_symbol, token_decimals,

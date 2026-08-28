@@ -25,7 +25,7 @@ always reflects what's last shipped, no local builds required.
 | ------------------------ | ---------------------- | ---------------------------------------------------------- |
 | `db` (postgres:16-alpine)| `127.0.0.1:5433`       | `5433` to avoid colliding with `damm-tunnel` at `5432`.    |
 | `migrate-base-sepolia`   | (one-shot)             | Runs `squid-typeorm-migration apply`, exits 0.             |
-| `processor-base-sepolia` | (internal)             | Pulls Subsquid base-sepolia archive + Sepolia RPC.         |
+| `processor-base-sepolia` | (internal)             | Pulls Base Sepolia through its explicit RPC-only path.     |
 | `graphql-base-sepolia`   | `127.0.0.1:4357`       | Per-chain squid GraphQL (handy for direct queries).        |
 | `mesh`                   | `127.0.0.1:4350`       | Cross-chain stitching gateway (configured for Sepolia only).|
 | `frontend` (nginx)       | `127.0.0.1:5173`       | SPA bundle + `/graphql` reverse-proxy to `mesh`.           |
@@ -161,10 +161,8 @@ Common causes:
 
 - `START_BLOCK_BASE_SEPOLIA` is set far ahead of the actual deploy block —
   fix `.env` and restart.
-- Sepolia public RPC is rate-limiting — swap `RPC_BASE_SEPOLIA` for a
-  paid endpoint.
-- The Subsquid base-sepolia archive is behind head (rare) — the processor
-  will catch up when it advances.
+- Base Sepolia public RPC is rate-limiting — swap `RPC_BASE_SEPOLIA_HTTP` for a
+  suitable non-production endpoint.
 
 ### Mesh returns "schema not found" / chain mismatch errors
 

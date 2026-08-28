@@ -1,5 +1,6 @@
 import { gqlClient } from './client'
 import { mockFetchFeed, mockFetchPostDetail, mockFetchDonations } from './mock'
+import { loadPublicRpcUrls } from './publicRpc'
 
 const USE_MOCK = import.meta.env.VITE_USE_MOCK_DATA === 'true'
 export const IS_MOCK_MODE = USE_MOCK
@@ -561,18 +562,8 @@ interface ProposerLeaderboardPage {
 // =============================================================================
 // Indexer status (chain-tip vs squid-tip lag)
 // =============================================================================
-// Surfaces "is the data on this page up to date?" by comparing the indexer's
-// last processed block to the chain tip read from a public RPC. The Mesh
-// gateway exposes one `<Prefix>_squidStatus` per chain — we query the
-// flagship (Base mainnet) since that's where production posts land.
-//
-// The chain-tip RPC is a single hard-coded routeme.sh endpoint matching
-// `landing-page` / damm convention. Mesh status is hit via the existing
-// `gqlClient`.
-
-/** Public Base mainnet RPC — same load-balanced endpoint used by other DAMM tooling. */
-const BASE_RPC_URL =
-  'https://lb.routeme.sh/rpc/8453/f2c53b96-d37e-42b3-9c6f-47bb336e166e'
+// The Base public RPC is selected from Vite configuration alongside the other
+// Production Chain endpoints. Mesh status is hit via the existing `gqlClient`.
 
 /** Average Base mainnet block time, used for human-readable lag formatting. */
 export const BASE_BLOCK_TIME_SECONDS = 2
@@ -597,7 +588,7 @@ export interface IndexerStatus {
 }
 
 const fetchBaseChainTip = async (): Promise<number> => {
-  const res = await fetch(BASE_RPC_URL, {
+  const res = await fetch(loadPublicRpcUrls().base, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({

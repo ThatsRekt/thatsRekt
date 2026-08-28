@@ -114,6 +114,14 @@ jobs:
           # unset, this is empty and the bundle falls back to the always-pass
           # test key, so dev/CI need no real key. Prod-only by construction.
           VITE_TURNSTILE_SITE_KEY: ${{ vars.VITE_TURNSTILE_SITE_KEY }}
+          # Public, required browser RPC URLs. They are injected only into the
+          # frontend bundle and intentionally have no hard-coded fallback.
+          VITE_PUBLIC_RPC_ETHEREUM_URL: ${{ vars.VITE_PUBLIC_RPC_ETHEREUM_URL }}
+          VITE_PUBLIC_RPC_BASE_URL: ${{ vars.VITE_PUBLIC_RPC_BASE_URL }}
+          VITE_PUBLIC_RPC_ARBITRUM_URL: ${{ vars.VITE_PUBLIC_RPC_ARBITRUM_URL }}
+          VITE_PUBLIC_RPC_OPTIMISM_URL: ${{ vars.VITE_PUBLIC_RPC_OPTIMISM_URL }}
+          VITE_PUBLIC_RPC_BSC_URL: ${{ vars.VITE_PUBLIC_RPC_BSC_URL }}
+          VITE_PUBLIC_RPC_POLYGON_URL: ${{ vars.VITE_PUBLIC_RPC_POLYGON_URL }}
         run: |
           # Frontend bakes its GraphQL endpoint at build time (Vite inlines).
           # Default to a relative same-origin path so the bundle is
@@ -126,6 +134,12 @@ jobs:
               BUILD_ARGS+=(--build-arg "VITE_SHOW_LOCAL_FORKS=false")
               BUILD_ARGS+=(--build-arg "VITE_SHOW_TESTNETS=false")
               BUILD_ARGS+=(--build-arg "VITE_TURNSTILE_SITE_KEY=${VITE_TURNSTILE_SITE_KEY}")
+              BUILD_ARGS+=(--build-arg "VITE_PUBLIC_RPC_ETHEREUM_URL=${VITE_PUBLIC_RPC_ETHEREUM_URL}")
+              BUILD_ARGS+=(--build-arg "VITE_PUBLIC_RPC_BASE_URL=${VITE_PUBLIC_RPC_BASE_URL}")
+              BUILD_ARGS+=(--build-arg "VITE_PUBLIC_RPC_ARBITRUM_URL=${VITE_PUBLIC_RPC_ARBITRUM_URL}")
+              BUILD_ARGS+=(--build-arg "VITE_PUBLIC_RPC_OPTIMISM_URL=${VITE_PUBLIC_RPC_OPTIMISM_URL}")
+              BUILD_ARGS+=(--build-arg "VITE_PUBLIC_RPC_BSC_URL=${VITE_PUBLIC_RPC_BSC_URL}")
+              BUILD_ARGS+=(--build-arg "VITE_PUBLIC_RPC_POLYGON_URL=${VITE_PUBLIC_RPC_POLYGON_URL}")
           fi
 
           docker buildx build \

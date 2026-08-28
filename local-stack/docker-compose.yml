@@ -86,10 +86,7 @@ services:
       DB_USER: ${POSTGRES_USER:-postgres}
       DB_PASS: ${POSTGRES_PASSWORD}
       CHAIN: base-sepolia
-      # Subsquid archive gateway (free, public). Default points at the
-      # base-sepolia archive — override in .env if upstream URL changes.
-      ARCHIVE_BASE_SEPOLIA: ${ARCHIVE_BASE_SEPOLIA:-https://v2.archive.subsquid.io/network/base-sepolia}
-      # Public Sepolia RPC. No API key needed for low-volume local indexing.
+      # Base Sepolia remains an explicit RPC-only testnet processor.
       RPC_BASE_SEPOLIA_HTTP: ${RPC_BASE_SEPOLIA}
       # Operator pastes these from the most recent Sepolia deploy
       # (proxy address + the block where it was deployed).

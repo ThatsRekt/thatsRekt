@@ -3,16 +3,14 @@ import { TypeormDatabase } from '@subsquid/typeorm-store'
 
 import { events } from './abi/ThatsRekt'
 import { getChain } from './chains'
-import { buildProcessor, Log, ProcessorContext } from './processor'
+import {
+  buildProcessor,
+  Log,
+  ProcessorContext,
+  runProcessor,
+} from './processor'
 
-const requireEnv = (key: string): string => {
-  const v = process.env[key]
-  if (!v) throw new Error(`Missing required env var: ${key}`)
-  return v
-}
 
-const chain = getChain(requireEnv('CHAIN'))
-const { processor, contractAddress: CONTRACT_ADDRESS } = buildProcessor(chain)
 import {
   Address,
   Edit,
@@ -28,6 +26,12 @@ import {
   WhitelistChange,
   Whitelister,
 } from './model'
+
+const requireEnv = (key: string): string => {
+  const v = process.env[key]
+  if (!v) throw new Error(`Missing required env var: ${key}`)
+  return v
+}
 
 type Ctx = ProcessorContext
 
@@ -747,69 +751,94 @@ async function handleOwnershipTransferred(
 
 // --- batch entry point ---
 
-processor.run(new TypeormDatabase({ supportHotBlocks: true }), async (ctx) => {
-  const caches = newCaches()
+export const createRegistryHandler = ({
+  contractAddress,
+}: {
+  readonly contractAddress: string
+}): (ctx: Ctx) => Promise<void> => {
+  const indexedContractAddress = lc(contractAddress)
 
-  for (const block of ctx.blocks) {
-    for (const log of block.logs) {
-      if (lc(log.address) !== CONTRACT_ADDRESS) continue
-      const topic0 = log.topics[0]
+  return async (ctx: Ctx) => {
+    const caches = newCaches()
 
-      switch (topic0) {
-        case events.PostCreated.topic:
-          await handlePostCreated(ctx, caches, log)
-          break
-        case events.Confirmed.topic:
-          await handleConfirmed(ctx, caches, log)
-          break
-        case events.PostRemoved.topic:
-          await handlePostRemoved(ctx, caches, log)
-          break
-        case events.PostPurged.topic:
-          await handlePostPurged(ctx, caches, log)
-          break
-        case events.PostNoteAmended.topic:
-          await handlePostNoteAmended(ctx, caches, log)
-          break
-        case events.PostTitleAmended.topic:
-          await handlePostTitleAmended(ctx, caches, log)
-          break
-        case events.AttackersAdded.topic:
-          await handleAttackersAdded(ctx, caches, log)
-          break
-        case events.VictimsAdded.topic:
-          await handleVictimsAdded(ctx, caches, log)
-          break
-        case events.WhitelistUpdated.topic:
-          await handleWhitelistUpdated(ctx, caches, log)
-          break
-        case events.Upgraded.topic:
-          await handleUpgraded(ctx, caches, log)
-          break
-        case events.OwnershipTransferred.topic:
-          await handleOwnershipTransferred(ctx, caches, log)
-          break
-        default:
-          // ignore — could be Initialized / OwnershipTransferStarted / other
-          // events not subscribed in processor.ts
-          break
+    for (const block of ctx.blocks) {
+      for (const log of block.logs) {
+        if (lc(log.address) !== indexedContractAddress) continue
+        const topic0 = log.topics[0]
+
+        switch (topic0) {
+          case events.PostCreated.topic:
+            await handlePostCreated(ctx, caches, log)
+            break
+          case events.Confirmed.topic:
+            await handleConfirmed(ctx, caches, log)
+            break
+          case events.PostRemoved.topic:
+            await handlePostRemoved(ctx, caches, log)
+            break
+          case events.PostPurged.topic:
+            await handlePostPurged(ctx, caches, log)
+            break
+          case events.PostNoteAmended.topic:
+            await handlePostNoteAmended(ctx, caches, log)
+            break
+          case events.PostTitleAmended.topic:
+            await handlePostTitleAmended(ctx, caches, log)
+            break
+          case events.AttackersAdded.topic:
+            await handleAttackersAdded(ctx, caches, log)
+            break
+          case events.VictimsAdded.topic:
+            await handleVictimsAdded(ctx, caches, log)
+            break
+          case events.WhitelistUpdated.topic:
+            await handleWhitelistUpdated(ctx, caches, log)
+            break
+          case events.Upgraded.topic:
+            await handleUpgraded(ctx, caches, log)
+            break
+          case events.OwnershipTransferred.topic:
+            await handleOwnershipTransferred(ctx, caches, log)
+            break
+          default:
+            // ignore — could be Initialized / OwnershipTransferStarted / other
+            // events not subscribed in processor.ts
+            break
+        }
       }
     }
-  }
 
-  // Persist. Order matters: parents (Whitelister, Address, Post) before
-  // children (PostAttacker, PostVictim, Confirmation, Edit) due to FK constraints.
-  // Proposer has no FK dependencies on Post or Confirmation; safe to upsert
-  // in either order, grouping with the other independent aggregates.
-  await ctx.store.upsert([...caches.whitelisters.values()])
-  await ctx.store.upsert([...caches.addresses.values()])
-  await ctx.store.upsert([...caches.proposers.values()])
-  await ctx.store.upsert([...caches.posts.values()])
-  await ctx.store.upsert([...caches.postAttackers.values()])
-  await ctx.store.upsert([...caches.postVictims.values()])
-  await ctx.store.insert(caches.confirmationLog)
-  await ctx.store.insert(caches.edits)
-  await ctx.store.insert(caches.whitelistChanges)
-  await ctx.store.insert(caches.upgrades)
-  await ctx.store.insert(caches.ownershipChanges)
-})
+    // Persist. Order matters: parents (Whitelister, Address, Post) before
+    // children (PostAttacker, PostVictim, Confirmation, Edit) due to FK constraints.
+    // Proposer has no FK dependencies on Post or Confirmation; safe to upsert
+    // in either order, grouping with the other independent aggregates.
+    await ctx.store.upsert([...caches.whitelisters.values()])
+    await ctx.store.upsert([...caches.addresses.values()])
+    await ctx.store.upsert([...caches.proposers.values()])
+    await ctx.store.upsert([...caches.posts.values()])
+    await ctx.store.upsert([...caches.postAttackers.values()])
+    await ctx.store.upsert([...caches.postVictims.values()])
+    await ctx.store.insert(caches.confirmationLog)
+    await ctx.store.insert(caches.edits)
+    await ctx.store.insert(caches.whitelistChanges)
+    await ctx.store.insert(caches.upgrades)
+    await ctx.store.insert(caches.ownershipChanges)
+  }
+}
+
+const startRegistry = (): void => {
+  const chain = getChain(requireEnv('CHAIN'))
+  const builtProcessor = buildProcessor(chain)
+
+  runProcessor({
+    built: builtProcessor,
+    database: new TypeormDatabase({
+      supportHotBlocks: builtProcessor.kind === 'rpc',
+    }),
+    handler: createRegistryHandler({
+      contractAddress: builtProcessor.contractAddress,
+    }),
+  })
+}
+
+if (require.main === module) startRegistry()

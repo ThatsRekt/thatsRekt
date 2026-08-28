@@ -54,4 +54,11 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: pnpm build (tsc -b && vite build)
+        env:
+          VITE_PUBLIC_RPC_ETHEREUM_URL: https://ethereum.rpc.example.test
+          VITE_PUBLIC_RPC_BASE_URL: https://base.rpc.example.test
+          VITE_PUBLIC_RPC_ARBITRUM_URL: https://arbitrum.rpc.example.test
+          VITE_PUBLIC_RPC_OPTIMISM_URL: https://optimism.rpc.example.test
+          VITE_PUBLIC_RPC_BSC_URL: https://bsc.rpc.example.test
+          VITE_PUBLIC_RPC_POLYGON_URL: https://polygon.rpc.example.test
         run: pnpm build

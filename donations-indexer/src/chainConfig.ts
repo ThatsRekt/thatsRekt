@@ -5,9 +5,9 @@
  * env var. The processor reads the matching entry here to get:
  *   - chainId      — EIP-155 chain id
  *   - slug         — human-readable slug ('ethereum', 'base', etc.)
- *   - rpcEnvKey    — env var name for the RPC URL
+ *   - portalDataset — Portal Dataset Endpoint slug for historical ingestion
+ *   - headRpcEnvKey — JSON-RPC only for the bounded head control plane
  *   - startBlockEnvKey — env var name for the override start block
- *   - defaultStartBlock — pinned Safe deployment block (safe to index from)
  *   - finalityConfirmation — blocks before a block is considered final
  *
  * Safe deployment blocks are the per-chain upper-bound from the binary search
@@ -27,8 +27,10 @@ export interface ChainConfig {
   /** Human-readable slug — stored in the donation row and used as the DB
    *  cursor key. */
   readonly slug: string
-  /** Env var name for the JSON-RPC URL of this chain. */
-  readonly rpcEnvKey: string
+  /** Portal Dataset Endpoint slug used for all historical data. */
+  readonly portalDataset: string
+  /** Env var name for the JSON-RPC head control-plane URL. */
+  readonly headRpcEnvKey: string
   /** Env var name for the override start block (used in tests to fork from a
    *  later block). Falls back to `defaultStartBlock` when absent. */
   readonly startBlockEnvKey: string
@@ -68,7 +70,8 @@ const CHAIN_CONFIGS: Readonly<Record<string, ChainConfig>> = Object.freeze({
   ethereum: Object.freeze({
     chainId: 1,
     slug: 'ethereum',
-    rpcEnvKey: 'RPC_ETHEREUM_HTTP',
+    portalDataset: 'ethereum-mainnet',
+    headRpcEnvKey: 'RPC_ETHEREUM_HTTP',
     startBlockEnvKey: 'START_BLOCK_ETHEREUM',
     defaultStartBlock: 19_000_000,
     finalityConfirmation: 75,
@@ -76,7 +79,8 @@ const CHAIN_CONFIGS: Readonly<Record<string, ChainConfig>> = Object.freeze({
   base: Object.freeze({
     chainId: 8453,
     slug: 'base',
-    rpcEnvKey: 'RPC_BASE_HTTP',
+    portalDataset: 'base-mainnet',
+    headRpcEnvKey: 'RPC_BASE_HTTP',
     startBlockEnvKey: 'START_BLOCK_BASE',
     defaultStartBlock: 45_301_000,
     finalityConfirmation: 50,
@@ -84,7 +88,8 @@ const CHAIN_CONFIGS: Readonly<Record<string, ChainConfig>> = Object.freeze({
   arbitrum: Object.freeze({
     chainId: 42161,
     slug: 'arbitrum',
-    rpcEnvKey: 'RPC_ARBITRUM_HTTP',
+    portalDataset: 'arbitrum-one',
+    headRpcEnvKey: 'RPC_ARBITRUM_HTTP',
     startBlockEnvKey: 'START_BLOCK_ARBITRUM',
     defaultStartBlock: 457_275_000,
     finalityConfirmation: 100,
@@ -92,7 +97,8 @@ const CHAIN_CONFIGS: Readonly<Record<string, ChainConfig>> = Object.freeze({
   optimism: Object.freeze({
     chainId: 10,
     slug: 'optimism',
-    rpcEnvKey: 'RPC_OPTIMISM_HTTP',
+    portalDataset: 'optimism-mainnet',
+    headRpcEnvKey: 'RPC_OPTIMISM_HTTP',
     startBlockEnvKey: 'START_BLOCK_OPTIMISM',
     defaultStartBlock: 150_896_000,
     finalityConfirmation: 50,
@@ -100,7 +106,8 @@ const CHAIN_CONFIGS: Readonly<Record<string, ChainConfig>> = Object.freeze({
   bsc: Object.freeze({
     chainId: 56,
     slug: 'bsc',
-    rpcEnvKey: 'RPC_BSC_HTTP',
+    portalDataset: 'binance-mainnet',
+    headRpcEnvKey: 'RPC_BSC_HTTP',
     startBlockEnvKey: 'START_BLOCK_BSC',
     defaultStartBlock: 95_195_000,
     finalityConfirmation: 20,
@@ -108,7 +115,8 @@ const CHAIN_CONFIGS: Readonly<Record<string, ChainConfig>> = Object.freeze({
   polygon: Object.freeze({
     chainId: 137,
     slug: 'polygon',
-    rpcEnvKey: 'RPC_POLYGON_HTTP',
+    portalDataset: 'polygon-mainnet',
+    headRpcEnvKey: 'RPC_POLYGON_HTTP',
     startBlockEnvKey: 'START_BLOCK_POLYGON',
     defaultStartBlock: 86_136_000,
     finalityConfirmation: 120,

@@ -43,29 +43,21 @@ describe('chainConfigFor', () => {
     expect(chainConfigFor('polygon')?.chainId).toBe(137)
   })
 
-  test('ethereum rpcEnvKey is RPC_ETHEREUM_HTTP', () => {
-    expect(chainConfigFor('ethereum')?.rpcEnvKey).toBe('RPC_ETHEREUM_HTTP')
-  })
-
-  test('base rpcEnvKey is RPC_BASE_HTTP', () => {
-    expect(chainConfigFor('base')?.rpcEnvKey).toBe('RPC_BASE_HTTP')
-  })
-
-  test('arbitrum rpcEnvKey is RPC_ARBITRUM_HTTP', () => {
-    expect(chainConfigFor('arbitrum')?.rpcEnvKey).toBe('RPC_ARBITRUM_HTTP')
-  })
-
-  test('optimism rpcEnvKey is RPC_OPTIMISM_HTTP', () => {
-    expect(chainConfigFor('optimism')?.rpcEnvKey).toBe('RPC_OPTIMISM_HTTP')
-  })
-
-  test('bsc rpcEnvKey is RPC_BSC_HTTP', () => {
-    expect(chainConfigFor('bsc')?.rpcEnvKey).toBe('RPC_BSC_HTTP')
-  })
-
-  test('polygon rpcEnvKey is RPC_POLYGON_HTTP', () => {
-    expect(chainConfigFor('polygon')?.rpcEnvKey).toBe('RPC_POLYGON_HTTP')
-  })
+  test.each([
+    ['ethereum', 'ethereum-mainnet', 'RPC_ETHEREUM_HTTP'],
+    ['base', 'base-mainnet', 'RPC_BASE_HTTP'],
+    ['arbitrum', 'arbitrum-one', 'RPC_ARBITRUM_HTTP'],
+    ['optimism', 'optimism-mainnet', 'RPC_OPTIMISM_HTTP'],
+    ['bsc', 'binance-mainnet', 'RPC_BSC_HTTP'],
+    ['polygon', 'polygon-mainnet', 'RPC_POLYGON_HTTP'],
+  ])(
+    '%s uses its Portal Dataset Endpoint and RPC only for the head control plane',
+    (slug, portalDataset, headRpcEnvKey) => {
+      const config = chainConfigFor(slug)
+      expect(config?.portalDataset).toBe(portalDataset)
+      expect(config?.headRpcEnvKey).toBe(headRpcEnvKey)
+    },
+  )
 
   test('ethereum startBlockEnvKey is START_BLOCK_ETHEREUM', () => {
     expect(chainConfigFor('ethereum')?.startBlockEnvKey).toBe('START_BLOCK_ETHEREUM')

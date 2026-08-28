@@ -87,9 +87,9 @@ jobs:
       - name: Run unit and store tests
         # Excludes e2e tests that require a live RPC or postgres (those run
         # against real infrastructure in the developer's local environment).
-        # Unit tests (chainConfig, donationMapper, tokenAllowlist) and the
-        # store tests with an in-memory fixture run cleanly in CI.
-        run: bun test --timeout 30000 test/chainConfig.test.ts test/donationMapper.test.ts test/tokenAllowlist.test.ts test/blockRange.test.ts
+        # Unit tests cover chain selection, mapper/store behavior, and the
+        # deterministic Portal configuration and request-plan contracts.
+        run: bun test --timeout 30000 test/chainConfig.test.ts test/donationMapper.test.ts test/tokenAllowlist.test.ts test/blockRange.test.ts test/portal.test.ts test/processor.portal.test.ts
 
   # ---------------------------------------------------------------------------
   # Job 2: build and push Docker image to ECR

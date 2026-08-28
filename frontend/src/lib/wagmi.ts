@@ -1,79 +1,23 @@
-import { http, createConfig, fallback } from 'wagmi'
+import { http, createConfig } from 'wagmi'
 import { arbitrum, base, baseSepolia, bsc, mainnet, optimism, polygon } from 'wagmi/chains'
 import { injected, coinbaseWallet, safe } from 'wagmi/connectors'
+import { loadPublicRpcUrls } from './publicRpc'
+
+const PUBLIC_RPC_URLS = loadPublicRpcUrls()
+
+const baseTransport = http(PUBLIC_RPC_URLS.base)
 
 /**
- * Public read RPC for Base mainnet. Used for the wagmi public client (chain
- * state reads — `isWhitelisted`, etc.). The user's wallet provides its own
- * RPC for writes once connected.
- *
- * Wrapped in a `fallback` transport so a single RPC blip doesn't take the
- * gate down — `routeme.sh` is primary, public Base endpoint is the
- * fallback. Both no-key for browser-side reads.
+ * Base Sepolia is an explicit non-production testnet transport. Production
+ * chains use only their required public configuration variables above.
  */
-const baseTransport = fallback([
-  http('https://lb.routeme.sh/rpc/8453/f2c53b96-d37e-42b3-9c6f-47bb336e166e'),
-  http('https://mainnet.base.org'),
-])
+const baseSepoliaTransport = http('https://sepolia.base.org')
 
-/**
- * Base Sepolia transport — used for the purge-capable contract under test.
- * Public Base Sepolia RPC (no auth required for reads / wallet-funded
- * writes). Wrapped in `fallback` for the same reason as `baseTransport`.
- */
-const baseSepoliaTransport = fallback([
-  http('https://sepolia.base.org'),
-])
-
-/**
- * Optimism mainnet transport — registry is deployed here at the same
- * canonical address as Base mainnet (cross-chain CREATE2). Same fallback
- * shape as `baseTransport`.
- */
-const optimismTransport = fallback([
-  http('https://lb.routeme.sh/rpc/10/f2c53b96-d37e-42b3-9c6f-47bb336e166e'),
-  http('https://mainnet.optimism.io'),
-])
-
-/**
- * Ethereum mainnet transport — registry is deployed here (v1.2.0
- * canonical proxy at 0xBfaEEE…b89A) AND used for ENS reverse resolution.
- * ENS primary names live on mainnet regardless of which chain the address
- * is active on, so any displayed address's ENS lookup always hits Ethereum.
- */
-const mainnetTransport = fallback([
-  http('https://lb.routeme.sh/rpc/1/f2c53b96-d37e-42b3-9c6f-47bb336e166e'),
-  http('https://eth.llamarpc.com'),
-])
-
-/**
- * Arbitrum One transport — registry is deployed here at the same
- * canonical cross-chain CREATE2 address as the other v1.2.0 chains.
- */
-const arbitrumTransport = fallback([
-  http('https://lb.routeme.sh/rpc/42161/f2c53b96-d37e-42b3-9c6f-47bb336e166e'),
-  http('https://arb1.arbitrum.io/rpc'),
-])
-
-/**
- * BSC mainnet transport — registry is deployed here at the same canonical
- * cross-chain CREATE2 address as the other v1.2.0 chains. Same fallback
- * shape: routeme.sh primary, official public BSC dataseed as fallback.
- */
-const bscTransport = fallback([
-  http('https://lb.routeme.sh/rpc/56/f2c53b96-d37e-42b3-9c6f-47bb336e166e'),
-  http('https://bsc-dataseed.binance.org'),
-])
-
-/**
- * Polygon PoS transport — registry is deployed here at the same canonical
- * cross-chain CREATE2 address as the other v1.2.0 chains. Same fallback
- * shape: routeme.sh primary, official public Polygon RPC as fallback.
- */
-const polygonTransport = fallback([
-  http('https://lb.routeme.sh/rpc/137/f2c53b96-d37e-42b3-9c6f-47bb336e166e'),
-  http('https://polygon-bor-rpc.publicnode.com'),
-])
+const optimismTransport = http(PUBLIC_RPC_URLS.optimism)
+const mainnetTransport = http(PUBLIC_RPC_URLS.ethereum)
+const arbitrumTransport = http(PUBLIC_RPC_URLS.arbitrum)
+const bscTransport = http(PUBLIC_RPC_URLS.bsc)
+const polygonTransport = http(PUBLIC_RPC_URLS.polygon)
 
 /**
  * wagmi v2 config.
