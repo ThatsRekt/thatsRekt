@@ -72,8 +72,9 @@ Build configuration:
 
 Default `VITE_GRAPHQL_ENDPOINT=/graphql` makes the bundle **domain-agnostic**: the same image works on EC2 public DNS today and on a real domain later, no rebuild on domain change.
 
-The six public RPC variables are required and validated as HTTPS URLs. The
-bundle contains no RouteMesh endpoint or production RPC fallback.
+The six public RPC variables are required and validated as HTTPS URLs. Production
+uses browser-safe RouteMesh keys restricted to the public thatsRekt domains; no
+RPC endpoint is hard-coded as a fallback.
 
 ## IPFS hosting (when ready)
 

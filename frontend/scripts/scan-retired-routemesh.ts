@@ -1,11 +1,20 @@
+import { createHash } from 'node:crypto'
 import { readdir, readFile, stat } from 'node:fs/promises'
 import { join, relative } from 'node:path'
 
-const RETIRED_HOST = ['lb', 'routeme', 'sh'].join('.')
-const RETIRED_ENDPOINT_PATTERN = new RegExp(
-  `https://${RETIRED_HOST.replaceAll('.', '\\.')}/rpc/\\d+/[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}`,
-  'gi',
+const ROUTEMESH_HOST = ['lb', 'routeme', 'sh'].join('.')
+const ROUTEMESH_ENDPOINT_PATTERN = new RegExp(
+  `https://${ROUTEMESH_HOST.replaceAll('.', '\\.')}/rpc/\\d+/[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}`,
+  'g',
 )
+const RETIRED_ENDPOINT_FINGERPRINTS: Readonly<Record<string, true>> = {
+  'eacc85c18860cb08cb8cae9a1ddcc3ea2da4888b9aae4eed7a8c09a093a8b84e': true,
+  '9d7ee12ff96793a1fd2031e7b91f16122c98f3264db0b18fd06c15a3f68c6ccb': true,
+  '7e4221c2640fabfd70dbfee07a870daf0cc00d2b9301d5e49f76c13af153bede': true,
+  '84a19971cf0e201f52fc3c3f9ef88dab509d4680b1ce76758cfd8f6908cd59b6': true,
+  '094d96deaca03396d540527d53bb2441a3a0d0396397de1f4a1ffb991e8720cd': true,
+  '222498e0761911a8d588233b2ac2c998204d51b4bf52968ed117ef05fb4b057e': true,
+}
 const TEXT_FILE_SUFFIXES = ['.css', '.html', '.js', '.map', '.ts', '.tsx'] as const
 
 const textFilesAt = async (path: string): Promise<string[]> => {
@@ -27,10 +36,20 @@ const textFilesAt = async (path: string): Promise<string[]> => {
   return nestedFiles.flat()
 }
 
-export const scanText = (text: string): number => {
-  RETIRED_ENDPOINT_PATTERN.lastIndex = 0
+export const scanText = (
+  text: string,
+  retiredEndpointFingerprints = RETIRED_ENDPOINT_FINGERPRINTS,
+): number => {
+  ROUTEMESH_ENDPOINT_PATTERN.lastIndex = 0
   let count = 0
-  while (RETIRED_ENDPOINT_PATTERN.exec(text) !== null) count += 1
+  for (
+    let match = ROUTEMESH_ENDPOINT_PATTERN.exec(text);
+    match !== null;
+    match = ROUTEMESH_ENDPOINT_PATTERN.exec(text)
+  ) {
+    const fingerprint = createHash('sha256').update(match[0]).digest('hex')
+    if (retiredEndpointFingerprints[fingerprint] === true) count += 1
+  }
   return count
 }
 

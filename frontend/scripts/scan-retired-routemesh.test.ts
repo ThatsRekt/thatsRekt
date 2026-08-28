@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { describe, expect, it } from 'bun:test'
 import { formatScanReport, scanText } from './scan-retired-routemesh'
 
@@ -6,11 +7,20 @@ const retiredEndpoint = [
   'routeme.sh/rpc/8453/',
   '00000000-0000-0000-0000-000000000000',
 ].join('')
+const replacementEndpoint = [
+  'https://lb.',
+  'routeme.sh/rpc/8453/',
+  '11111111-1111-1111-1111-111111111111',
+].join('')
+const retiredFingerprint = createHash('sha256').update(retiredEndpoint).digest('hex')
 
 describe('retired RouteMesh scanner', () => {
-  it('counts retired endpoint literals without returning their values', () => {
-    expect(scanText(`const rpc = '${retiredEndpoint}'`)).toBe(1)
-    expect(scanText('const rpc = "https://base.rpc.example.test"')).toBe(0)
+  it('matches only configured retired endpoint fingerprints', () => {
+    const fingerprints: Readonly<Record<string, true>> = { [retiredFingerprint]: true }
+
+    expect(scanText(`const rpc = '${retiredEndpoint}'`, fingerprints)).toBe(1)
+    expect(scanText(`const rpc = '${replacementEndpoint}'`, fingerprints)).toBe(0)
+    expect(scanText('const rpc = "https://base.rpc.example.test"', fingerprints)).toBe(0)
   })
 
   it('reports only filenames and counts', () => {
