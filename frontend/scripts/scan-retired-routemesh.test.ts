@@ -19,6 +19,12 @@ describe('retired RouteMesh scanner', () => {
     const fingerprints: Readonly<Record<string, true>> = { [retiredFingerprint]: true }
 
     expect(scanText(`const rpc = '${retiredEndpoint}'`, fingerprints)).toBe(1)
+    expect(
+      scanText(
+        `const rpc = '${retiredEndpoint.replace('https://lb.routeme.sh', 'HTTPS://LB.ROUTEME.SH')}'`,
+        fingerprints,
+      ),
+    ).toBe(1)
     expect(scanText(`const rpc = '${replacementEndpoint}'`, fingerprints)).toBe(0)
     expect(scanText('const rpc = "https://base.rpc.example.test"', fingerprints)).toBe(0)
   })

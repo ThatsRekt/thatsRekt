@@ -5,7 +5,7 @@ import { join, relative } from 'node:path'
 const ROUTEMESH_HOST = ['lb', 'routeme', 'sh'].join('.')
 const ROUTEMESH_ENDPOINT_PATTERN = new RegExp(
   `https://${ROUTEMESH_HOST.replaceAll('.', '\\.')}/rpc/\\d+/[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}`,
-  'g',
+  'gi',
 )
 const RETIRED_ENDPOINT_FINGERPRINTS: Readonly<Record<string, true>> = {
   'eacc85c18860cb08cb8cae9a1ddcc3ea2da4888b9aae4eed7a8c09a093a8b84e': true,
@@ -47,7 +47,8 @@ export const scanText = (
     match !== null;
     match = ROUTEMESH_ENDPOINT_PATTERN.exec(text)
   ) {
-    const fingerprint = createHash('sha256').update(match[0]).digest('hex')
+    const canonicalEndpoint = new URL(match[0]).toString()
+    const fingerprint = createHash('sha256').update(canonicalEndpoint).digest('hex')
     if (retiredEndpointFingerprints[fingerprint] === true) count += 1
   }
   return count
