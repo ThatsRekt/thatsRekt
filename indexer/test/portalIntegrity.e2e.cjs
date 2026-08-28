@@ -13,6 +13,10 @@ const {
   PortalRetryDeadlineError,
 } = require('../lib/portal.js')
 const {
+  createObservedPortalDataSource,
+  createPortalIngestionEvents,
+} = require('../lib/ingestionEvents.js')
+const {
   Address,
   Confirmation,
   Post,
@@ -321,6 +325,7 @@ const sourceContext = (store, blocks) => ({
 
 const createControlledPortalServer = async ({ block }) => {
   let mode = 'data'
+  let retryAfterSeconds = '10'
   let currentBlock = block
   const requests = []
   const server = http.createServer(async (request, response) => {
@@ -334,7 +339,7 @@ const createControlledPortalServer = async ({ block }) => {
 
     switch (mode) {
       case 'retry':
-        response.writeHead(529, { 'retry-after': '10', 'content-type': 'text/plain' })
+        response.writeHead(529, { 'retry-after': retryAfterSeconds, 'content-type': 'text/plain' })
         response.end('retry later')
         return
       case 'malformed':
@@ -349,6 +354,14 @@ const createControlledPortalServer = async ({ block }) => {
         response.end()
         return
       case 'data':
+        if (url.pathname.endsWith('/finalized-head')) {
+          response.writeHead(200, { 'content-type': 'application/json' })
+          response.end(JSON.stringify({
+            number: currentBlock.header.number,
+            hash: currentBlock.header.hash,
+          }))
+          return
+        }
         response.writeHead(200, { 'content-type': 'application/x-ndjson' })
         response.end(`${JSON.stringify(currentBlock)}\n`)
         return
@@ -367,6 +380,9 @@ const createControlledPortalServer = async ({ block }) => {
     setMode(nextMode) {
       mode = nextMode
     },
+    setRetryAfterSeconds(value) {
+      retryAfterSeconds = String(value)
+    },
     setBlock(nextBlock) {
       currentBlock = nextBlock
     },
@@ -379,7 +395,13 @@ const createControlledPortalServer = async ({ block }) => {
   }
 }
 
-const buildFixtureSource = ({ server, fixture, deadlineMs, retryScheduleMs }) => {
+const buildFixtureSource = ({
+  server,
+  fixture,
+  deadlineMs,
+  retryScheduleMs,
+  retryObserver,
+}) => {
   const configured = getChain(fixture.chain)
   assert.equal(configured.source.kind, 'portal')
   assert.equal(configured.source.dataset, fixture.dataset)
@@ -392,6 +414,7 @@ const buildFixtureSource = ({ server, fixture, deadlineMs, retryScheduleMs }) =>
         headers: {},
         ...(deadlineMs === undefined ? {} : { deadlineMs }),
         ...(retryScheduleMs === undefined ? {} : { retryScheduleMs }),
+        ...(retryObserver === undefined ? {} : { retryObserver }),
       }),
     },
     contractAddress: CONTRACT.toLowerCase(),
@@ -592,6 +615,129 @@ test('keeps a controlled 529 retry deadline visible before Registry state advanc
   }
 })
 
+
+test('emits a Registry freshness sample after an actual finalized-head response', async () => {
+  const fixture = PRODUCTION_REGISTRY_FIXTURES[0]
+  const server = await createControlledPortalServer({
+    block: rawPortalBlock({ height: fixture.height, logs: [postCreatedLog(fixture)] }),
+  })
+  try {
+    let nowMs = 0
+    const ingestionEvents = []
+    const ingestion = createPortalIngestionEvents({
+      family: 'registry',
+      chain: fixture.chain,
+      now: () => nowMs,
+      writeEvent: (event) => ingestionEvents.push(event),
+    })
+    const source = createObservedPortalDataSource({
+      source: buildFixtureSource({ server, fixture }),
+      ingestion,
+      isDeadlineError: (error) => error instanceof PortalRetryDeadlineError,
+    })
+    ingestion.initializeDurableCursor({
+      height: fixture.height - 1,
+      durableProgressAtMs: 0,
+    })
+    ingestion.start()
+    ingestionEvents.length = 0
+    nowMs = 1_000
+
+    const head = await source.getFinalizedHead()
+    ingestion.emitFreshnessSample()
+
+    assert.equal(head.number, fixture.height)
+    assert.deepEqual(ingestionEvents, [{
+      schema: 'thatsrekt.portal.ingestion.v1',
+      family: 'registry',
+      chain: fixture.chain,
+      event: 'freshness_sample',
+      cursor_height: fixture.height - 1,
+      portal_head_height: fixture.height,
+      portal_lag_seconds: 0,
+      seconds_since_durable_progress: 1,
+      portal_head_advanced: true,
+      retry_count: 0,
+    }])
+  } finally {
+    await server.close()
+  }
+})
+test('runs actual Registry finalized-head retries through the configured deadline', async () => {
+  const fixture = PRODUCTION_REGISTRY_FIXTURES[0]
+  const server = await createControlledPortalServer({
+    block: rawPortalBlock({ height: fixture.height, logs: [postCreatedLog(fixture)] }),
+  })
+  try {
+    const retryEvents = []
+    const deadlineEvents = []
+    const ingestionEvents = []
+    const ingestion = createPortalIngestionEvents({
+      family: 'registry',
+      chain: fixture.chain,
+      writeEvent: (event) => ingestionEvents.push(event),
+    })
+    const source = createObservedPortalDataSource({
+      source: buildFixtureSource({
+        server,
+        fixture,
+        deadlineMs: 70,
+        retryScheduleMs: [1],
+        retryObserver: {
+          onRetry(event) {
+            retryEvents.push(event)
+            ingestion.emitPortalRetry(event)
+          },
+          onDeadline(event) {
+            deadlineEvents.push(event)
+            ingestion.emitPortalDeadline()
+          },
+        },
+      }),
+      ingestion,
+      isDeadlineError: (error) => error instanceof PortalRetryDeadlineError,
+    })
+    ingestion.initializeDurableCursor({ height: fixture.height - 1 })
+    ingestion.start()
+    ingestionEvents.length = 0
+    const originalDateNow = Date.now
+    let retryClock = 0
+    Date.now = () => retryClock++ * 10
+
+    server.setRetryAfterSeconds(0)
+    server.setMode('retry')
+    try {
+      await assert.rejects(source.getFinalizedHead(), PortalRetryDeadlineError)
+      assert.equal(retryEvents.length, 7)
+      assert.deepEqual(deadlineEvents, [{ retryCount: 8 }])
+      assert.equal(server.requests.length, 8)
+      assert.equal(server.requests[0].path, `/${fixture.dataset}/finalized-head`)
+      assert.deepEqual(
+        ingestionEvents.map((event) => event.event),
+        [
+          'portal_retry',
+          'portal_retry',
+          'portal_retry',
+          'portal_retry',
+          'portal_retry',
+          'portal_retry',
+          'portal_retry',
+          'portal_deadline',
+        ],
+      )
+      for (const event of ingestionEvents) {
+        assert.equal(event.portal_head_height, -1)
+        assert.equal(event.portal_lag_seconds, -1)
+        assert.equal(event.seconds_since_durable_progress, -1)
+      }
+    } finally {
+      Date.now = originalDateNow
+    }
+  } finally {
+    await server.close()
+  }
+})
+
 test('keeps malformed Portal data visible before Registry state advances, then resumes', async () => {
   const fixture = PRODUCTION_REGISTRY_FIXTURES[2]
   const server = await createControlledPortalServer({
@@ -601,8 +747,20 @@ test('keeps malformed Portal data visible before Registry state advances, then r
     const store = new InMemoryRegistryStore()
     const checkpoint = new DurableFixtureCheckpoint({ startBlock: fixture.height })
     const handler = createRegistryHandler({ contractAddress: CONTRACT })
-    const source = buildFixtureSource({ server, fixture })
-
+    const ingestionEvents = []
+    const ingestion = createPortalIngestionEvents({
+      family: 'registry',
+      chain: fixture.chain,
+      writeEvent: (event) => ingestionEvents.push(event),
+    })
+    const source = createObservedPortalDataSource({
+      source: buildFixtureSource({ server, fixture }),
+      ingestion,
+      isDeadlineError: (error) => error instanceof PortalRetryDeadlineError,
+    })
+    ingestion.initializeDurableCursor({ height: fixture.height - 1 })
+    ingestion.start()
+    ingestionEvents.length = 0
     server.setMode('malformed')
     await assert.rejects(
       applyPortalBatch({
@@ -617,6 +775,9 @@ test('keeps malformed Portal data visible before Registry state advances, then r
     assert.equal(checkpoint.height, fixture.height - 1)
     assert.equal(store.all(Post).length, 0)
 
+    assert.deepEqual(ingestionEvents.map((event) => event.event), ['fatal'])
+    assert.equal(ingestionEvents[0].portal_head_height, -1)
+    assert.equal(ingestionEvents[0].portal_lag_seconds, -1)
     server.setMode('data')
     await applyPortalBatch({
       source,

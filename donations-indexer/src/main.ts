@@ -140,13 +140,20 @@ const main = async (): Promise<void> => {
     const observedDatabase = createObservedFinalDatabase({
       database,
       ingestion,
+      readDurableProgressAtMs: () => database.durableProgressAtMs,
       afterCommit: () => {
         const committed = database.lastCommittedCursor
         if (committed === undefined) {
           throw new Error('Donation database committed without a cursor observation')
         }
-        ingestion.recordDurableCursor({ height: committed.cursor.height })
         if (committed.classification === 'advanced') {
+          if (committed.durableProgressAtMs === undefined) {
+            throw new Error('Advanced donation cursor commit has no durable progress time')
+          }
+          ingestion.recordDurableCursor({
+            height: committed.cursor.height,
+            durableProgressAtMs: committed.durableProgressAtMs,
+          })
           ingestion.emitCursorAdvanced()
           ingestion.emitFreshnessSample()
         }
@@ -174,6 +181,7 @@ const main = async (): Promise<void> => {
         error instanceof DonationsPortalRetryDeadlineError,
     })
     await observedHeadProbe.getFinalizedHead()
+    ingestion.emitFreshnessSample()
 
     const head = await fetchHeadHeight(rpcUrl)
     const toBlock = resolveToBlock({

@@ -1,7 +1,9 @@
 import {
   HttpClient,
-  HttpResponse,
   type FetchRequest,
+  type HttpBody,
+  type HttpResponse,
+  type RequestOptions,
 } from '@subsquid/http-client'
 import type { ChainSource } from './chains'
 
@@ -42,6 +44,11 @@ export class PortalRetryDeadlineError extends Error {
   }
 }
 
+interface PortalRetryState {
+  readonly failureStartedAtMs: number
+  retryCount: number
+}
+
 export const retryDelayMs = (retryAfter: string | null): number | undefined => {
   if (retryAfter === null || !/^\d+$/.test(retryAfter.trim())) return undefined
   return Number.parseInt(retryAfter, 10) * 1_000
@@ -70,8 +77,7 @@ export const assertRetryWithinDeadline = ({
 }
 
 class DeadlineHttpClient extends HttpClient {
-  #failureStartedAtMs: number | undefined
-
+  readonly #retryStates = new Map<number, PortalRetryState>()
   constructor({
     headers,
     deadlineMs,
@@ -93,10 +99,21 @@ class DeadlineHttpClient extends HttpClient {
 
   readonly #deadlineMs: number
   #retryObserver: PortalRetryObserver | undefined
-  #retryCount = 0
-
   setRetryObserver(observer: PortalRetryObserver): void {
     this.#retryObserver = observer
+  }
+
+  override request<T = unknown>(
+    method: string,
+    url: string,
+    options: RequestOptions & HttpBody = {},
+  ): Promise<HttpResponse<T>> {
+    // PortalClient supplies `retryAttempts: 6` on every source request, which
+    // would otherwise override this client's deadline-governed retry policy.
+    return super.request<T>(method, url, {
+      ...options,
+      retryAttempts: Number.MAX_SAFE_INTEGER,
+    })
   }
 
   protected override beforeRetryPause(
@@ -105,23 +122,27 @@ class DeadlineHttpClient extends HttpClient {
     pause: number,
   ): void {
     const nowMs = Date.now()
-    const retryCount = this.#retryCount + 1
-    this.#failureStartedAtMs ??= nowMs
+    const retryState = this.#retryStates.get(request.id) ?? {
+      failureStartedAtMs: nowMs,
+      retryCount: 0,
+    }
+    const retryCount = retryState.retryCount + 1
     try {
       assertRetryWithinDeadline({
-        startedAtMs: this.#failureStartedAtMs,
+        startedAtMs: retryState.failureStartedAtMs,
         nowMs,
         retryAfterMs: pause,
         deadlineMs: this.#deadlineMs,
       })
     } catch (error) {
       if (error instanceof PortalRetryDeadlineError) {
-        this.#retryCount = retryCount
+        this.#retryStates.delete(request.id)
         this.#retryObserver?.onDeadline({ retryCount })
       }
       throw error
     }
-    this.#retryCount = retryCount
+    retryState.retryCount = retryCount
+    this.#retryStates.set(request.id, retryState)
     this.#retryObserver?.onRetry({
       retryAfterSeconds: pause / 1_000,
       retryCount,
@@ -130,9 +151,8 @@ class DeadlineHttpClient extends HttpClient {
   }
 
   protected override afterResponse(request: FetchRequest, response: HttpResponse): void {
-    if (response.ok) {
-      this.#failureStartedAtMs = undefined
-      this.#retryCount = 0
+    if (response.ok || !this.isRetryableError(response, request)) {
+      this.#retryStates.delete(request.id)
     }
     super.afterResponse(request, response)
   }

@@ -6,8 +6,15 @@ import { createDonationDatabase } from '../src/cursor.ts'
 import { ensureDonationTable } from '../src/donationStore.ts'
 import {
   createPortalHttpClient,
+  DonationsPortalRetryDeadlineError,
   type PortalConfig,
+  type PortalRetryObserver,
 } from '../src/portal.ts'
+import {
+  createObservedPortalDataSource,
+  createPortalIngestionEvents,
+  type PortalIngestionEvent,
+} from '../src/ingestionEvents.ts'
 import {
   buildDonationPortalPlan,
   indexDonationBlocks,
@@ -203,6 +210,7 @@ interface ControlledPortalServer {
     readonly query: unknown
   }[]
   setMode(mode: PortalMode): void
+  setRetryAfterSeconds(seconds: number): void
   setBlock(dataset: string, block: PortalRawBlock): void
   close(): void
 }
@@ -269,6 +277,7 @@ const createControlledPortalServer = (
   fixtures: readonly ProductionDonationFixture[],
 ): ControlledPortalServer => {
   let mode: PortalMode = 'data'
+  let retryAfterSeconds = 10
   const blocks = new Map<string, PortalRawBlock>()
   const requests: {
     path: string
@@ -295,7 +304,7 @@ const createControlledPortalServer = (
       if (mode === 'retry') {
         return new Response('retry later', {
           status: 529,
-          headers: { 'Retry-After': '10' },
+          headers: { 'Retry-After': String(retryAfterSeconds) },
         })
       }
       if (mode === 'malformed') {
@@ -313,6 +322,12 @@ const createControlledPortalServer = (
           },
         })
       }
+      if (url.pathname.endsWith('/finalized-head')) {
+        return Response.json({
+          number: block.header.number,
+          hash: block.header.hash,
+        })
+      }
       return new Response(`${JSON.stringify(block)}\n`, {
         status: 200,
         headers: { 'Content-Type': 'application/x-ndjson' },
@@ -325,6 +340,9 @@ const createControlledPortalServer = (
     requests,
     setMode(nextMode: PortalMode): void {
       mode = nextMode
+    },
+    setRetryAfterSeconds(seconds: number): void {
+      retryAfterSeconds = seconds
     },
     setBlock(dataset: string, block: PortalRawBlock): void {
       blocks.set(dataset, block)
@@ -358,6 +376,7 @@ const portalPlanFor = ({
   server,
   deadlineMs,
   retryScheduleMs,
+  retryObserver,
   startBlock = fixture.height,
   toBlock = fixture.height,
 }: {
@@ -365,6 +384,7 @@ const portalPlanFor = ({
   readonly server: ControlledPortalServer
   readonly deadlineMs?: number
   readonly retryScheduleMs?: readonly number[]
+  readonly retryObserver?: PortalRetryObserver
   readonly startBlock?: number
   readonly toBlock?: number
 }): DonationPortalPlan => {
@@ -377,6 +397,7 @@ const portalPlanFor = ({
       headers: {},
       ...(deadlineMs === undefined ? {} : { deadlineMs }),
       ...(retryScheduleMs === undefined ? {} : { retryScheduleMs }),
+      ...(retryObserver === undefined ? {} : { retryObserver }),
     }),
     bindRetryObserver() {},
   }
@@ -613,18 +634,160 @@ describe('deterministic Donations Portal integrity harness', () => {
     }
   })
 
+
+  test('emits a Donations freshness sample after an actual finalized-head response', async () => {
+    const fixture = PRODUCTION_DONATION_FIXTURES[0]!
+    const server = createControlledPortalServer([fixture])
+    try {
+      let nowMs = 0
+      const ingestionEvents: PortalIngestionEvent[] = []
+      const ingestion = createPortalIngestionEvents({
+        family: 'donations',
+        chain: fixture.slug,
+        now: () => nowMs,
+        writeEvent: (event) => ingestionEvents.push(event),
+      })
+      const plan = portalPlanFor({ fixture, server })
+      const source = createObservedPortalDataSource({
+        source: plan.source,
+        ingestion,
+        isDeadlineError: (error) => error instanceof DonationsPortalRetryDeadlineError,
+      })
+      ingestion.initializeDurableCursor({
+        height: fixture.height - 1,
+        durableProgressAtMs: 0,
+      })
+      ingestion.start()
+      ingestionEvents.length = 0
+      nowMs = 1_000
+
+      const head = await source.getFinalizedHead()
+      ingestion.emitFreshnessSample()
+
+      expect(head.number).toBe(fixture.height)
+      expect(ingestionEvents).toEqual([{
+        schema: 'thatsrekt.portal.ingestion.v1',
+        family: 'donations',
+        chain: fixture.slug,
+        event: 'freshness_sample',
+        cursor_height: fixture.height - 1,
+        portal_head_height: fixture.height,
+        portal_lag_seconds: 0,
+        seconds_since_durable_progress: 1,
+        portal_head_advanced: true,
+        retry_count: 0,
+      }])
+    } finally {
+      server.close()
+    }
+  })
+  test('runs actual Donations finalized-head retries through the configured deadline', async () => {
+    const fixture = PRODUCTION_DONATION_FIXTURES[0]!
+    const server = createControlledPortalServer([fixture])
+    try {
+      const retryEvents: { readonly retryAfterSeconds: number; readonly retryCount: number }[] = []
+      const deadlineEvents: { readonly retryCount: number }[] = []
+      const ingestionEvents: PortalIngestionEvent[] = []
+      const ingestion = createPortalIngestionEvents({
+        family: 'donations',
+        chain: fixture.slug,
+        writeEvent: (event) => ingestionEvents.push(event),
+      })
+      const plan = portalPlanFor({
+        fixture,
+        server,
+        deadlineMs: 70,
+        retryScheduleMs: [1],
+        retryObserver: {
+          onRetry(event): void {
+            retryEvents.push(event)
+            ingestion.emitPortalRetry(event)
+          },
+          onDeadline(event): void {
+            deadlineEvents.push(event)
+            ingestion.emitPortalDeadline()
+          },
+        },
+      })
+      const source = createObservedPortalDataSource({
+        source: plan.source,
+        ingestion,
+        isDeadlineError: (error) => error instanceof DonationsPortalRetryDeadlineError,
+      })
+      ingestion.initializeDurableCursor({ height: fixture.height - 1 })
+      ingestion.start()
+      ingestionEvents.length = 0
+      const originalDateNow = Date.now
+      let retryClock = 0
+      Date.now = (): number => retryClock++ * 10
+
+      server.setRetryAfterSeconds(0)
+      server.setMode('retry')
+      try {
+        await expect(source.getFinalizedHead()).rejects.toThrow(
+          DonationsPortalRetryDeadlineError,
+        )
+        expect(retryEvents).toHaveLength(7)
+        expect(deadlineEvents).toEqual([{ retryCount: 8 }])
+        expect(server.requests).toHaveLength(8)
+        expect(server.requests[0]?.path).toBe(`/${fixture.dataset}/finalized-head`)
+        expect(ingestionEvents.map((event) => event.event)).toEqual([
+          'portal_retry',
+          'portal_retry',
+          'portal_retry',
+          'portal_retry',
+          'portal_retry',
+          'portal_retry',
+          'portal_retry',
+          'portal_deadline',
+        ])
+        for (const event of ingestionEvents) {
+          expect(event.portal_head_height).toBe(-1)
+          expect(event.portal_lag_seconds).toBe(-1)
+          expect(event.seconds_since_durable_progress).toBe(-1)
+        }
+      } finally {
+        Date.now = originalDateNow
+      }
+    } finally {
+      server.close()
+    }
+  })
+
   test('keeps malformed Portal data visible before Donations state advances, then resumes', async () => {
     const fixture = PRODUCTION_DONATION_FIXTURES[2]!
     const server = createControlledPortalServer([fixture])
     const isolated = await createIsolatedDonationDatabase({ chainId: fixture.chainId })
     try {
       const plan = portalPlanFor({ fixture, server })
+      const ingestionEvents: PortalIngestionEvent[] = []
+      const ingestion = createPortalIngestionEvents({
+        family: 'donations',
+        chain: fixture.slug,
+        writeEvent: (event) => ingestionEvents.push(event),
+      })
+      const observedPlan: DonationPortalPlan = {
+        ...plan,
+        source: createObservedPortalDataSource({
+          source: plan.source,
+          ingestion,
+          isDeadlineError: (error) => error instanceof DonationsPortalRetryDeadlineError,
+        }),
+      }
+      ingestion.initializeDurableCursor({ height: fixture.height - 1 })
+      ingestion.start()
+      ingestionEvents.length = 0
       server.setMode('malformed')
-      await expect(runPortalFixture({ fixture, plan, database: isolated.database })).rejects.toThrow()
+      await expect(
+        runPortalFixture({ fixture, plan: observedPlan, database: isolated.database }),
+      ).rejects.toThrow()
       await assertNoDurableProgress({ pool: isolated.pool, fixture })
+      expect(ingestionEvents.map((event) => event.event)).toEqual(['fatal'])
+      expect(ingestionEvents[0]?.portal_head_height).toBe(-1)
+      expect(ingestionEvents[0]?.portal_lag_seconds).toBe(-1)
 
       server.setMode('data')
-      await runPortalFixture({ fixture, plan, database: isolated.database })
+      await runPortalFixture({ fixture, plan: observedPlan, database: isolated.database })
       expect(await readRows({ pool: isolated.pool, chainId: fixture.chainId })).toEqual(
         fixture.expectedRows,
       )

@@ -226,6 +226,23 @@ test('persists Registry state only after a real Portal source succeeds through T
       'SELECT height, hash FROM squid_processor.status WHERE id = 0',
     )
     assert.deepEqual(status.rows, [{ height: BLOCK_HEIGHT, hash: BLOCK_HASH }])
+    const durableProgress = await fixture.pool.query(
+      `SELECT cursor_height, cursor_hash, durable_progress_at_ms::text
+         FROM squid_processor.portal_ingestion_progress
+        WHERE id = 0`,
+    )
+    assert.equal(durableProgress.rows.length, 1)
+    assert.deepEqual(
+      {
+        cursor_height: durableProgress.rows[0].cursor_height,
+        cursor_hash: durableProgress.rows[0].cursor_hash,
+      },
+      {
+        cursor_height: BLOCK_HEIGHT,
+        cursor_hash: BLOCK_HASH,
+      },
+    )
+    assert.match(durableProgress.rows[0].durable_progress_at_ms, /^(0|[1-9][0-9]*)$/)
     const whitelister = await fixture.pool.query(
       'SELECT id, is_currently_whitelisted, last_changed_at_block FROM whitelister',
     )

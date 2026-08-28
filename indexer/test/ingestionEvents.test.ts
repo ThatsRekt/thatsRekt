@@ -3,6 +3,7 @@ import {
   PORTAL_INGESTION_SCHEMA,
   createObservedFinalDatabase,
   createObservedPortalDataSource,
+  createPortalFreshnessSampler,
   createPortalIngestionEvents,
   type PortalIngestionEvent,
 } from '../src/ingestionEvents'
@@ -32,7 +33,7 @@ describe('Registry Portal ingestion event contract', () => {
       isDeadlineError: () => false,
     })
 
-    ingestion.initializeDurableCursor({ height: 99 })
+    ingestion.initializeDurableCursor({ height: 99, durableProgressAtMs: 1_000 })
     ingestion.start()
     await source.getFinalizedHead()
     nowMs = 7_500
@@ -45,8 +46,8 @@ describe('Registry Portal ingestion event contract', () => {
       chain: 'base',
       event: 'restart',
       cursor_height: 99,
-      portal_head_height: 101,
-      portal_lag_seconds: 0,
+      portal_head_height: -1,
+      portal_lag_seconds: -1,
       seconds_since_durable_progress: 0,
       portal_head_advanced: false,
       retry_count: 0,
@@ -60,7 +61,7 @@ describe('Registry Portal ingestion event contract', () => {
       portal_head_height: 101,
       portal_lag_seconds: 6,
       seconds_since_durable_progress: 6,
-      portal_head_advanced: false,
+      portal_head_advanced: true,
       retry_count: 1,
       retry_after_seconds: 10,
     })
@@ -133,6 +134,184 @@ describe('Registry Portal ingestion event contract', () => {
     expect(events.slice(1).every((event) => event.cursor_height === 5)).toBe(true)
   })
 
+
+  test('emits a terminal failure before the first successful Portal head', async () => {
+    let nowMs = 10_000
+    const events: PortalIngestionEvent[] = []
+    const ingestion = createPortalIngestionEvents({
+      family: 'registry',
+      chain: 'base',
+      now: () => nowMs,
+      writeEvent: (event) => events.push(event),
+    })
+    const source = createObservedPortalDataSource({
+      source: {
+        async getHead() {
+          throw new Error('controlled Portal failure')
+        },
+        async getFinalizedHead() {
+          throw new Error('controlled Portal failure')
+        },
+        async *getFinalizedStream() {},
+        async *getStream() {},
+      },
+      ingestion,
+      isDeadlineError: () => false,
+    })
+
+    ingestion.initializeDurableCursor({ height: 12 })
+    ingestion.start()
+    events.length = 0
+    nowMs = 11_000
+
+    await expect(source.getFinalizedHead()).rejects.toThrow('controlled Portal failure')
+
+    expect(events).toEqual([{
+      schema: PORTAL_INGESTION_SCHEMA,
+      family: 'registry',
+      chain: 'base',
+      event: 'fatal',
+      cursor_height: 12,
+      portal_head_height: -1,
+      portal_lag_seconds: -1,
+      seconds_since_durable_progress: -1,
+      portal_head_advanced: false,
+      retry_count: 0,
+    }])
+  })
+
+  test('uses durable progress persisted before restart and preserves a stalled head age', () => {
+    let nowMs = 10_000
+    const events: PortalIngestionEvent[] = []
+    const ingestion = createPortalIngestionEvents({
+      family: 'registry',
+      chain: 'base',
+      now: () => nowMs,
+      writeEvent: (event) => events.push(event),
+    })
+
+    ingestion.initializeDurableCursor({
+      height: 40,
+      durableProgressAtMs: 1_000,
+    })
+    ingestion.start()
+    events.length = 0
+    nowMs = 20_000
+    ingestion.observePortalHead({ height: 50 })
+    nowMs = 100_000
+    ingestion.observePortalHead({ height: 50 })
+    nowMs = 1_901_000
+    ingestion.emitFreshnessSample()
+
+    expect(events).toEqual([{
+      schema: PORTAL_INGESTION_SCHEMA,
+      family: 'registry',
+      chain: 'base',
+      event: 'freshness_sample',
+      cursor_height: 40,
+      portal_head_height: 50,
+      portal_lag_seconds: 1_881,
+      seconds_since_durable_progress: 1_900,
+      portal_head_advanced: true,
+      retry_count: 0,
+    }])
+  })
+
+
+  test('loads persisted Registry durable progress after database connection', async () => {
+    const events: PortalIngestionEvent[] = []
+    const ingestion = createPortalIngestionEvents({
+      family: 'registry',
+      chain: 'base',
+      now: () => 1_901_000,
+      writeEvent: (event) => events.push(event),
+    })
+    const observed = createObservedFinalDatabase({
+      database: {
+        supportsHotBlocks: false,
+        async connect() {
+          return { height: 40, hash: '0x40' }
+        },
+        async transact() {},
+      },
+      ingestion,
+      readDurableProgressAtMs: () => 1_000,
+      afterCommit: () => undefined,
+    })
+
+    await observed.connect()
+    events.length = 0
+    ingestion.observePortalHead({ height: 50 })
+    ingestion.emitFreshnessSample()
+
+    expect(events).toEqual([{
+      schema: PORTAL_INGESTION_SCHEMA,
+      family: 'registry',
+      chain: 'base',
+      event: 'freshness_sample',
+      cursor_height: 40,
+      portal_head_height: 50,
+      portal_lag_seconds: 0,
+      seconds_since_durable_progress: 1_900,
+      portal_head_advanced: true,
+      retry_count: 0,
+    }])
+  })
+  test('emits a freshness sample only after an observed Portal head succeeds', async () => {
+    let nowMs = 0
+    let shouldFail = false
+    const events: PortalIngestionEvent[] = []
+    const ingestion = createPortalIngestionEvents({
+      family: 'registry',
+      chain: 'base',
+      now: () => nowMs,
+      writeEvent: (event) => events.push(event),
+    })
+    const source = createObservedPortalDataSource({
+      source: {
+        async getHead() {
+          return { number: 10, hash: '0x10' }
+        },
+        async getFinalizedHead() {
+          if (shouldFail) throw new Error('controlled Portal failure')
+          return { number: 10, hash: '0x10' }
+        },
+        async *getFinalizedStream() {},
+        async *getStream() {},
+      },
+      ingestion,
+      isDeadlineError: () => false,
+    })
+    const sampler = createPortalFreshnessSampler({
+      source,
+      ingestion,
+      intervalMs: 1_000,
+    })
+
+    ingestion.initializeDurableCursor({ height: 5, durableProgressAtMs: 0 })
+    ingestion.start()
+    events.length = 0
+    nowMs = 1_000
+
+    await expect(sampler.sample()).resolves.toBe(true)
+    expect(events).toEqual([{
+      schema: PORTAL_INGESTION_SCHEMA,
+      family: 'registry',
+      chain: 'base',
+      event: 'freshness_sample',
+      cursor_height: 5,
+      portal_head_height: 10,
+      portal_lag_seconds: 0,
+      seconds_since_durable_progress: 1,
+      portal_head_advanced: true,
+      retry_count: 0,
+    }])
+
+    events.length = 0
+    shouldFail = true
+    await expect(sampler.sample()).resolves.toBe(false)
+    expect(events.map((event) => event.event)).toEqual(['fatal'])
+  })
   test('classifies retry, deadline, and fatal without serializing secret-like values', () => {
     const privatePortalUrl = 'https://private.portal.example.test/base?key=portal-secret'
     const apiKey = 'portal-api-key'

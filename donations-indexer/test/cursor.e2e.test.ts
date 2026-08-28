@@ -6,6 +6,12 @@ import {
   classifyZeroRowCursorUpdate,
   createDonationDatabase,
 } from '../src/cursor.ts'
+import {
+  createObservedFinalDatabase,
+  createObservedPortalDataSource,
+  createPortalIngestionEvents,
+  type PortalIngestionEvent,
+} from '../src/ingestionEvents.ts'
 import { ensureDonationTable, upsertDonation } from '../src/donationStore.ts'
 import type { DonationRow } from '../src/donationMapper.ts'
 import {
@@ -99,7 +105,7 @@ describe('conditional donation cursor commits', () => {
 
   test('exposes the exact durable classification only after the cursor transaction commits', async () => {
     const chainId = allocateTestChainId()
-    const database = createDonationDatabase({ pool, chainId })
+    const database = createDonationDatabase({ pool, chainId, now: () => 1_000 })
     await database.connect()
 
     await database.transact(infoAt(101, '0x101'), async (client) => {
@@ -109,9 +115,114 @@ describe('conditional donation cursor commits', () => {
     expect(database.lastCommittedCursor).toEqual({
       cursor: { height: 101, hash: '0x101' },
       classification: 'advanced',
+      durableProgressAtMs: 1_000,
     })
   })
 
+
+  test('persists only advanced durable progress across an idempotent replay and restart', async () => {
+    const chainId = allocateTestChainId()
+    let nowMs = 1_000
+    const database = createDonationDatabase({
+      pool,
+      chainId,
+      now: () => nowMs,
+    })
+    await database.connect()
+    expect(database.durableProgressAtMs).toBeUndefined()
+
+    await database.transact(infoAt(102, '0x102'), async (client) => {
+      await upsertDonation(client, rowAt({ chainId, blockNumber: 102 }))
+    })
+    expect(database.lastCommittedCursor).toMatchObject({
+      cursor: { height: 102, hash: '0x102' },
+      classification: 'advanced',
+      durableProgressAtMs: 1_000,
+    })
+
+    nowMs = 9_000
+    await database.transact(infoAt(102, '0x102'), async (client) => {
+      await upsertDonation(client, rowAt({ chainId, blockNumber: 102 }))
+    })
+    expect(database.lastCommittedCursor).toMatchObject({
+      classification: 'idempotent',
+      durableProgressAtMs: 1_000,
+    })
+
+    const restarted = createDonationDatabase({
+      pool,
+      chainId,
+      now: () => nowMs,
+    })
+    await restarted.connect()
+    expect(restarted.durableProgressAtMs).toBe(1_000)
+  })
+
+  test('restores durable progress age into Donations freshness after restart', async () => {
+    const chainId = allocateTestChainId()
+    let nowMs = 1_000
+    const initial = createDonationDatabase({
+      pool,
+      chainId,
+      now: () => nowMs,
+    })
+    await initial.connect()
+    await initial.transact(infoAt(103, '0x103'), async (client) => {
+      await upsertDonation(client, rowAt({ chainId, blockNumber: 103 }))
+    })
+
+    nowMs = 1_901_000
+    const events: PortalIngestionEvent[] = []
+    const restarted = createDonationDatabase({
+      pool,
+      chainId,
+      now: () => nowMs,
+    })
+    const ingestion = createPortalIngestionEvents({
+      family: 'donations',
+      chain: 'base',
+      now: () => nowMs,
+      writeEvent: (event) => events.push(event),
+    })
+    const observedDatabase = createObservedFinalDatabase({
+      database: restarted,
+      ingestion,
+      readDurableProgressAtMs: () => restarted.durableProgressAtMs,
+      afterCommit: () => undefined,
+    })
+    const source = createObservedPortalDataSource({
+      source: {
+        async getHead() {
+          return { number: 104, hash: '0x104' }
+        },
+        async getFinalizedHead() {
+          return { number: 104, hash: '0x104' }
+        },
+        async *getFinalizedStream() {},
+        async *getStream() {},
+      },
+      ingestion,
+      isDeadlineError: () => false,
+    })
+
+    await observedDatabase.connect()
+    events.length = 0
+    await source.getFinalizedHead()
+    ingestion.emitFreshnessSample()
+
+    expect(events).toEqual([{
+      schema: 'thatsrekt.portal.ingestion.v1',
+      family: 'donations',
+      chain: 'base',
+      event: 'freshness_sample',
+      cursor_height: 103,
+      portal_head_height: 104,
+      portal_lag_seconds: 0,
+      seconds_since_durable_progress: 1_900,
+      portal_head_advanced: true,
+      retry_count: 0,
+    }])
+  })
 
   test('keeps the higher cursor during delayed replays while donations remain idempotent', async () => {
     const { chainId, database } = await createCursorTestDatabase()

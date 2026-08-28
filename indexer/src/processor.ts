@@ -1,4 +1,5 @@
 import 'dotenv/config'
+import { createOrmConfig } from '@subsquid/typeorm-config'
 import { Processor as BatchProcessor } from '@subsquid/batch-processor'
 import { augmentBlock } from '@subsquid/evm-objects'
 import {
@@ -9,6 +10,7 @@ import {
 import { createLogger, type Logger } from '@subsquid/logger'
 import { EvmBatchProcessor } from '@subsquid/evm-processor'
 import { type Store, type TypeormDatabase } from '@subsquid/typeorm-store'
+import { DataSource } from 'typeorm'
 import { events } from './abi/ThatsRekt'
 import type { ChainConfig } from './chains'
 import {
@@ -19,8 +21,10 @@ import {
 import {
   createObservedFinalDatabase,
   createObservedPortalDataSource,
+  createPortalFreshnessSampler,
   createPortalIngestionEvents,
 } from './ingestionEvents'
+import { readRegistryPortalDurableProgressAtMs } from './portalProgress'
 
 const requireEnv = (key: string): string => {
   const value = process.env[key]
@@ -256,20 +260,55 @@ export const runProcessor = ({
       ingestion.emitPortalDeadline()
     },
   })
-  const observedDatabase = createObservedFinalDatabase({
-    database,
-    ingestion,
-    afterCommit: ({ nextHead }) => {
-      ingestion.recordDurableCursor({ height: nextHead.height })
-      ingestion.emitCursorAdvanced()
-      ingestion.emitCursorClassification({ classification: 'advanced' })
-      ingestion.emitFreshnessSample()
-    },
-  })
+  const durableProgressDataSource = new DataSource(createOrmConfig())
   const observedSource = createObservedPortalDataSource({
     source: built.dataSource,
     ingestion,
     isDeadlineError: (error) => error instanceof PortalRetryDeadlineError,
+  })
+  const freshnessSampler = createPortalFreshnessSampler({
+    source: observedSource,
+    ingestion,
+  })
+  const readDurableProgressAtMs = async ({
+    height,
+    hash,
+  }: {
+    readonly height: number
+    readonly hash: string
+  }): Promise<number | undefined> => {
+    if (!durableProgressDataSource.isInitialized) {
+      await durableProgressDataSource.initialize()
+    }
+    return readRegistryPortalDurableProgressAtMs({
+      dataSource: durableProgressDataSource,
+      cursor: { height, hash },
+    })
+  }
+  const observedDatabase = createObservedFinalDatabase({
+    database,
+    ingestion,
+    readDurableProgressAtMs: ({ state }) =>
+      readDurableProgressAtMs({ height: state.height, hash: state.hash }),
+    afterConnect: () => {
+      freshnessSampler.start()
+    },
+    afterCommit: async ({ nextHead }) => {
+      const durableProgressAtMs = await readDurableProgressAtMs({
+        height: nextHead.height,
+        hash: nextHead.hash,
+      })
+      if (durableProgressAtMs === undefined) {
+        throw new Error('Registry durable cursor commit has no durable progress time')
+      }
+      ingestion.recordDurableCursor({
+        height: nextHead.height,
+        durableProgressAtMs,
+      })
+      ingestion.emitCursorAdvanced()
+      ingestion.emitCursorClassification({ classification: 'advanced' })
+      ingestion.emitFreshnessSample()
+    },
   })
 
   const runPortalProcessor = async (): Promise<void> => {
@@ -292,6 +331,17 @@ export const runProcessor = ({
       logger.fatal({}, 'Registry Portal ingestion failed')
       exitCode = 1
     } finally {
+      freshnessSampler.stop()
+      try {
+        if (durableProgressDataSource.isInitialized) {
+          await durableProgressDataSource.destroy()
+        }
+      } catch {
+        ingestion.emitFatal()
+        ingestion.emitRunOutcome({ outcome: 'failed' })
+        logger.error({}, 'Registry durable-progress database shutdown failed')
+        exitCode = 1
+      }
       try {
         await database.disconnect()
       } catch {

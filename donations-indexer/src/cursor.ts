@@ -15,9 +15,11 @@ export type CursorCommitOutcome = 'advanced' | 'idempotent' | 'stale'
 export interface DonationCursorCommit {
   readonly cursor: DonationCursor
   readonly classification: CursorCommitOutcome
+  readonly durableProgressAtMs: number | undefined
 }
 
 export interface DonationDatabase extends FinalDatabase<PoolClient> {
+  readonly durableProgressAtMs: number | undefined
   readonly lastCommittedCursor: DonationCursorCommit | undefined
 }
 
@@ -34,6 +36,14 @@ const assertChainId = (chainId: number): void => {
   }
 }
 
+const assertDurableProgressAtMs = (value: number): void => {
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new CursorConsistencyError(
+      'Donation durable progress time must be a non-negative safe integer',
+    )
+  }
+}
+
 export const ensureDonationCursorTable = async (
   pool: Pool,
   chainId: number,
@@ -43,8 +53,11 @@ export const ensureDonationCursorTable = async (
     CREATE TABLE IF NOT EXISTS donations_indexer_status_v2 (
       chain_id INTEGER PRIMARY KEY,
       height INTEGER NOT NULL DEFAULT -1,
-      hash TEXT NOT NULL DEFAULT ''
+      hash TEXT NOT NULL DEFAULT '',
+      durable_progress_at_ms BIGINT
     );
+    ALTER TABLE donations_indexer_status_v2
+      ADD COLUMN IF NOT EXISTS durable_progress_at_ms BIGINT;
   `)
 
   const { rows: legacyTable } = await pool.query<{ exists: boolean }>(`
@@ -76,15 +89,44 @@ export const ensureDonationCursorTable = async (
   )
 }
 
+interface StoredDonationCursor extends DonationCursor {
+  readonly durableProgressAtMs: number | undefined
+}
+
+interface StoredDonationCursorRow {
+  readonly height: number
+  readonly hash: string
+  readonly durable_progress_at_ms: string | null
+}
+
+const parseDurableProgressAtMs = (value: string | null): number | undefined => {
+  if (value === null) return undefined
+  if (!/^(0|[1-9][0-9]*)$/.test(value)) {
+    throw new CursorConsistencyError('Donation durable progress time is invalid')
+  }
+  const timestamp = Number(value)
+  assertDurableProgressAtMs(timestamp)
+  return timestamp
+}
+
 const readCursor = async (
   client: Pool | PoolClient,
   chainId: number,
-): Promise<DonationCursor | undefined> => {
-  const { rows } = await client.query<DonationCursor>(
-    `SELECT height, hash FROM donations_indexer_status_v2 WHERE chain_id = $1`,
+): Promise<StoredDonationCursor | undefined> => {
+  const { rows } = await client.query<StoredDonationCursorRow>(
+    `SELECT height, hash, durable_progress_at_ms::text
+       FROM donations_indexer_status_v2
+      WHERE chain_id = $1`,
     [chainId],
   )
-  return rows[0]
+  const row = rows[0]
+  return row === undefined
+    ? undefined
+    : Object.freeze({
+      height: row.height,
+      hash: row.hash,
+      durableProgressAtMs: parseDurableProgressAtMs(row.durable_progress_at_ms),
+    })
 }
 
 export const classifyZeroRowCursorUpdate = ({
@@ -108,33 +150,61 @@ export const classifyZeroRowCursorUpdate = ({
 }
 
 const CONDITIONAL_CURSOR_UPDATE_SQL = `
-UPDATE donations_indexer_status_v2 SET height=$1, hash=$2
-WHERE chain_id=$3
-  AND (height < $1 OR (height = $1 AND hash = $2))
+UPDATE donations_indexer_status_v2
+   SET height = $1,
+       hash = $2,
+       durable_progress_at_ms = CASE
+         WHEN height < $1 THEN $4::bigint
+         ELSE durable_progress_at_ms
+       END
+ WHERE chain_id = $3
+   AND (height < $1 OR (height = $1 AND hash = $2))
+RETURNING height, hash, durable_progress_at_ms::text
 `
+
+const toStoredDonationCursor = (row: StoredDonationCursorRow): StoredDonationCursor =>
+  Object.freeze({
+    height: row.height,
+    hash: row.hash,
+    durableProgressAtMs: parseDurableProgressAtMs(row.durable_progress_at_ms),
+  })
+
+const toDonationCursor = (cursor: DonationCursor): DonationCursor =>
+  Object.freeze({ height: cursor.height, hash: cursor.hash })
 
 const commitCursor = async ({
   client,
   chainId,
   next,
+  now,
 }: {
   readonly client: PoolClient
   readonly chainId: number
   readonly next: DonationCursor
+  readonly now: () => number
 }): Promise<DonationCursorCommit> => {
   const before = await readCursor(client, chainId)
-  const update = await client.query(CONDITIONAL_CURSOR_UPDATE_SQL, [
+  const nextProgressAtMs =
+    before !== undefined && before.height < next.height
+      ? now()
+      : undefined
+  if (nextProgressAtMs !== undefined) assertDurableProgressAtMs(nextProgressAtMs)
+  const update = await client.query<StoredDonationCursorRow>(CONDITIONAL_CURSOR_UPDATE_SQL, [
     next.height,
     next.hash,
     chainId,
+    nextProgressAtMs ?? null,
   ])
-  if (update.rowCount === 1) {
+  const updated = update.rows[0]
+  if (updated !== undefined) {
+    const stored = toStoredDonationCursor(updated)
     return Object.freeze({
-      cursor: Object.freeze({ ...next }),
+      cursor: toDonationCursor(stored),
       classification:
         before?.height === next.height && before.hash === next.hash
           ? 'idempotent'
           : 'advanced',
+      durableProgressAtMs: stored.durableProgressAtMs,
     })
   }
 
@@ -147,8 +217,9 @@ const commitCursor = async ({
     throw new CursorConsistencyError('Donation cursor row is missing')
   }
   return Object.freeze({
-    cursor: Object.freeze({ ...stored }),
+    cursor: toDonationCursor(stored),
     classification,
+    durableProgressAtMs: stored.durableProgressAtMs,
   })
 }
 
@@ -173,13 +244,19 @@ const rollbackAndRethrow = async ({
 export const createDonationDatabase = ({
   pool,
   chainId,
+  now = Date.now,
 }: {
   readonly pool: Pool
   readonly chainId: number
+  readonly now?: () => number
 }): DonationDatabase => {
+  let durableProgressAtMs: number | undefined
   let lastCommittedCursor: DonationCursorCommit | undefined
 
   return {
+    get durableProgressAtMs(): number | undefined {
+      return durableProgressAtMs
+    },
     get lastCommittedCursor(): DonationCursorCommit | undefined {
       return lastCommittedCursor
     },
@@ -191,7 +268,8 @@ export const createDonationDatabase = ({
       if (cursor === undefined) {
         throw new CursorConsistencyError('Donation cursor seed was not persisted')
       }
-      return cursor
+      durableProgressAtMs = cursor.durableProgressAtMs
+      return toDonationCursor(cursor)
     },
 
     async transact(
@@ -207,6 +285,7 @@ export const createDonationDatabase = ({
           client,
           chainId,
           next: info.nextHead,
+          now,
         })
         await client.query('COMMIT')
       } catch (error) {
@@ -214,6 +293,10 @@ export const createDonationDatabase = ({
       } finally {
         client.release()
       }
+      if (committedCursor === undefined) {
+        throw new CursorConsistencyError('Donation cursor commit completed without a cursor')
+      }
+      durableProgressAtMs = committedCursor.durableProgressAtMs
       lastCommittedCursor = committedCursor
     },
   }

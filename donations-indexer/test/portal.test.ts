@@ -192,4 +192,49 @@ describe('Donations Portal retry deadline', () => {
     expect(retryEvents).toEqual([{ retryAfterSeconds: 0, retryCount: 1 }])
     expect(deadlineEvents).toEqual([{ retryCount: 1 }])
   })
+
+  test('keeps concurrent Portal retries isolated from successful freshness probes', async () => {
+    const retryEvents: { readonly retryCount: number }[] = []
+    let notifyFirstRetry: (() => void) | undefined
+    let retryRequests = 0
+    const firstRetry = new Promise<void>((resolve) => {
+      notifyFirstRetry = resolve
+    })
+    const server = Bun.serve({
+      hostname: '127.0.0.1',
+      port: 0,
+      fetch(request) {
+        if (new URL(request.url).pathname === '/retry') {
+          retryRequests += 1
+          return retryRequests < 3
+            ? new Response('retry', { status: 529, headers: { 'Retry-After': '1' } })
+            : Response.json({})
+        }
+        return Response.json({})
+      },
+    })
+
+    try {
+      const http = createPortalHttpClient({
+        headers: {},
+        deadlineMs: 5_000,
+        retryScheduleMs: [100],
+        retryObserver: {
+          onRetry: (event) => {
+            retryEvents.push(event)
+            if (retryEvents.length === 1) notifyFirstRetry?.()
+          },
+          onDeadline: () => {},
+        },
+      })
+      const retryRequest = http.get(`http://127.0.0.1:${server.port}/retry`)
+      await firstRetry
+      await http.get(`http://127.0.0.1:${server.port}/success`)
+      await retryRequest
+    } finally {
+      server.stop(true)
+    }
+
+    expect(retryEvents.map((event) => event.retryCount)).toEqual([1, 2])
+  })
 })

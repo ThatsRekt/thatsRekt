@@ -38,10 +38,16 @@ export interface PortalIngestionEvent {
 }
 
 interface IngestionEvents {
-  initializeDurableCursor(input: { readonly height: number }): void
+  initializeDurableCursor(input: {
+    readonly height: number
+    readonly durableProgressAtMs?: number
+  }): void
   start(): void
   observePortalHead(input: { readonly height: number }): void
-  recordDurableCursor(input: { readonly height: number }): void
+  recordDurableCursor(input: {
+    readonly height: number
+    readonly durableProgressAtMs?: number
+  }): void
   emitCursorAdvanced(): boolean
   emitCursorClassification(input: { readonly classification: CursorClassification }): boolean
   emitFreshnessSample(): boolean
@@ -116,15 +122,21 @@ export const createPortalIngestionEvents = ({
 
   const timestamp = (): number => {
     const value = now()
-    if (!Number.isFinite(value) || value < 0) {
-      throw new Error('Portal ingestion clock must be a non-negative finite number')
+    if (!Number.isSafeInteger(value) || value < 0) {
+      throw new Error('Portal ingestion clock must be a non-negative safe integer')
+    }
+    return value
+  }
+  const durableProgressAt = (value: number | undefined): number | undefined => {
+    if (value === undefined) return undefined
+    if (!Number.isSafeInteger(value) || value < 0) {
+      throw new Error('Portal durable progress time must be a non-negative safe integer')
     }
     return value
   }
   let cursorHeight = -1
-  let durableProgressObservedAtMs = timestamp()
-  let portalHead: { readonly height: number; readonly observedAtMs: number } | undefined
-  let portalHeadAdvanced = false
+  let durableProgressAtMs: number | undefined
+  let portalHead: { readonly height: number; readonly advancedAtMs: number } | undefined
   let pendingLifecycle: 'startup' | 'restart' | undefined
   let lifecycleStarted = false
   let retryCount = 0
@@ -141,7 +153,6 @@ export const createPortalIngestionEvents = ({
     readonly outcome?: RunOutcome
     readonly classification?: CursorClassification
   }): boolean => {
-    if (portalHead === undefined) return false
     const nowMs = timestamp()
     writeEvent(Object.freeze({
       schema: PORTAL_INGESTION_SCHEMA,
@@ -149,14 +160,20 @@ export const createPortalIngestionEvents = ({
       chain,
       event,
       cursor_height: cursorHeight,
-      portal_head_height: portalHead.height,
-      // Portal supplies a height/hash but no head timestamp. This is the measured
-      // age of the latest successful Portal-head observation.
-      portal_lag_seconds: elapsedSeconds(nowMs, portalHead.observedAtMs),
-      // A restored cursor has no stored commit time. Its timer begins at the
-      // current process's durable-state observation and resets after each commit.
-      seconds_since_durable_progress: elapsedSeconds(nowMs, durableProgressObservedAtMs),
-      portal_head_advanced: portalHeadAdvanced,
+      portal_head_height: portalHead?.height ?? -1,
+      // Portal does not provide timestamps. This is the age of the most recent
+      // observed advance, so repeated polls of a stalled head do not hide lag.
+      portal_lag_seconds: portalHead === undefined
+        ? -1
+        : elapsedSeconds(nowMs, portalHead.advancedAtMs),
+      // A missing durable timestamp is represented explicitly rather than
+      // restarted from process boot, which would mask a pre-existing stall.
+      seconds_since_durable_progress: durableProgressAtMs === undefined
+        ? -1
+        : elapsedSeconds(nowMs, durableProgressAtMs),
+      // The head is considered advanced while it remains ahead of the durable
+      // cursor, allowing periodic samples to sustain the no-progress signal.
+      portal_head_advanced: portalHead !== undefined && portalHead.height > cursorHeight,
       retry_count: retryCount,
       ...(retryAfterSeconds === undefined
         ? {}
@@ -179,10 +196,10 @@ export const createPortalIngestionEvents = ({
   }
 
   const events: IngestionEvents = {
-    initializeDurableCursor({ height }): void {
+    initializeDurableCursor({ height, durableProgressAtMs: storedProgressAtMs }): void {
       assertInteger({ value: height, name: 'Portal durable cursor height', minimum: -1 })
       cursorHeight = height
-      durableProgressObservedAtMs = timestamp()
+      durableProgressAtMs = durableProgressAt(storedProgressAtMs)
     },
     start(): void {
       if (lifecycleStarted) return
@@ -192,16 +209,24 @@ export const createPortalIngestionEvents = ({
     },
     observePortalHead({ height }): void {
       assertInteger({ value: height, name: 'Portal head height', minimum: 0 })
-      const previousHeight = portalHead?.height
-      portalHead = { height, observedAtMs: timestamp() }
-      portalHeadAdvanced = previousHeight !== undefined && height > previousHeight
+      const observedAtMs = timestamp()
+      portalHead = {
+        height,
+        advancedAtMs:
+          portalHead === undefined || height > portalHead.height
+            ? observedAtMs
+            : portalHead.advancedAtMs,
+      }
       terminalFailureEmitted = false
       flushLifecycle()
     },
-    recordDurableCursor({ height }): void {
+    recordDurableCursor({ height, durableProgressAtMs: committedProgressAtMs }): void {
       assertInteger({ value: height, name: 'Portal durable cursor height', minimum: 0 })
+      if (height <= cursorHeight) {
+        throw new Error('Portal durable cursor must advance before recording progress')
+      }
       cursorHeight = height
-      durableProgressObservedAtMs = timestamp()
+      durableProgressAtMs = durableProgressAt(committedProgressAtMs) ?? timestamp()
       retryCount = 0
       terminalFailureEmitted = false
     },
@@ -227,11 +252,21 @@ export const createPortalIngestionEvents = ({
 export const createObservedFinalDatabase = <Store>({
   database,
   ingestion,
+  readDurableProgressAtMs,
+  afterConnect,
   afterCommit,
 }: {
   readonly database: ObservableFinalDatabase<Store>
   readonly ingestion: IngestionEvents
-  readonly afterCommit: (input: { readonly nextHead: FinalTxInfo['nextHead'] }) => void
+  readonly readDurableProgressAtMs?: (input: {
+    readonly state: FinalDatabaseState
+  }) => number | undefined | Promise<number | undefined>
+  readonly afterConnect?: (
+    input: { readonly state: FinalDatabaseState },
+  ) => void | Promise<void>
+  readonly afterCommit: (
+    input: { readonly nextHead: FinalTxInfo['nextHead'] },
+  ) => void | Promise<void>
 }): FinalDatabase<Store> => {
   if (database.supportsHotBlocks) {
     throw new Error('Portal ingestion requires a final-only database')
@@ -241,8 +276,13 @@ export const createObservedFinalDatabase = <Store>({
     async connect(): Promise<FinalDatabaseState> {
       try {
         const state = await database.connect()
-        ingestion.initializeDurableCursor({ height: state.height })
+        const durableProgressAtMs = await readDurableProgressAtMs?.({ state })
+        ingestion.initializeDurableCursor({
+          height: state.height,
+          durableProgressAtMs,
+        })
         ingestion.start()
+        await afterConnect?.({ state })
         return state
       } catch (error) {
         ingestion.emitFatal()
@@ -255,11 +295,11 @@ export const createObservedFinalDatabase = <Store>({
     ): Promise<void> {
       try {
         await database.transact(info, callback)
+        await afterCommit({ nextHead: info.nextHead })
       } catch (error) {
         ingestion.emitFatal()
         throw error
       }
-      afterCommit({ nextHead: info.nextHead })
     },
   }
 }
