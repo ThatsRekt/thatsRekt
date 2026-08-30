@@ -12,6 +12,7 @@ import {
 } from './ingestionEvents.js'
 import { resolveCurrentDonee } from './doneeResolver.js'
 import { ensureDonationTable } from './donationStore.js'
+import { acquireIndexerLock, type IndexerLock } from './indexerLock.js'
 import {
   buildPortalConfig,
   DonationsPortalRetryDeadlineError,
@@ -37,6 +38,23 @@ const parseNonNegativeInteger = ({
 }): number => {
   if (!/^\d+$/.test(value)) {
     throw new Error(`Invalid ${variableName}: expected a non-negative integer`)
+  }
+  const parsed = Number.parseInt(value, 10)
+  if (!Number.isSafeInteger(parsed)) {
+    throw new Error(`Invalid ${variableName}: integer is outside the safe range`)
+  }
+  return parsed
+}
+
+const parsePositiveInteger = ({
+  value,
+  variableName,
+}: {
+  readonly value: string
+  readonly variableName: string
+}): number => {
+  if (!/^[1-9]\d*$/.test(value)) {
+    throw new Error(`Invalid ${variableName}: expected a positive integer`)
   }
   const parsed = Number.parseInt(value, 10)
   if (!Number.isSafeInteger(parsed)) {
@@ -88,24 +106,15 @@ const main = async (): Promise<void> => {
     )
   }
 
-  const ingestion = createPortalIngestionEvents({
-    family: 'donations',
-    chain: chain.slug,
-    writeEvent: (event) => logger.info(event, 'Portal ingestion event'),
+  const maxRuntimeSeconds = parsePositiveInteger({
+    value: requireEnv('MAX_RUNTIME_SECONDS'),
+    variableName: 'MAX_RUNTIME_SECONDS',
   })
   const rpcUrl = requireEnv(chain.headRpcEnvKey)
   const databaseUrl = requireEnv('DONATIONS_DB_URL')
   const portal = buildPortalConfig({
     dataset: chain.portalDataset,
     environment: process.env,
-  })
-  portal.bindRetryObserver({
-    onRetry: ({ retryAfterSeconds, retryCount }) => {
-      ingestion.emitPortalRetry({ retryAfterSeconds, retryCount })
-    },
-    onDeadline: () => {
-      ingestion.emitPortalDeadline()
-    },
   })
   const startBlock = parseNonNegativeInteger({
     value: process.env[chain.startBlockEnvKey] ?? String(chain.defaultStartBlock),
@@ -115,19 +124,56 @@ const main = async (): Promise<void> => {
     value: process.env.FINALITY_CONFIRMATION ?? String(chain.finalityConfirmation),
     variableName: 'FINALITY_CONFIRMATION',
   })
-
+  const ingestion = createPortalIngestionEvents({
+    family: 'donations',
+    chain: chain.slug,
+    writeEvent: (event) => logger.info(event, 'Portal ingestion event'),
+  })
+  portal.bindRetryObserver({
+    onRetry: ({ retryAfterSeconds, retryCount }) => {
+      ingestion.emitPortalRetry({ retryAfterSeconds, retryCount })
+    },
+    onDeadline: () => {
+      ingestion.emitPortalDeadline()
+    },
+  })
   const pool = new Pool({
     connectionString: databaseUrl,
     max: 5,
     idleTimeoutMillis: 30_000,
     connectionTimeoutMillis: 5_000,
   })
+  let indexerLock: IndexerLock | null = null
+  let runtimeDeadline: Timer | undefined
+
   pool.on('error', () => {
     ingestion.emitFatal()
     logger.error({}, 'Donations database idle client error')
   })
 
   try {
+    indexerLock = await acquireIndexerLock(pool, chain.chainId)
+    if (indexerLock === null) {
+      console.log(
+        `[donations-indexer] duplicate run skipped: chain=${chain.slug} already owns singleton lock`,
+      )
+      return
+    }
+    indexerLock.onLost((error) => {
+      logger.fatal(
+        { chain: chain.slug, error },
+        'Donations indexer singleton lock client was lost',
+      )
+      process.exit(1)
+    })
+    runtimeDeadline = setTimeout(() => {
+      logger.fatal(
+        { chain: chain.slug, limitSeconds: maxRuntimeSeconds },
+        'Donations indexer maximum runtime exceeded',
+      )
+      process.exit(1)
+    }, maxRuntimeSeconds * 1_000)
+
     const doneeSeed = '0x59E4DBc95BD312A882Bb36b7f3E8298682340679'
     const donee = (
       process.env.DONEE_OVERRIDE ??
@@ -241,6 +287,14 @@ const main = async (): Promise<void> => {
     process.exitCode = 1
   } finally {
     try {
+      await indexerLock?.release()
+    } catch {
+      ingestion.emitFatal()
+      ingestion.emitRunOutcome({ outcome: 'failed' })
+      logger.error({}, 'Donations indexer lock shutdown failed')
+      process.exitCode = 1
+    }
+    try {
       await pool.end()
     } catch {
       ingestion.emitFatal()
@@ -248,12 +302,13 @@ const main = async (): Promise<void> => {
       logger.error({}, 'Donations database shutdown failed')
       process.exitCode = 1
     }
+    clearTimeout(runtimeDeadline)
   }
 }
 
 void main()
   .then(() => process.exit(process.exitCode ?? 0))
-  .catch(() => {
-    logger.fatal({}, 'Donations Portal ingestion failed before initialization')
+  .catch((error: unknown) => {
+    logger.fatal({ err: error }, 'Donations Portal ingestion failed before initialization')
     process.exit(1)
   })
