@@ -286,7 +286,6 @@ const main = async (): Promise<void> => {
     logger.fatal({}, 'Donations Portal ingestion failed')
     process.exitCode = 1
   } finally {
-    clearTimeout(runtimeDeadline)
     try {
       await indexerLock?.release()
     } catch {
@@ -303,6 +302,7 @@ const main = async (): Promise<void> => {
       logger.error({}, 'Donations database shutdown failed')
       process.exitCode = 1
     }
+    clearTimeout(runtimeDeadline)
   }
 }
 
