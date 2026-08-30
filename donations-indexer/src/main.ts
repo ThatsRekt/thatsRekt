@@ -167,11 +167,11 @@ const main = async (): Promise<void> => {
       process.exit(1)
     })
     runtimeDeadline = setTimeout(() => {
-      logger.fatal(
+      logger.info(
         { chain: chain.slug, limitSeconds: maxRuntimeSeconds },
-        'Donations indexer maximum runtime exceeded',
+        'Donations indexer maximum runtime reached',
       )
-      process.exit(1)
+      process.exit(0)
     }, maxRuntimeSeconds * 1_000)
 
     const doneeSeed = '0x59E4DBc95BD312A882Bb36b7f3E8298682340679'

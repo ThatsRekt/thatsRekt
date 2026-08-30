@@ -143,3 +143,24 @@ test('missing or malformed runtime limits fail before indexer infrastructure sta
     expect(`${child.stdout}${child.stderr}`).toContain(expectedError)
   }
 })
+
+test('runtime deadline exits cleanly after acquiring the singleton lock', async () => {
+  const environment = indexerEnvironment()
+  environment.MAX_RUNTIME_SECONDS = '1'
+  environment.DONEE_OVERRIDE = '0x59e4db1c95bd312a882bb36b7f3e8298682340679'
+  environment.PORTAL_URL = 'https://127.0.0.1:1'
+
+  const child = await runIndexer(environment)
+  const pool = new Pool({ connectionString: TEST_DB_URL, max: 1 })
+  let lock: IndexerLock | null = null
+
+  try {
+    expect(`${child.stdout}${child.stderr}`).toContain('Donations indexer maximum runtime reached')
+    expect(child.exitCode).toBe(0)
+    lock = await acquireIndexerLock(pool, 1)
+    expect(lock).not.toBeNull()
+  } finally {
+    await lock?.release()
+    await pool.end()
+  }
+}, 10_000)
