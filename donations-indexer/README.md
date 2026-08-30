@@ -17,13 +17,14 @@ reads that table directly.
 - Chain RPC and ENS RPC are control-plane reads only: they bound the finalized
   range and resolve the donee. They are never historical fallbacks.
 - The processor uses finalized Portal batches and an inclusive bounded range,
-  then exits. The container enforces a 25-minute outer deadline.
+  then exits. After acquiring its PostgreSQL singleton lock, it terminates at
+  the `MAX_RUNTIME_SECONDS` deadline.
 
 ## Configuration
 
-`CHAIN_SLUG`, `PORTAL_URL`, `DONATIONS_DB_URL`, and the selected chain's RPC
-head variable are required. See `.env.example` for a non-secret configuration
-template.
+`CHAIN_SLUG`, `PORTAL_URL`, `DONATIONS_DB_URL`, `MAX_RUNTIME_SECONDS`, and the
+selected chain's RPC head variable are required. See `.env.example` for a
+non-secret configuration template.
 
 | `CHAIN_SLUG` | Portal dataset | RPC head variable | Start-block override |
 |---|---|---|---|
