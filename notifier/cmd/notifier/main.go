@@ -55,7 +55,14 @@ func main() {
 	}
 
 	svc := &notifier.Service{
-		GQL:          graphql.NewClient(cfg.GraphQLURL, cfg.GraphQLRequestsPerSecond),
+		GQL: graphql.NewClient(
+			cfg.GraphQLURL,
+			cfg.GraphQLRequestsPerSecond,
+			graphql.ClientOptions{
+				DialAddress: cfg.GraphQLDialAddress,
+				BearerToken: cfg.GraphQLInternalToken,
+			},
+		),
 		Bot:          telegram.NewBot(cfg.BotToken),
 		Store:        st,
 		ChannelID:    cfg.ChannelID,
@@ -66,7 +73,7 @@ func main() {
 	}
 
 	logger.Info("notifier starting",
-		"graphql_url", cfg.GraphQLURL,
+		"graphql_private_route", cfg.GraphQLDialAddress != "",
 		"channel_id", cfg.ChannelID,
 		"poll_interval", cfg.PollInterval.String(),
 		"state_bucket", cfg.StateBucket,

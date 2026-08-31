@@ -5,6 +5,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"strconv"
 	"time"
@@ -19,6 +20,8 @@ type Config struct {
 
 	// thatsRekt API
 	GraphQLURL               string // GRAPHQL_URL — e.g. https://thatsrekt.com/graphql
+	GraphQLDialAddress       string // GRAPHQL_DIAL_ADDRESS; optional private IP:port TCP target
+	GraphQLInternalToken     string // GRAPHQL_INTERNAL_TOKEN; required iff GRAPHQL_DIAL_ADDRESS is set
 	GraphQLRequestsPerSecond int    // GRAPHQL_REQUESTS_PER_SECOND — total client limit (default 10)
 	SiteURL                  string // SITE_URL — base URL for `/post/:chain/:id` links, e.g. https://thatsrekt.com
 
@@ -33,12 +36,14 @@ type Config struct {
 
 func Load() (*Config, error) {
 	cfg := &Config{
-		BotToken:    os.Getenv("BOT_TOKEN"),
-		ChannelID:   os.Getenv("CHANNEL_ID"),
-		GraphQLURL:  envOrDefault("GRAPHQL_URL", "https://thatsrekt.com/graphql"),
-		SiteURL:     envOrDefault("SITE_URL", "https://thatsrekt.com"),
-		StateBucket: os.Getenv("STATE_S3_BUCKET"),
-		StateKey:    envOrDefault("STATE_S3_KEY", "thatsrekt-notifier/state.json"),
+		BotToken:             os.Getenv("BOT_TOKEN"),
+		ChannelID:            os.Getenv("CHANNEL_ID"),
+		GraphQLURL:           envOrDefault("GRAPHQL_URL", "https://thatsrekt.com/graphql"),
+		GraphQLDialAddress:   os.Getenv("GRAPHQL_DIAL_ADDRESS"),
+		GraphQLInternalToken: os.Getenv("GRAPHQL_INTERNAL_TOKEN"),
+		SiteURL:              envOrDefault("SITE_URL", "https://thatsrekt.com"),
+		StateBucket:          os.Getenv("STATE_S3_BUCKET"),
+		StateKey:             envOrDefault("STATE_S3_KEY", "thatsrekt-notifier/state.json"),
 	}
 
 	pollSec, err := parseIntDefault("POLL_INTERVAL_SECONDS", 10)
@@ -58,6 +63,21 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("GRAPHQL_REQUESTS_PER_SECOND: %w", err)
 	}
 	cfg.GraphQLRequestsPerSecond = rate
+
+	switch {
+	case cfg.GraphQLDialAddress == "" && cfg.GraphQLInternalToken != "":
+		return nil, errors.New("GRAPHQL_DIAL_ADDRESS env required when GRAPHQL_INTERNAL_TOKEN is set")
+	case cfg.GraphQLDialAddress != "" && cfg.GraphQLInternalToken == "":
+		return nil, errors.New("GRAPHQL_INTERNAL_TOKEN env required when GRAPHQL_DIAL_ADDRESS is set")
+	case cfg.GraphQLDialAddress != "":
+		host, _, err := net.SplitHostPort(cfg.GraphQLDialAddress)
+		if err != nil {
+			return nil, fmt.Errorf("GRAPHQL_DIAL_ADDRESS: %w", err)
+		}
+		if net.ParseIP(host) == nil {
+			return nil, errors.New("GRAPHQL_DIAL_ADDRESS host must be an IP address")
+		}
+	}
 
 	if cfg.BotToken == "" {
 		return nil, errors.New("BOT_TOKEN env required")
