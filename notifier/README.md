@@ -52,6 +52,7 @@ State is flushed to S3 on a 15-second timer + on clean shutdown.
 | `STATE_S3_BUCKET` | yes | — | bucket holding the state JSON |
 | `STATE_S3_KEY` | no | `thatsrekt-notifier/state.json` | object key inside the bucket |
 | `GRAPHQL_URL` | no | `https://thatsrekt.com/graphql` | thatsRekt Mesh endpoint |
+| `GRAPHQL_REQUESTS_PER_SECOND` | no | `10` | shared total rate limit for GraphQL requests |
 | `POLL_INTERVAL_SECONDS` | no | `10` | how often to poll for new posts |
 | `FETCH_LIMIT` | no | `25` | how many posts to ask for per cycle |
 

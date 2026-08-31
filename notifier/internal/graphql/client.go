@@ -13,6 +13,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
+	"sync"
 	"time"
 )
 
@@ -76,14 +78,126 @@ type Chain struct {
 type Client struct {
 	URL  string
 	HTTP *http.Client
+	pace *requestPacer
 }
 
-func NewClient(url string) *Client {
+// NewClient creates the notifier's single GraphQL client. Every request made
+// through the client shares the supplied total rate limit.
+func NewClient(url string, requestsPerSecond int) *Client {
+	return newClient(
+		url,
+		&http.Client{Timeout: 30 * time.Second}, // ample for cross-chain stitching
+		requestsPerSecond,
+		time.Now,
+		waitFor,
+	)
+}
+
+// newClient makes clock and wait behavior injectable so pacing can be tested
+// without wall-clock sleeps.
+func newClient(
+	url string,
+	httpClient *http.Client,
+	requestsPerSecond int,
+	now func() time.Time,
+	wait func(context.Context, time.Duration) error,
+) *Client {
+	if requestsPerSecond <= 0 {
+		panic("GraphQL requests per second must be positive")
+	}
+	interval := time.Second / time.Duration(requestsPerSecond)
+	if interval <= 0 {
+		panic("GraphQL requests per second exceeds supported precision")
+	}
 	return &Client{
-		URL: url,
-		HTTP: &http.Client{
-			Timeout: 30 * time.Second, // ample for cross-chain stitching
-		},
+		URL:  url,
+		HTTP: httpClient,
+		pace: newRequestPacer(interval, now, wait),
+	}
+}
+
+type requestPacer struct {
+	mu       sync.Mutex
+	tail     chan struct{}
+	next     time.Time
+	interval time.Duration
+	now      func() time.Time
+	wait     func(context.Context, time.Duration) error
+}
+
+func newRequestPacer(
+	interval time.Duration,
+	now func() time.Time,
+	wait func(context.Context, time.Duration) error,
+) *requestPacer {
+	tail := make(chan struct{})
+	close(tail)
+	return &requestPacer{
+		tail:     tail,
+		interval: interval,
+		now:      now,
+		wait:     wait,
+	}
+}
+
+// Do reserves the next request turn, paces it, and performs the HTTP dispatch
+// before the following caller can start. It never holds a mutex while waiting.
+func (p *requestPacer) Do(
+	ctx context.Context,
+	dispatch func() (*http.Response, error),
+) (*http.Response, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
+	p.mu.Lock()
+	previous := p.tail
+	turnDone := make(chan struct{})
+	p.tail = turnDone
+	p.mu.Unlock()
+
+	select {
+	case <-previous:
+	case <-ctx.Done():
+		go func() {
+			<-previous
+			close(turnDone)
+		}()
+		return nil, ctx.Err()
+	}
+	defer close(turnDone)
+
+	p.mu.Lock()
+	now := p.now()
+	at := p.next
+	if at.Before(now) {
+		at = now
+	}
+	p.mu.Unlock()
+
+	if delay := at.Sub(now); delay > 0 {
+		if err := p.wait(ctx, delay); err != nil {
+			return nil, err
+		}
+	}
+
+	resp, err := dispatch()
+
+	p.mu.Lock()
+	p.next = p.now().Add(p.interval)
+	p.mu.Unlock()
+
+	return resp, err
+}
+
+func waitFor(ctx context.Context, delay time.Duration) error {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
 	}
 }
 
@@ -162,6 +276,55 @@ func PrefixForChain(slug string) (string, bool) {
 	return p, ok
 }
 
+const (
+	defaultRetryDelay = 100 * time.Millisecond
+	maxRetryAfter     = time.Second
+)
+
+func (c *Client) do(ctx context.Context, operation string, body []byte) (*http.Response, error) {
+	var retryDelay time.Duration
+	for attempt := range 2 {
+		if attempt > 0 {
+			if err := ctx.Err(); err != nil {
+				return nil, fmt.Errorf("%s retry delay: %w", operation, err)
+			}
+			if err := c.pace.wait(ctx, retryDelay); err != nil {
+				return nil, fmt.Errorf("%s retry delay: %w", operation, err)
+			}
+		}
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.URL, bytes.NewReader(body))
+		if err != nil {
+			return nil, fmt.Errorf("%s new request: %w", operation, err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("User-Agent", "thatsrekt-notifier/1")
+
+		resp, err := c.pace.Do(ctx, func() (*http.Response, error) {
+			return c.HTTP.Do(req)
+		})
+		if err != nil {
+			return nil, fmt.Errorf("%s pace request: %w", operation, err)
+		}
+		if resp.StatusCode != http.StatusTooManyRequests || attempt == 1 {
+			return resp, nil
+		}
+		retryDelay = retryAfterDelay(resp.Header.Get("Retry-After"))
+		resp.Body.Close()
+	}
+	panic("unreachable")
+}
+
+func retryAfterDelay(value string) time.Duration {
+	seconds, err := strconv.Atoi(value)
+	if err != nil || seconds <= 0 {
+		return defaultRetryDelay
+	}
+	if seconds >= int(maxRetryAfter/time.Second) {
+		return maxRetryAfter
+	}
+	return time.Duration(seconds) * time.Second
+}
+
 // PostByIdResult is the minimal shape returned by the per-chain postById
 // query. Only Removed and Title are needed by the retract-detection pass.
 type PostByIdResult struct {
@@ -205,16 +368,9 @@ func (c *Client) PostById(ctx context.Context, chainSlug, onchainID string) (*Po
 		return nil, fmt.Errorf("PostById marshal query: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.URL, bytes.NewReader(body))
+	resp, err := c.do(ctx, "PostById", body)
 	if err != nil {
-		return nil, fmt.Errorf("PostById new request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("User-Agent", "thatsrekt-notifier/1")
-
-	resp, err := c.HTTP.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("PostById do request: %w", err)
+		return nil, err
 	}
 	defer resp.Body.Close()
 
@@ -313,16 +469,9 @@ func (c *Client) LatestPosts(ctx context.Context, limit int) ([]Post, error) {
 		return nil, fmt.Errorf("marshal query: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.URL, bytes.NewReader(body))
+	resp, err := c.do(ctx, "LatestPosts", body)
 	if err != nil {
-		return nil, fmt.Errorf("new request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("User-Agent", "thatsrekt-notifier/1")
-
-	resp, err := c.HTTP.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("do request: %w", err)
+		return nil, err
 	}
 	defer resp.Body.Close()
 

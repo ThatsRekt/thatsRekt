@@ -10,14 +10,17 @@ import (
 	"time"
 )
 
+const maxGraphQLRequestsPerSecond = 10
+
 type Config struct {
 	// Telegram
 	BotToken  string // BOT_TOKEN — from @BotFather
 	ChannelID string // CHANNEL_ID — `@username` for public channels, or numeric `-100…` for private
 
 	// thatsRekt API
-	GraphQLURL string // GRAPHQL_URL — e.g. https://thatsrekt.com/graphql
-	SiteURL    string // SITE_URL — base URL for `/post/:chain/:id` links, e.g. https://thatsrekt.com
+	GraphQLURL               string // GRAPHQL_URL — e.g. https://thatsrekt.com/graphql
+	GraphQLRequestsPerSecond int    // GRAPHQL_REQUESTS_PER_SECOND — total client limit (default 10)
+	SiteURL                  string // SITE_URL — base URL for `/post/:chain/:id` links, e.g. https://thatsrekt.com
 
 	// Polling
 	PollInterval time.Duration // POLL_INTERVAL — how often to query GraphQL for new posts (default 10s)
@@ -50,6 +53,12 @@ func Load() (*Config, error) {
 	}
 	cfg.FetchLimit = limit
 
+	rate, err := parsePositiveIntDefault("GRAPHQL_REQUESTS_PER_SECOND", 10)
+	if err != nil {
+		return nil, fmt.Errorf("GRAPHQL_REQUESTS_PER_SECOND: %w", err)
+	}
+	cfg.GraphQLRequestsPerSecond = rate
+
 	if cfg.BotToken == "" {
 		return nil, errors.New("BOT_TOKEN env required")
 	}
@@ -77,6 +86,20 @@ func parseIntDefault(key string, def int) (int, error) {
 	n, err := strconv.Atoi(v)
 	if err != nil {
 		return 0, err
+	}
+	return n, nil
+}
+
+func parsePositiveIntDefault(key string, def int) (int, error) {
+	n, err := parseIntDefault(key, def)
+	if err != nil {
+		return 0, err
+	}
+	if n <= 0 {
+		return 0, errors.New("must be positive")
+	}
+	if n > maxGraphQLRequestsPerSecond {
+		return 0, errors.New("must not exceed 10")
 	}
 	return n, nil
 }
