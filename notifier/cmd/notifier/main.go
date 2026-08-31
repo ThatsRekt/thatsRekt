@@ -55,7 +55,7 @@ func main() {
 	}
 
 	svc := &notifier.Service{
-		GQL:          graphql.NewClient(cfg.GraphQLURL),
+		GQL:          graphql.NewClient(cfg.GraphQLURL, cfg.GraphQLRequestsPerSecond),
 		Bot:          telegram.NewBot(cfg.BotToken),
 		Store:        st,
 		ChannelID:    cfg.ChannelID,
