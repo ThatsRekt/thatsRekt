@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strconv"
 	"sync"
@@ -73,24 +74,46 @@ type Chain struct {
 	Name    string `json:"name"`
 }
 
+type ClientOptions struct {
+	DialAddress string
+	BearerToken string
+}
+
 // Client is a thin HTTP wrapper. Single endpoint; persistent http.Client
 // with sane timeouts so a hung gateway doesn't stall the poll loop forever.
 type Client struct {
-	URL  string
-	HTTP *http.Client
-	pace *requestPacer
+	URL         string
+	HTTP        *http.Client
+	bearerToken string
+	pace        *requestPacer
 }
 
 // NewClient creates the notifier's single GraphQL client. Every request made
 // through the client shares the supplied total rate limit.
-func NewClient(url string, requestsPerSecond int) *Client {
-	return newClient(
+func NewClient(url string, requestsPerSecond int, options ClientOptions) *Client {
+	httpClient := &http.Client{Timeout: 30 * time.Second} // ample for cross-chain stitching
+	if options.DialAddress != "" {
+		defaultTransport, ok := http.DefaultTransport.(*http.Transport)
+		if !ok {
+			panic("http.DefaultTransport must be *http.Transport")
+		}
+		transport := defaultTransport.Clone()
+		dialer := &net.Dialer{}
+		transport.DialContext = func(ctx context.Context, network, _ string) (net.Conn, error) {
+			return dialer.DialContext(ctx, network, options.DialAddress)
+		}
+		httpClient.Transport = transport
+	}
+
+	client := newClient(
 		url,
-		&http.Client{Timeout: 30 * time.Second}, // ample for cross-chain stitching
+		httpClient,
 		requestsPerSecond,
 		time.Now,
 		waitFor,
 	)
+	client.bearerToken = options.BearerToken
+	return client
 }
 
 // newClient makes clock and wait behavior injectable so pacing can be tested
@@ -299,6 +322,9 @@ func (c *Client) do(ctx context.Context, operation string, body []byte) (*http.R
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("User-Agent", "thatsrekt-notifier/1")
 
+		if c.bearerToken != "" {
+			req.Header.Set("Authorization", "Bearer "+c.bearerToken)
+		}
 		resp, err := c.pace.Do(ctx, func() (*http.Response, error) {
 			return c.HTTP.Do(req)
 		})
