@@ -30,6 +30,12 @@ import { assertTurnstileSecretForProd, buildGuardianResolvers, guardianTypeDefs 
 import { ensureCommentsTable, ensureGuardianApplicationsTable } from './db.js'
 import { buildDonationsResolvers, donationsTypeDefs } from './donations.js'
 import {
+  assertRelayerStatusTokenForProd,
+  buildRelayerStatusResolvers,
+  relayerStatusTypeDefs,
+} from './relayerStatus.js'
+import { buildDedupCheckResolvers, dedupCheckTypeDefs } from './dedupCheck.js'
+import {
   handleOgImageRoute,
   handleOgRoute,
   isOgImageRoute,
@@ -716,6 +722,7 @@ const main = async () => {
   // form is silently disabled. Guard fires only in NODE_ENV=production (which
   // the mesh Dockerfile bakes in at runtime); dev/CI test keys are unaffected.
   assertTurnstileSecretForProd(process.env.NODE_ENV, process.env.TURNSTILE_SECRET)
+  assertRelayerStatusTokenForProd(process.env.NODE_ENV, process.env.RELAYER_STATUS_TOKEN)
 
   const port = Number.parseInt(process.env.PORT ?? '4350', 10)
   const chains = enabledChains()
@@ -754,14 +761,25 @@ const main = async () => {
   const commentsResolvers = buildCommentsResolvers({ chains, getExecutor })
   const guardianResolvers = buildGuardianResolvers()
   const donationsResolvers = buildDonationsResolvers()
+  const relayerStatusResolvers = buildRelayerStatusResolvers({ chains, getExecutor })
+  const dedupCheckResolvers = buildDedupCheckResolvers({ chains, getExecutor })
   const schema = stitchSchemas({
     subschemas,
-    typeDefs: [additionalTypeDefs, commentsTypeDefs, guardianTypeDefs, donationsTypeDefs],
+    typeDefs: [
+      additionalTypeDefs,
+      commentsTypeDefs,
+      guardianTypeDefs,
+      donationsTypeDefs,
+      relayerStatusTypeDefs,
+      dedupCheckTypeDefs,
+    ],
     resolvers: {
       Query: {
         ...additionalResolvers.Query,
         ...commentsResolvers.Query,
         ...donationsResolvers.Query,
+        ...relayerStatusResolvers.Query,
+        ...dedupCheckResolvers.Query,
       },
       Mutation: {
         ...commentsResolvers.Mutation,
