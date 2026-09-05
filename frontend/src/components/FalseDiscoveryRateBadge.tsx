@@ -1,10 +1,17 @@
 import { useEffect, useRef, useState } from 'react'
-import { useFalsePositiveRate } from '../hooks/useFalsePositiveRate'
+import { useFalseDiscoveryRate } from '../hooks/useFalseDiscoveryRate'
 
 /**
- * Header-mounted false-positive-rate badge. Sits right after the [report]
- * button. Styled as a static (non-link) sibling of `GetAlertsButton`'s
- * desktop variant — same outline-red-on-white brutalist box.
+ * Header-mounted false-discovery-rate (FDR) badge. Sits right after the
+ * [report] button. Styled as a static (non-link) sibling of
+ * `GetAlertsButton`'s desktop variant — same outline-red-on-white
+ * brutalist box.
+ *
+ * Named FDR, not "false positive rate" — FPR needs a denominator of every
+ * case where nothing happened, which this registry can't see. FDR (false
+ * calls / all calls made) is what's actually computable from post data,
+ * and matches this metric exactly. See `useFalseDiscoveryRate` for the
+ * full reasoning.
  *
  * Hidden while loading and when there's no data yet (zero posts, or the
  * stats query hasn't resolved) — a "0%" badge before any posts exist would
@@ -17,8 +24,8 @@ import { useFalsePositiveRate } from '../hooks/useFalsePositiveRate'
  * separate "i" trigger next to it, which would clutter a compact header
  * badge).
  */
-export function FalsePositiveRateBadge() {
-  const { ratePercent, revokedCount, totalCount, isLoading } = useFalsePositiveRate()
+export function FalseDiscoveryRateBadge() {
+  const { ratePercent, revokedCount, totalCount, isLoading } = useFalseDiscoveryRate()
   const [open, setOpen] = useState(false)
   const [pinned, setPinned] = useState(false)
   const wrapperRef = useRef<HTMLSpanElement>(null)
@@ -91,7 +98,7 @@ export function FalsePositiveRateBadge() {
           }
         }}
         aria-expanded={open}
-        aria-label={`false positive rate: ${display} percent, ${revokedCount} of ${totalCount} posts revoked`}
+        aria-label={`false discovery rate: ${display} percent, ${revokedCount} of ${totalCount} posts revoked`}
         className="inline-flex items-center gap-1 whitespace-nowrap border-2 border-red-600 bg-white text-red-600 px-3 py-1 text-[11px] uppercase tracking-widest font-black cursor-pointer"
       >
         {display}%
@@ -105,7 +112,7 @@ export function FalsePositiveRateBadge() {
           onMouseLeave={scheduleClose}
         >
           <div className="border-b-2 border-black bg-black px-3 py-1 text-[10px] font-black uppercase tracking-widest text-[#f5f4ee]">
-            FP: false positive rate
+            FDR: false discovery rate
           </div>
           <div className="px-3 py-2 text-xs leading-relaxed text-neutral-800">
             {revokedCount} of {totalCount} posts revoked (&gt;2 downvotes).
