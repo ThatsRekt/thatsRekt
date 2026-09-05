@@ -29,6 +29,8 @@ import {
 import { assertTurnstileSecretForProd, buildGuardianResolvers, guardianTypeDefs } from './guardian.js'
 import { ensureCommentsTable, ensureGuardianApplicationsTable } from './db.js'
 import { buildDonationsResolvers, donationsTypeDefs } from './donations.js'
+import { buildRelayerStatusResolvers, relayerStatusTypeDefs } from './relayerStatus.js'
+import { buildDedupCheckResolvers, dedupCheckTypeDefs } from './dedupCheck.js'
 import {
   handleOgImageRoute,
   handleOgRoute,
@@ -754,14 +756,25 @@ const main = async () => {
   const commentsResolvers = buildCommentsResolvers({ chains, getExecutor })
   const guardianResolvers = buildGuardianResolvers()
   const donationsResolvers = buildDonationsResolvers()
+  const relayerStatusResolvers = buildRelayerStatusResolvers({ chains, getExecutor })
+  const dedupCheckResolvers = buildDedupCheckResolvers({ chains, getExecutor })
   const schema = stitchSchemas({
     subschemas,
-    typeDefs: [additionalTypeDefs, commentsTypeDefs, guardianTypeDefs, donationsTypeDefs],
+    typeDefs: [
+      additionalTypeDefs,
+      commentsTypeDefs,
+      guardianTypeDefs,
+      donationsTypeDefs,
+      relayerStatusTypeDefs,
+      dedupCheckTypeDefs,
+    ],
     resolvers: {
       Query: {
         ...additionalResolvers.Query,
         ...commentsResolvers.Query,
         ...donationsResolvers.Query,
+        ...relayerStatusResolvers.Query,
+        ...dedupCheckResolvers.Query,
       },
       Mutation: {
         ...commentsResolvers.Mutation,

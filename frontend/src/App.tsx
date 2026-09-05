@@ -32,6 +32,13 @@ const Donations = lazy(() =>
 const Brand = lazy(() =>
   import('./pages/Brand').then((m) => ({ default: m.Brand })),
 )
+// Unlisted — deliberately NOT added to NAV_LINKS. Reachable only by typing
+// the URL directly. Ungated: every figure it shows is already public
+// (on-chain balances, per-chain public squid data) — see
+// `RelayerStatus.tsx` + `mesh/src/relayerStatus.ts` for the reasoning.
+const RelayerStatus = lazy(() =>
+  import('./pages/RelayerStatus').then((m) => ({ default: m.RelayerStatus })),
+)
 import { useHasPosts } from './hooks/useHasPosts'
 import { useDisconnectIfNotWhitelisted } from './hooks/useDisconnectIfNotWhitelisted'
 import { PostAlertButton, AccountChip } from './components/PostAlertButton'
@@ -109,6 +116,7 @@ export function App() {
             <Route path="/donate" element={<Donations />} />
             <Route path="/docs" element={<Docs />} />
             <Route path="/brand" element={<Brand />} />
+            <Route path="/status" element={<RelayerStatus />} />
             <Route path="*" element={<NotFound />} />
           </Routes>
         </Suspense>
