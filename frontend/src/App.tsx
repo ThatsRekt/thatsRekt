@@ -36,7 +36,7 @@ import { useHasPosts } from './hooks/useHasPosts'
 import { useDisconnectIfNotWhitelisted } from './hooks/useDisconnectIfNotWhitelisted'
 import { PostAlertButton, AccountChip } from './components/PostAlertButton'
 import { GetAlertsButton } from './components/TgChannelCTA'
-import { FalsePositiveRateBadge } from './components/FalsePositiveRateBadge'
+import { FalseDiscoveryRateBadge } from './components/FalseDiscoveryRateBadge'
 import { Footer } from './components/Footer'
 import { ScrollManager } from './components/ScrollManager'
 
@@ -218,7 +218,7 @@ function Header() {
         <div className="hidden sm:flex items-center gap-x-3">
           <GetAlertsButton variant="desktop" />
           <PostAlertButton variant="desktop" />
-          <FalsePositiveRateBadge />
+          <FalseDiscoveryRateBadge />
           <AccountChip />
         </div>
 

@@ -284,8 +284,8 @@ const additionalTypeDefs = /* GraphQL */ `
     hasMore: Boolean!
   }
 
-  """Cross-chain false-positive rate. \`revoked\` = posts with more than 2 disconfirmations (downvotes) — the community-driven signal that a post shouldn't have been trusted."""
-  type FalsePositiveStats {
+  """Cross-chain false discovery rate (FDR) — of all posts the registry has ever surfaced as an attack (the "positive" calls), what share turned out to be wrong. \`revoked\` = posts with more than 2 disconfirmations (downvotes) — the community-driven signal that a post shouldn't have been trusted. Named FDR (not "false positive rate") deliberately: FPR requires a denominator of all-cases-where-nothing-happened, which this registry has no visibility into; FDR = false calls / all calls made is exactly what's computable from post data alone."""
+  type FalseDiscoveryStats {
     """Count of posts with disconfirmations > 2, summed across all enabled chains."""
     revokedCount: Int!
     """Total post count across all enabled chains (includes removed/purged posts — this is a lifetime denominator, not the live-feed count)."""
@@ -308,8 +308,8 @@ const additionalTypeDefs = /* GraphQL */ `
       orderBy: String = "totalConfirmations"
     ): ProposerLeaderboardPage!
 
-    """Cross-chain false-positive rate: share of all-time posts that the community downvoted into revoked status (disconfirmations > 2)."""
-    falsePositiveStats: FalsePositiveStats!
+    """Cross-chain false discovery rate: share of all-time posts that the community downvoted into revoked status (disconfirmations > 2)."""
+    falseDiscoveryStats: FalseDiscoveryStats!
   }
 `
 
@@ -662,7 +662,7 @@ const buildAdditionalResolvers = (chains: readonly ChainEntry[]) => ({
       return { items, totalCount, hasMore }
     },
 
-    falsePositiveStats: async () => {
+    falseDiscoveryStats: async () => {
       // Sum a postsConnection count query across every enabled chain.
       // Mirrors the per-chain fan-out in COUNT_POSTS_QUERY above; a failed
       // or malformed upstream contributes 0 rather than failing the whole
@@ -677,7 +677,7 @@ const buildAdditionalResolvers = (chains: readonly ChainEntry[]) => ({
               context: {},
             })) as ExecutionResult
             if (raw.errors?.length) {
-              console.error(`[mesh] ${c.slug} falsePositiveStats errors:`, raw.errors)
+              console.error(`[mesh] ${c.slug} falseDiscoveryStats errors:`, raw.errors)
               return 0
             }
             const parsed = CountPostsResponse.safeParse(raw.data)
