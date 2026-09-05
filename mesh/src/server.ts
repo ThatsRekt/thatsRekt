@@ -284,6 +284,16 @@ const additionalTypeDefs = /* GraphQL */ `
     hasMore: Boolean!
   }
 
+  """Cross-chain false-positive rate. \`revoked\` = posts with more than 2 disconfirmations (downvotes) — the community-driven signal that a post shouldn't have been trusted."""
+  type FalsePositiveStats {
+    """Count of posts with disconfirmations > 2, summed across all enabled chains."""
+    revokedCount: Int!
+    """Total post count across all enabled chains (includes removed/purged posts — this is a lifetime denominator, not the live-feed count)."""
+    totalCount: Int!
+    """revokedCount / totalCount as a percentage, 0-100. 0 when totalCount is 0."""
+    ratePercent: Float!
+  }
+
   extend type Query {
     """Chains served by this gateway."""
     chains: [ChainInfo!]!
@@ -297,6 +307,9 @@ const additionalTypeDefs = /* GraphQL */ `
       offset: Int = 0,
       orderBy: String = "totalConfirmations"
     ): ProposerLeaderboardPage!
+
+    """Cross-chain false-positive rate: share of all-time posts that the community downvoted into revoked status (disconfirmations > 2)."""
+    falsePositiveStats: FalsePositiveStats!
   }
 `
 
@@ -391,6 +404,23 @@ const COUNT_POSTS_QUERY = /* GraphQL */ `
 const CountPostsResponse = z.object({
   postsConnection: z.object({ totalCount: z.number().int() }),
 })
+
+// False-positive rate: revoked = disconfirmations > 2 (product definition,
+// independent of the `isDisputed` (disconfirmations > confirmations) concept
+// used elsewhere in the frontend). Unlike COUNT_POSTS_QUERY above, neither
+// query here filters on `purged`/`removed` — the denominator is meant to be
+// a lifetime count of everything ever posted, not the live-feed count.
+const REVOKED_COUNT_QUERY = /* GraphQL */ `
+  query RevokedCount {
+    postsConnection(where: { disconfirmations_gt: 2 }) { totalCount }
+  }
+`
+
+const TOTAL_COUNT_QUERY = /* GraphQL */ `
+  query TotalCount {
+    postsConnection { totalCount }
+  }
+`
 
 // --- Proposer leaderboard wire shapes ---
 //
@@ -630,6 +660,45 @@ const buildAdditionalResolvers = (chains: readonly ChainEntry[]) => ({
       }))
 
       return { items, totalCount, hasMore }
+    },
+
+    falsePositiveStats: async () => {
+      // Sum a postsConnection count query across every enabled chain.
+      // Mirrors the per-chain fan-out in COUNT_POSTS_QUERY above; a failed
+      // or malformed upstream contributes 0 rather than failing the whole
+      // stat (a partial rate is more useful than a 500 on a header badge).
+      const fetchCount = async (query: string): Promise<number> => {
+        const results = await Promise.allSettled(
+          chains.map(async (c) => {
+            const executor = makeExecutor(c.endpoint)
+            const raw = (await executor({
+              document: parseQueryToDocument(query),
+              variables: {},
+              context: {},
+            })) as ExecutionResult
+            if (raw.errors?.length) {
+              console.error(`[mesh] ${c.slug} falsePositiveStats errors:`, raw.errors)
+              return 0
+            }
+            const parsed = CountPostsResponse.safeParse(raw.data)
+            return parsed.success ? parsed.data.postsConnection.totalCount : 0
+          }),
+        )
+        return results
+          .map((r) => (r.status === 'fulfilled' ? r.value : 0))
+          .reduce((a, b) => a + b, 0)
+      }
+
+      const [revokedCount, totalCount] = await Promise.all([
+        fetchCount(REVOKED_COUNT_QUERY),
+        fetchCount(TOTAL_COUNT_QUERY),
+      ])
+
+      return {
+        revokedCount,
+        totalCount,
+        ratePercent: totalCount > 0 ? (revokedCount / totalCount) * 100 : 0,
+      }
     },
   },
 })
