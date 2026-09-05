@@ -32,9 +32,10 @@ const Donations = lazy(() =>
 const Brand = lazy(() =>
   import('./pages/Brand').then((m) => ({ default: m.Brand })),
 )
-// Internal-only — deliberately NOT added to NAV_LINKS. Reachable only by
-// direct URL, and gated behind an admin token checked server-side (see
-// `RelayerStatus.tsx` + `mesh/src/relayerStatus.ts`).
+// Unlisted — deliberately NOT added to NAV_LINKS. Reachable only by typing
+// the URL directly. Ungated: every figure it shows is already public
+// (on-chain balances, per-chain public squid data) — see
+// `RelayerStatus.tsx` + `mesh/src/relayerStatus.ts` for the reasoning.
 const RelayerStatus = lazy(() =>
   import('./pages/RelayerStatus').then((m) => ({ default: m.RelayerStatus })),
 )
@@ -114,7 +115,7 @@ export function App() {
             <Route path="/donate" element={<Donations />} />
             <Route path="/docs" element={<Docs />} />
             <Route path="/brand" element={<Brand />} />
-            <Route path="/admin/relayers" element={<RelayerStatus />} />
+            <Route path="/status" element={<RelayerStatus />} />
             <Route path="*" element={<NotFound />} />
           </Routes>
         </Suspense>

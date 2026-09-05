@@ -1,66 +1,22 @@
 /**
  * Relayer status resolver for the mesh gateway.
  *
- * Backs an internal-only page listing per-chain proposer activity for
- * whitelisted detector/relayer addresses (gas balance itself is read
- * client-side straight from public RPC — a wallet's native balance is
- * public chain data with or without this endpoint; gating it here would
- * be theater). What this resolver actually gates is the *convenience* of
- * seeing every detector's last-activity timestamp in one place, which is
- * new aggregate information this gateway doesn't otherwise expose.
- *
- * Gated by a shared token passed as a query argument (mirrors guardian.ts's
- * turnstileToken-as-mutation-arg pattern rather than inventing a header/
- * cookie scheme). `assertRelayerStatusTokenForProd` fails the mesh boot
- * loudly if a real token isn't configured in production, same shape as
- * `assertTurnstileSecretForProd`.
+ * Backs an unlisted page listing per-chain proposer activity for
+ * whitelisted detector/relayer addresses. Deliberately ungated: gas
+ * balance is read client-side straight from public RPC (a wallet's
+ * native balance is public chain data regardless), and the
+ * activity/post-count data below is derived entirely from each chain's
+ * own public squid (`proposers(...)`) — anyone could reconstruct it
+ * themselves per-chain today. Aggregating it here is a convenience, not
+ * new information, so there's nothing to gate. The page itself stays
+ * unlisted (no nav link) rather than access-controlled.
  */
 import { parse } from 'graphql'
 import type { ExecutionResult } from 'graphql'
-import { timingSafeEqual } from 'node:crypto'
 import { z } from 'zod'
 
 import type { ChainEntry } from './chains.js'
 import type { ChainExecutorLookup } from './comments.js'
-
-// ---------------------------------------------------------------------------
-// Token config
-// ---------------------------------------------------------------------------
-
-// Well-known dev-only default so local dev / CI don't need to configure
-// anything. `assertRelayerStatusTokenForProd` refuses to boot with this
-// value set in production.
-const DEV_DEFAULT_TOKEN = 'dev-relayer-status-token'
-
-const configuredToken = (): string => process.env.RELAYER_STATUS_TOKEN ?? DEV_DEFAULT_TOKEN
-
-/**
- * Fail loud before touching any infrastructure if RELAYER_STATUS_TOKEN is
- * missing or left at the dev default in production. A missing real token
- * means this endpoint's admin token check accepts the well-known dev
- * default — i.e. no gate at all.
- */
-export const assertRelayerStatusTokenForProd = (
-  nodeEnv: string | undefined,
-  token: string | undefined,
-): void => {
-  if (nodeEnv !== 'production') return
-  if (!token || token === DEV_DEFAULT_TOKEN) {
-    throw new Error(
-      '[relayerStatus] RELAYER_STATUS_TOKEN is missing or set to the dev default in ' +
-        'production. Set RELAYER_STATUS_TOKEN to a real random secret before starting mesh ' +
-        'in production.',
-    )
-  }
-}
-
-/** Constant-time compare so token checks don't leak length/prefix via timing. */
-const isValidToken = (candidate: string): boolean => {
-  const expected = Buffer.from(configuredToken())
-  const actual = Buffer.from(candidate)
-  if (expected.length !== actual.length) return false
-  return timingSafeEqual(expected, actual)
-}
 
 // ---------------------------------------------------------------------------
 // Upstream query
@@ -116,8 +72,8 @@ export const relayerStatusTypeDefs = /* GraphQL */ `
   }
 
   extend type Query {
-    """Internal-only: per-chain proposer activity for every address with at least one post, across all enabled chains. Requires a valid \`adminToken\` (set via RELAYER_STATUS_TOKEN) — not meant for public consumption."""
-    relayerActivity(adminToken: String!): [RelayerActivity!]!
+    """Per-chain proposer activity for every address with at least one post, across all enabled chains. Public — see resolver source for why this doesn't need gating."""
+    relayerActivity: [RelayerActivity!]!
   }
 `
 
@@ -126,14 +82,7 @@ export const buildRelayerStatusResolvers = (deps: {
   getExecutor: ChainExecutorLookup
 }) => ({
   Query: {
-    relayerActivity: async (
-      _root: unknown,
-      args: { adminToken: string },
-    ): Promise<RelayerActivityRow[]> => {
-      if (!isValidToken(args.adminToken)) {
-        throw new Error('Unauthorized')
-      }
-
+    relayerActivity: async (): Promise<RelayerActivityRow[]> => {
       const results = await Promise.allSettled(
         deps.chains.map(async (c) => {
           const executor = deps.getExecutor(c.slug)
