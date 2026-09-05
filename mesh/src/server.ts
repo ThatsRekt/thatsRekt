@@ -34,6 +34,7 @@ import {
   buildRelayerStatusResolvers,
   relayerStatusTypeDefs,
 } from './relayerStatus.js'
+import { buildDedupCheckResolvers, dedupCheckTypeDefs } from './dedupCheck.js'
 import {
   handleOgImageRoute,
   handleOgRoute,
@@ -692,6 +693,7 @@ const main = async () => {
   const guardianResolvers = buildGuardianResolvers()
   const donationsResolvers = buildDonationsResolvers()
   const relayerStatusResolvers = buildRelayerStatusResolvers({ chains, getExecutor })
+  const dedupCheckResolvers = buildDedupCheckResolvers({ chains, getExecutor })
   const schema = stitchSchemas({
     subschemas,
     typeDefs: [
@@ -700,6 +702,7 @@ const main = async () => {
       guardianTypeDefs,
       donationsTypeDefs,
       relayerStatusTypeDefs,
+      dedupCheckTypeDefs,
     ],
     resolvers: {
       Query: {
@@ -707,6 +710,7 @@ const main = async () => {
         ...commentsResolvers.Query,
         ...donationsResolvers.Query,
         ...relayerStatusResolvers.Query,
+        ...dedupCheckResolvers.Query,
       },
       Mutation: {
         ...commentsResolvers.Mutation,
