@@ -284,9 +284,9 @@ const additionalTypeDefs = /* GraphQL */ `
     hasMore: Boolean!
   }
 
-  """Cross-chain false discovery rate (FDR) — of all posts the registry has ever surfaced as an attack (the "positive" calls), what share turned out to be wrong. \`revoked\` = posts with more than 2 disconfirmations (downvotes) — the community-driven signal that a post shouldn't have been trusted. Named FDR (not "false positive rate") deliberately: FPR requires a denominator of all-cases-where-nothing-happened, which this registry has no visibility into; FDR = false calls / all calls made is exactly what's computable from post data alone."""
+  """Cross-chain false discovery rate (FDR) — of all posts the registry has ever surfaced as an attack (the "positive" calls), what share turned out to be wrong. \`revoked\` = posts with 2 or more disconfirmations (downvotes) OR retracted by their own poster — either is a signal the call was wrong. Named FDR (not "false positive rate") deliberately: FPR requires a denominator of all-cases-where-nothing-happened, which this registry has no visibility into; FDR = false calls / all calls made is exactly what's computable from post data alone."""
   type FalseDiscoveryStats {
-    """Count of posts with disconfirmations > 2, summed across all enabled chains."""
+    """Count of posts with disconfirmations >= 2 OR removed (retracted by poster), summed across all enabled chains."""
     revokedCount: Int!
     """Total post count across all enabled chains (includes removed/purged posts — this is a lifetime denominator, not the live-feed count)."""
     totalCount: Int!
@@ -308,7 +308,7 @@ const additionalTypeDefs = /* GraphQL */ `
       orderBy: String = "totalConfirmations"
     ): ProposerLeaderboardPage!
 
-    """Cross-chain false discovery rate: share of all-time posts that the community downvoted into revoked status (disconfirmations > 2)."""
+    """Cross-chain false discovery rate: share of all-time posts revoked — either downvoted (disconfirmations >= 2) or retracted by their own poster."""
     falseDiscoveryStats: FalseDiscoveryStats!
   }
 `
@@ -405,20 +405,24 @@ const CountPostsResponse = z.object({
   postsConnection: z.object({ totalCount: z.number().int() }),
 })
 
-// False-positive rate: revoked = disconfirmations > 2 (product definition,
-// independent of the `isDisputed` (disconfirmations > confirmations) concept
-// used elsewhere in the frontend). Unlike COUNT_POSTS_QUERY above, neither
-// query here filters on `purged`/`removed` — the denominator is meant to be
-// a lifetime count of everything ever posted, not the live-feed count.
+// False-discovery rate: revoked = disconfirmations >= 2 (2+ downvotes is
+// the community-driven signal a call was wrong) OR the poster retracted
+// the post themselves via removePost(id) (an admission it was wrong).
+// Independent of the `isDisputed` (disconfirmations > confirmations)
+// concept used elsewhere in the frontend. The TOTAL_COUNT_QUERY denominator
+// below still doesn't filter on `purged`/`removed` — it's meant to be a
+// lifetime count of everything ever posted, not the live-feed count — but
+// this numerator deliberately does count removed posts, since a retraction
+// is itself evidence of a false call.
 const REVOKED_COUNT_QUERY = /* GraphQL */ `
   query RevokedCount {
-    postsConnection(where: { disconfirmations_gt: 2 }) { totalCount }
+    postsConnection(orderBy: createdAtBlock_DESC, where: { OR: [{ disconfirmations_gte: 2 }, { removed_eq: true }] }) { totalCount }
   }
 `
 
 const TOTAL_COUNT_QUERY = /* GraphQL */ `
   query TotalCount {
-    postsConnection { totalCount }
+    postsConnection(orderBy: createdAtBlock_DESC) { totalCount }
   }
 `
 
