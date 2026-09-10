@@ -115,7 +115,7 @@ export function FalseDiscoveryRateBadge() {
             FDR: false discovery rate
           </div>
           <div className="px-3 py-2 text-xs leading-relaxed text-neutral-800">
-            {revokedCount} of {totalCount} posts revoked (&gt;2 downvotes).
+            {revokedCount} of {totalCount} posts revoked (2+ downvotes or retracted).
           </div>
         </div>
       )}

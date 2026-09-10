@@ -4,9 +4,9 @@ import { GRAPHQL_ENDPOINT } from '../lib/client'
 import { IS_MOCK_MODE } from '../lib/queries'
 
 /**
- * Cross-chain false discovery rate (FDR): share of all-time posts the
- * community downvoted into revoked status (disconfirmations > 2), per
- * Mesh's `falseDiscoveryStats` field.
+ * Cross-chain false discovery rate (FDR): share of all-time posts revoked —
+ * either downvoted (disconfirmations >= 2) or retracted by their own
+ * poster — per Mesh's `falseDiscoveryStats` field.
  *
  * Named FDR, not "false positive rate" — FPR needs a denominator of every
  * case where nothing happened, which this registry can't see. FDR (false

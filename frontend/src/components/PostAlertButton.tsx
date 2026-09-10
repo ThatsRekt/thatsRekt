@@ -174,7 +174,7 @@ export function AccountChip() {
         aria-haspopup="menu"
         aria-expanded={open}
         title={address}
-        className="inline-flex items-center gap-1 border-2 border-black bg-[#f5f4ee] px-2 py-1 text-[10px] uppercase tracking-widest font-mono hover:bg-yellow-100 transition-colors"
+        className="inline-flex items-center gap-1 whitespace-nowrap border-2 border-black bg-[#f5f4ee] px-2 py-1 text-[10px] uppercase tracking-widest font-mono hover:bg-yellow-100 transition-colors"
       >
         {ensName ?? truncate(address)}
         <span aria-hidden="true" className="text-[9px]">▾</span>
@@ -201,5 +201,5 @@ export function AccountChip() {
 }
 
 function truncate(addr: `0x${string}`): string {
-  return `${addr.slice(0, 6)}…${addr.slice(-4)}`
+  return `${addr.slice(0, 6)}…`
 }
