@@ -412,13 +412,13 @@ const CountPostsResponse = z.object({
 // a lifetime count of everything ever posted, not the live-feed count.
 const REVOKED_COUNT_QUERY = /* GraphQL */ `
   query RevokedCount {
-    postsConnection(where: { disconfirmations_gt: 2 }) { totalCount }
+    postsConnection(orderBy: createdAtBlock_DESC, where: { disconfirmations_gt: 2 }) { totalCount }
   }
 `
 
 const TOTAL_COUNT_QUERY = /* GraphQL */ `
   query TotalCount {
-    postsConnection { totalCount }
+    postsConnection(orderBy: createdAtBlock_DESC) { totalCount }
   }
 `
 
