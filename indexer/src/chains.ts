@@ -54,6 +54,19 @@ export interface ChainConfig {
   readonly startBlockEnvVar: string
   /** Confirmation depth retained for explicit RPC-only development paths. */
   readonly finalityConfirmation: number
+  /**
+   * Env var holding an RPC endpoint used ONLY for post-hoc reconciliation
+   * reads (`getPost`) after a `Confirmed` event — never for log ingestion.
+   * Portal chains have no ingestion RPC endpoint at all (that's the point
+   * of Portal — see `700780f`), so this is how reconciliation gets one.
+   *
+   * Optional and independently failable: unset (or unreachable at runtime)
+   * means reconciliation is a no-op for that chain — drift can still occur
+   * silently, but indexing itself never blocks or crashes on it. RPC-source
+   * chains don't declare this; they reuse `source.rpcEnvVar` instead (see
+   * `reconcileRpcEnvVarFor`) rather than requiring a redundant var.
+   */
+  readonly reconcileRpcEnvVar?: string
 }
 
 const rpcSource = ({
@@ -118,6 +131,7 @@ export const CHAINS: Readonly<Record<ChainSlug, ChainConfig>> = Object.freeze({
     contractEnvVar: 'CONTRACT_ETHEREUM',
     startBlockEnvVar: 'START_BLOCK_ETHEREUM',
     finalityConfirmation: 75,
+    reconcileRpcEnvVar: 'RECONCILE_RPC_ETHEREUM_HTTP',
   },
   base: {
     chainId: 8453,
@@ -127,6 +141,7 @@ export const CHAINS: Readonly<Record<ChainSlug, ChainConfig>> = Object.freeze({
     contractEnvVar: 'CONTRACT_BASE',
     startBlockEnvVar: 'START_BLOCK_BASE',
     finalityConfirmation: 75,
+    reconcileRpcEnvVar: 'RECONCILE_RPC_BASE_HTTP',
   },
   'base-sepolia': {
     chainId: 84532,
@@ -148,6 +163,7 @@ export const CHAINS: Readonly<Record<ChainSlug, ChainConfig>> = Object.freeze({
     contractEnvVar: 'CONTRACT_OPTIMISM',
     startBlockEnvVar: 'START_BLOCK_OPTIMISM',
     finalityConfirmation: 75,
+    reconcileRpcEnvVar: 'RECONCILE_RPC_OPTIMISM_HTTP',
   },
   arbitrum: {
     chainId: 42161,
@@ -157,6 +173,7 @@ export const CHAINS: Readonly<Record<ChainSlug, ChainConfig>> = Object.freeze({
     contractEnvVar: 'CONTRACT_ARBITRUM',
     startBlockEnvVar: 'START_BLOCK_ARBITRUM',
     finalityConfirmation: 75,
+    reconcileRpcEnvVar: 'RECONCILE_RPC_ARBITRUM_HTTP',
   },
   bsc: {
     chainId: 56,
@@ -166,6 +183,7 @@ export const CHAINS: Readonly<Record<ChainSlug, ChainConfig>> = Object.freeze({
     contractEnvVar: 'CONTRACT_BSC',
     startBlockEnvVar: 'START_BLOCK_BSC',
     finalityConfirmation: 15,
+    reconcileRpcEnvVar: 'RECONCILE_RPC_BSC_HTTP',
   },
   polygon: {
     chainId: 137,
@@ -175,6 +193,7 @@ export const CHAINS: Readonly<Record<ChainSlug, ChainConfig>> = Object.freeze({
     contractEnvVar: 'CONTRACT_POLYGON',
     startBlockEnvVar: 'START_BLOCK_POLYGON',
     finalityConfirmation: 100,
+    reconcileRpcEnvVar: 'RECONCILE_RPC_POLYGON_HTTP',
   },
 })
 
@@ -193,6 +212,16 @@ export const PRODUCTION_CHAIN_SLUGS = Object.freeze([
 
 const isChainSlug = (slug: string): slug is ChainSlug =>
   (CHAIN_SLUGS as readonly string[]).includes(slug)
+
+/**
+ * The env var whose value is the RPC endpoint reconciliation should read
+ * `getPost` from for this chain — `source.rpcEnvVar` for explicit RPC-only
+ * chains (no need for a second endpoint), or `reconcileRpcEnvVar` for
+ * Portal chains. Undefined means reconciliation has no endpoint configured
+ * for this chain at all (a valid, safe state — see `reconcileRpcEnvVar`).
+ */
+export const reconcileRpcEnvVarFor = (chain: ChainConfig): string | undefined =>
+  chain.source.kind === 'rpc' ? chain.source.rpcEnvVar : chain.reconcileRpcEnvVar
 
 /**
  * Look up a chain by slug. Invalid configuration never silently selects

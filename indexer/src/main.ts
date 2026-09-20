@@ -1,14 +1,16 @@
 import 'dotenv/config'
+import { createLogger } from '@subsquid/logger'
 import { TypeormDatabase } from '@subsquid/typeorm-store'
 
 import { events } from './abi/ThatsRekt'
-import { getChain } from './chains'
+import { getChain, reconcileRpcEnvVarFor } from './chains'
 import {
   buildProcessor,
   Log,
   ProcessorContext,
   runProcessor,
 } from './processor'
+import { createReconciler, noopReconciler, type Reconciler } from './reconcile'
 
 
 import {
@@ -347,7 +349,12 @@ async function handlePostCreated(ctx: Ctx, caches: Caches, log: Log): Promise<vo
   }
 }
 
-async function handleConfirmed(ctx: Ctx, caches: Caches, log: Log): Promise<void> {
+async function handleConfirmed(
+  ctx: Ctx,
+  caches: Caches,
+  log: Log,
+  reconciler: Reconciler,
+): Promise<void> {
   const e = events.Confirmed.decode(log)
   const block = log.block
   const postId = e.postId.toString()
@@ -419,6 +426,30 @@ async function handleConfirmed(ctx: Ctx, caches: Caches, log: Log): Promise<void
       txHash: log.transactionHash,
     }),
   )
+
+  // Cross-check against the contract's own counter and self-heal on
+  // mismatch. A no-op (returns undefined) when no reconciliation RPC
+  // endpoint is configured for this chain, or the read fails — see
+  // `reconcile.ts` for why this exists and what it deliberately doesn't
+  // cover (Proposer / attackerScore aggregates).
+  const onchain = await reconciler.fetchOnchainCounts(e.postId)
+  if (
+    onchain &&
+    (onchain.confirmations !== post.confirmations ||
+      onchain.disconfirmations !== post.disconfirmations)
+  ) {
+    ctx.log.warn(
+      {
+        postId,
+        indexed: { confirmations: post.confirmations, disconfirmations: post.disconfirmations },
+        onchain,
+      },
+      'Reconciliation detected drift in Post confirmation counters; correcting to on-chain truth',
+    )
+    post.confirmations = onchain.confirmations
+    post.disconfirmations = onchain.disconfirmations
+    post.netScore = post.confirmations - post.disconfirmations
+  }
 }
 
 async function handlePostRemoved(ctx: Ctx, caches: Caches, log: Log): Promise<void> {
@@ -753,8 +784,12 @@ async function handleOwnershipTransferred(
 
 export const createRegistryHandler = ({
   contractAddress,
+  // Defaults to a no-op so existing callers (tests, fixtures) that don't
+  // know about reconciliation yet keep working unchanged.
+  reconciler = noopReconciler,
 }: {
   readonly contractAddress: string
+  readonly reconciler?: Reconciler
 }): (ctx: Ctx) => Promise<void> => {
   const indexedContractAddress = lc(contractAddress)
 
@@ -771,7 +806,7 @@ export const createRegistryHandler = ({
             await handlePostCreated(ctx, caches, log)
             break
           case events.Confirmed.topic:
-            await handleConfirmed(ctx, caches, log)
+            await handleConfirmed(ctx, caches, log, reconciler)
             break
           case events.PostRemoved.topic:
             await handlePostRemoved(ctx, caches, log)
@@ -830,6 +865,13 @@ const startRegistry = (): void => {
   const chain = getChain(requireEnv('CHAIN'))
   const builtProcessor = buildProcessor(chain)
 
+  const reconcileEnvVar = reconcileRpcEnvVarFor(chain)
+  const reconciler = createReconciler({
+    rpcUrl: reconcileEnvVar ? process.env[reconcileEnvVar] : undefined,
+    contractAddress: builtProcessor.contractAddress,
+    log: createLogger('thatsrekt:registry-reconcile'),
+  })
+
   runProcessor({
     built: builtProcessor,
     database: new TypeormDatabase({
@@ -837,6 +879,7 @@ const startRegistry = (): void => {
     }),
     handler: createRegistryHandler({
       contractAddress: builtProcessor.contractAddress,
+      reconciler,
     }),
   })
 }
