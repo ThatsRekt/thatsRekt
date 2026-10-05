@@ -65,11 +65,11 @@ A signed **Report**, **Edit**, or **Retraction** sent to the API, tracked by its
 _Avoid_: Job, message, ticket
 
 **Request signature**:
-A **Guardian**'s EIP-712 typed-data signature over a **Request**'s complete contents, proving that **Guardian** made and approves every field; checked off-chain only and never sent to the contract.
+A **Guardian**'s EIP-712 typed-data signature over a **Request**'s complete contents, proving that **Guardian** made and approves every field; the **Registry** verifies it on every write a **Relayer** makes.
 _Avoid_: Report signature, auth, proof, token
 
 **Rejected**:
-The outcome of a **Request** whose signature is invalid, whose signer may not make it, whose signed contents have expired or been overtaken by a newer change to the **Post**, that Jev could not check, or (for an **Edit**) that would make the **Post** describe a different hack.
+The outcome of a **Request** whose signature is invalid, whose signer may not make it, whose signed contents have expired or been overtaken by a newer change to the **Post**, or (for an **Edit**) that Jev could not confirm still describes the same hack.
 _Avoid_: Denied, unauthorized
 
 **On-chain**:
@@ -150,9 +150,9 @@ _Avoid_: freshness
 
 - Only a **Post**'s **Reporting Guardian**, while still a **Guardian** on that chain, may request an **Edit** or **Retraction** of it; once removed, their **Posts** can only be **Purged**
 - Every **Request** must carry a valid **Request signature** from a **Guardian** of its chain, or it is **Rejected** before any other check
-- Everything a **Relayer** writes for a **Request** comes from its signed contents, except the new **Post**'s id and the **Reporting Guardian** (the signer); nothing in the pipeline adds or changes a signed field
+- Everything a **Relayer** writes for a **Request** comes from its signed contents, except the new **Post**'s id; nothing in the pipeline adds or changes a signed field
 - Every **Request** ends in exactly one outcome: **Rejected**, **Duplicate**, **On-chain**, or **Failed**
-- Whether a **Report** is accepted is decided entirely by the off-chain pipeline; the **Registry** trusts the **Relayer**'s word on who the **Reporting Guardian** is and does not re-check it
+- A **Relayer** can never write for a **Guardian** without that **Guardian**'s valid **Request signature**; the **Registry** checks it, and checks that the signer is still a **Guardian**, on every write
 - Each **Registry** has its own **Guardian** set; being a **Guardian** on one chain says nothing about another
 - Within a **Registry**, an address is either a **Guardian** or a **Relayer**, never both at once
 - A **Relayer service** holds one **Relayer** key
