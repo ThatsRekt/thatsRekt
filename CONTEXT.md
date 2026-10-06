@@ -7,7 +7,7 @@ thatsRekt is a cross-chain public registry of hacks and a donations surface whos
 ### Roles
 
 **Guardian**:
-A whitelisted person trusted to report and vouch for hacks.
+A person whitelisted by governance on one or more **Channels** of a chain, trusted to report and vouch for hacks there.
 _Avoid_: Reporter, poster, whitelisted address
 
 **Relayer**:
@@ -24,24 +24,36 @@ _Avoid_: Relayer (when meaning the service), signer
 The thatsRekt contract on one chain, fully isolated and unaware of the **Registries** on other chains.
 _Avoid_: Proxy, deployment, "the contract" (when a specific chain matters)
 
+**Channel**:
+A named feed of **Posts** inside one **Registry**, created, staffed, and closed only by governance; `main` is the public hack feed.
+_Avoid_: Topic, feed (when a specific **Channel** is meant), room
+
 **Report**:
-A submission about a hack on exactly one chain that has not been posted on-chain yet.
+A submission about a hack on exactly one chain and in exactly one **Channel** that has not been posted on-chain yet.
 _Avoid_: Submission, post, alert
 
 **Post**:
 The on-chain record of a hack in one **Registry**.
 _Avoid_: Report, incident, attack
 
+**Legacy Post**:
+A **Post** created before the v2 upgrade: frozen on-chain, served by the API as part of `main`.
+_Avoid_: Old post, v1 post (in prose), archived post
+
+**Schema Version**:
+The **Registry** version an API object was recorded under: `1` for a **Legacy Post** and its history, `2` for everything after the upgrade.
+_Avoid_: API version, contract version (for this field)
+
 **Reporting Guardian**:
 The **Guardian** whose **Report** a **Post** was made from.
 _Avoid_: Poster, author, submitter
 
 **Duplicate**:
-A **Report** about a hack that an older live **Post**, or an older **Report** still in progress, already covers on the same chain.
+A **Report** about a hack that an older live **Post**, or an older **Report** still in progress, already covers in the same **Channel** on the same chain.
 _Avoid_: Repost, copy, dupe
 
 **Incident**:
-One hack as a whole, grouping the **Posts** about it across chains; known only off-chain.
+One hack as a whole, grouping the **Posts** about it across chains within one **Channel**; known only off-chain.
 _Avoid_: Group, cluster, multi-chain post
 
 ### Changes to Posts
@@ -148,23 +160,26 @@ _Avoid_: freshness
 
 ### Intake and posting
 
-- Only a **Post**'s **Reporting Guardian**, while still a **Guardian** on that chain, may request an **Edit** or **Retraction** of it; once removed, their **Posts** can only be **Purged**
-- Every **Request** must carry a valid **Request signature** from a **Guardian** of its chain, or it is **Rejected** before any other check
+- Only a **Post**'s **Reporting Guardian**, while still a **Guardian** of the **Post**'s **Channel**, may request an **Edit** or **Retraction** of it; once removed, their **Posts** there can only be **Purged**
+- Every **Request** must carry a valid **Request signature** from a **Guardian** of its **Channel** on its chain, or it is **Rejected** before any other check
 - Everything a **Relayer** writes for a **Request** comes from its signed contents, except the new **Post**'s id; nothing in the pipeline adds or changes a signed field
 - Every **Request** ends in exactly one outcome: **Rejected**, **Duplicate**, **On-chain**, or **Failed**
-- A **Relayer** can never write for a **Guardian** without that **Guardian**'s valid **Request signature**; the **Registry** checks it, and checks that the signer is still a **Guardian**, on every write
-- Each **Registry** has its own **Guardian** set; being a **Guardian** on one chain says nothing about another
-- Within a **Registry**, an address is either a **Guardian** or a **Relayer**, never both at once
+- A **Relayer** can never write for a **Guardian** without that **Guardian**'s valid **Request signature**; the **Registry** checks it, and checks that the signer is still a **Guardian** of the **Channel**, on every write
+- Each **Channel** has its own **Guardians**; being a **Guardian** of one **Channel**, or on one chain, says nothing about another
+- Within a **Registry**, an address is either a **Guardian** (of any **Channel**) or a **Relayer**, never both at once
+- **Channels** have no admin; governance alone creates them, adds and removes their **Guardians**, and closes them
+- A **Post** belongs to exactly one **Channel**, forever
+- A closed **Channel** is frozen: no new **Posts**, **Edits**, **Retractions**, or **Votes**; what it holds stays on record
 - A **Relayer service** holds one **Relayer** key
 - A hack that hits several chains is reported as one **Report** per chain
-- A **Report** becomes at most one **Post**, on the chain it names
-- A **Report** is only checked for being a **Duplicate** against its own chain: live **Posts** and older **Reports** still in progress; retracted or purged **Posts** never make a **Report** a **Duplicate**
+- A **Report** becomes at most one **Post**, on the chain and in the **Channel** it names
+- A **Report** is only checked for being a **Duplicate** within its own **Channel** on its own chain: live **Posts** and older **Reports** still in progress; retracted or purged **Posts** never make a **Report** a **Duplicate**
 - Of two **Reports** about the same hack, only the newer can be the **Duplicate**
 - A **Duplicate** points to the **Post** or **Report** it repeats; it never changes that **Post**
 - A **Post** is written by a **Relayer** and names exactly one **Reporting Guardian**
 - A **Post** and every **Edit** to it are attributed on-chain to its **Reporting Guardian**, never to the **Relayer** that sent them; the sending **Relayer** is recorded separately
 - A **Request** is carried out on-chain at most once
-- An **Incident** groups **Posts** across chains but never makes a **Report** a **Duplicate**; **Duplicates** are judged per chain only
+- An **Incident** groups **Posts** of one **Channel** across chains but never makes a **Report** a **Duplicate**; **Duplicates** are judged per **Channel** and chain only
 - Accepting a **Report** means it was signed by a **Guardian** and is not a **Duplicate**, not that it is true; whether a **Post** is true is signalled by **Guardians**' **Votes**
 - An **Edit** is never checked for being a **Duplicate**, but is always checked to still describe the same hack before a **Relayer** applies it
 - A **Retraction** is never checked beyond the **Guardian**'s signature
@@ -172,7 +187,8 @@ _Avoid_: freshness
 
 ### Consensus
 
-- A **Guardian** casts at most one **Vote** per **Post**, and never on a **Post** they are the **Reporting Guardian** of
+- A **Guardian** casts at most one **Vote** per **Post**, only on **Posts** in their own **Channels**, and never on a **Post** they are the **Reporting Guardian** of
+- **Posts** in every **Channel** count toward the same per-chain attacker and victim standing
 - **Votes** never go through a **Relayer**
 
 ### Indexing

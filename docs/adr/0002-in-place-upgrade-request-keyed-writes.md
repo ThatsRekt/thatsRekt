@@ -1,5 +1,5 @@
 ---
-status: accepted
+status: superseded by ADR-0004 (storage approach: reusing `poster`, appending to v1 storage); the Request-id-keyed writes stand
 ---
 
 # In-place upgrade reusing `poster`; Request-id-keyed writes replace `expectedPostId`
@@ -18,6 +18,6 @@ The relayer-based intake ships as an in-place UUPS upgrade of the existing proxy
 - `PostCreated`'s `poster` argument and the **Edit** events' `amender` carry the **Reporting Guardian**, never the **Relayer**. A new `PostRelayed(postId, relayer, requestId)` records which **Relayer** sent each write.
 - Reusing a **Request** id reverts `RequestAlreadyRelayed(postId)`; the **Relayer service** treats that as **On-chain**, so SQS redeliveries and retries are idempotent on-chain. Cost: one extra SSTORE per write.
 - An **Edit** must be one tx: a multi-field **Edit** split across calls would hit `RequestAlreadyRelayed` (and the `StalePost` check, D50) on its second call. Hence `editPost` replaces `amendTitle`/`amendNote`/`addAttackers`/`addVictims` while emitting their existing events.
-- Storage layout: existing slots unchanged, one mapping appended (taken from `__gap`). Verify with a `forge inspect` storage-layout diff before scheduling; a bug found after scheduling means cancel and reschedule (+7 days).
-- `initializeV2` is a `reinitializer(2)` that installs the first **Relayer**; without it, `post()` would be **Relayer**-only with no **Relayer** for the 3-day `whitelistAdmin` add path.
+- Storage layout: existing slots unchanged; new state only appended (taken from `__gap`): `postIdOfRequest` here, plus the **Channel** storage added by D57–D61. Verify with a `forge inspect` storage-layout diff before scheduling; a bug found after scheduling means cancel and reschedule (+7 days).
+- `initializeV2` is a `reinitializer(2)` that installs the first **Relayer**, repoints `relayerRemover` (today's `whitelistRemover`) and `purgeRemover` from a single-key EOA to Safes, and sets up **Channels**; without it, `post()` would be **Relayer**-only with no **Relayer** for the 3-day `relayerAdder` add path (D39, D67, D68).
 - Every writer that calls `post(…, expectedPostId)` stops working at the upgrade, including today's Twitter detector relay path (D11, D40).
