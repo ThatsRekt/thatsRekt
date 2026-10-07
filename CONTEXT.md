@@ -11,7 +11,7 @@ A person whitelisted by governance on one or more **Channels** of a chain, trust
 _Avoid_: Reporter, poster, whitelisted address
 
 **Relayer**:
-The on-chain role that alone can create, **Edit**, and **Retract** **Posts**, always on behalf of a **Guardian**; the contract allows more than one, and no address is both a **Relayer** and a **Guardian**.
+The on-chain role that alone can create, **Edit**, and **Retract** **Posts** and cast signed **Votes**, always on behalf of a **Guardian**; the contract allows more than one, and no address is both a **Relayer** and a **Guardian**.
 _Avoid_: Poster, publisher, bot
 
 **Relayer service**:
@@ -73,7 +73,7 @@ _Avoid_: Delete, retraction, takedown
 ### Requests
 
 **Request**:
-A signed **Report**, **Edit**, or **Retraction** sent to the API, tracked by its own Request id.
+A signed **Report**, **Edit**, **Retraction**, or **Vote** sent to the API, tracked by its own Request id.
 _Avoid_: Job, message, ticket
 
 **Request signature**:
@@ -81,7 +81,7 @@ A **Guardian**'s EIP-712 typed-data signature over a **Request**'s complete cont
 _Avoid_: Report signature, auth, proof, token
 
 **Rejected**:
-The outcome of a **Request** whose signature is invalid, whose signer may not make it, whose signed contents have expired or been overtaken by a newer change to the **Post**, or (for an **Edit**) that Jev could not confirm still describes the same hack.
+The outcome of a **Request** whose signer may not make it, whose signed contents have expired or been overtaken by a newer change to the **Post** or **Vote**, whose **Guardian** is over a quota, or (for an **Edit**) that not every model confirmed still describes the same hack; a bad signature is refused by the API before it becomes a **Request**.
 _Avoid_: Denied, unauthorized
 
 **On-chain**:
@@ -89,13 +89,13 @@ The outcome of a **Request** whose **Relayer** transaction was mined.
 _Avoid_: Done, posted, confirmed
 
 **Failed**:
-The outcome of a **Request** that could not be checked or put on-chain because of an error on DAMM's side, not the **Guardian**'s.
+The outcome of a **Request** that could not be checked or put on-chain because of an error on DAMM's side, not the **Guardian**'s; a model outage makes a **Request** wait, not fail.
 _Avoid_: Rejected, error
 
 ### Consensus
 
 **Vote**:
-A **Guardian**'s **Upvote** or **Downvote** on one **Post**, sent from the **Guardian**'s own wallet.
+A **Guardian**'s **Upvote** or **Downvote** on one **Post**, sent from the **Guardian**'s own wallet or as a signed **Vote** a **Relayer** carries out.
 _Avoid_: Confirmation, disconfirmation, endorsement
 
 **Upvote**:
@@ -161,7 +161,7 @@ _Avoid_: freshness
 ### Intake and posting
 
 - Only a **Post**'s **Reporting Guardian**, while still a **Guardian** of the **Post**'s **Channel**, may request an **Edit** or **Retraction** of it; once removed, their **Posts** there can only be **Purged**
-- Every **Request** must carry a valid **Request signature** from a **Guardian** of its **Channel** on its chain, or it is **Rejected** before any other check
+- A signature that is invalid, or not from a **Guardian** of the **Channel** on its chain, is refused by the API before it becomes a **Request**; every **Request** is checked for it again before any other check
 - Everything a **Relayer** writes for a **Request** comes from its signed contents, except the new **Post**'s id; nothing in the pipeline adds or changes a signed field
 - Every **Request** ends in exactly one outcome: **Rejected**, **Duplicate**, **On-chain**, or **Failed**
 - A **Relayer** can never write for a **Guardian** without that **Guardian**'s valid **Request signature**; the **Registry** checks it, and checks that the signer is still a **Guardian** of the **Channel**, on every write
@@ -175,21 +175,22 @@ _Avoid_: freshness
 - A **Report** becomes at most one **Post**, on the chain and in the **Channel** it names
 - A **Report** is only checked for being a **Duplicate** within its own **Channel** on its own chain: live **Posts** and older **Reports** still in progress; retracted or purged **Posts** never make a **Report** a **Duplicate**
 - Of two **Reports** about the same hack, only the newer can be the **Duplicate**
-- A **Duplicate** points to the **Post** or **Report** it repeats; it never changes that **Post**
+- A **Duplicate** points to the **Post** or **Report** it repeats; it never changes that **Post**, and a **Duplicate** is final
 - A **Post** is written by a **Relayer** and names exactly one **Reporting Guardian**
 - A **Post** and every **Edit** to it are attributed on-chain to its **Reporting Guardian**, never to the **Relayer** that sent them; the sending **Relayer** is recorded separately
 - A **Request** is carried out on-chain at most once
 - An **Incident** groups **Posts** of one **Channel** across chains but never makes a **Report** a **Duplicate**; **Duplicates** are judged per **Channel** and chain only
 - Accepting a **Report** means it was signed by a **Guardian** and is not a **Duplicate**, not that it is true; whether a **Post** is true is signalled by **Guardians**' **Votes**
-- An **Edit** is never checked for being a **Duplicate**, but is always checked to still describe the same hack before a **Relayer** applies it
-- A **Retraction** is never checked beyond the **Guardian**'s signature
+- An **Edit** is never checked for being a **Duplicate**, but every model must confirm it still describes the same hack before a **Relayer** applies it
+- A **Report** is a **Duplicate** if any model says so; a missing model answer never lets a **Request** through
+- A **Retraction** or relayed **Vote** is never checked beyond the **Guardian**'s signature, membership, and quota
 - A **Post** can be both retracted and purged; the two are recorded separately
 
 ### Consensus
 
 - A **Guardian** casts at most one **Vote** per **Post**, only on **Posts** in their own **Channels**, and never on a **Post** they are the **Reporting Guardian** of
 - **Posts** in every **Channel** count toward the same per-chain attacker and victim standing
-- **Votes** never go through a **Relayer**
+- A **Vote** is sent from the **Guardian**'s own wallet or as a signed **Vote** that a **Relayer** carries out; a relayed **Vote** carries the **Guardian**'s **Request signature**, which the **Registry** verifies
 
 ### Indexing
 
@@ -213,7 +214,7 @@ _Avoid_: freshness
 - "relayer" meant both the on-chain role and the cloud service — resolved: **Relayer** is the role, **Relayer service** is what DAMM runs.
 - "confirm" meant both a **Vote** and a mined transaction — resolved: say **Upvote**/**Downvote**; "confirm" is reserved for transactions.
 - "delete" was used for both a **Guardian** taking back their **Post** and governance moderation (the contract's `purgePost`) — resolved: **Retraction** vs **Purge**; "delete" is retired.
-- "Report signature" stopped fitting once **Edits** and **Retractions** were signed too — resolved: **Request signature** covers all three.
+- "Report signature" stopped fitting once **Edits**, **Retractions**, and relayed **Votes** were signed too — resolved: **Request signature** covers all four.
 - `gateway` previously described both the current historical source and the intended replacement — resolved: it means only **Legacy Archive Gateway**; use **Portal Dataset Endpoint** for Portal.
 - `chain` previously mixed production, testnet, and local environments — resolved: use **Production Chain** or **Local Anvil Fork** where that distinction matters.
 - `freshness` previously risked being used as a synonym for stalled processing — resolved: **Freshness** and **No-progress** are distinct signals.
