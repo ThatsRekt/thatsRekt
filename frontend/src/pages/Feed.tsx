@@ -12,6 +12,7 @@ import { EmptyState } from '../components/EmptyState'
 import { InfoPopover } from '../components/InfoPopover'
 import { RefreshButton } from '../components/RefreshButton'
 import { FeedTLDR } from '../components/FeedTLDR'
+import { V2Announcement } from '../components/V2Announcement'
 import { useChainFilter } from '../hooks/useChainFilter'
 import { useArchiveToggle } from '../hooks/useArchiveToggle'
 import { useIndexerStatus } from '../hooks/useIndexerStatus'
@@ -111,6 +112,7 @@ export function Feed() {
 
   return (
     <div>
+      <V2Announcement />
       <FeedTLDR />
       <FilterBar
         sort={sort}

@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { DonateAddress } from '../components/DonateAddress'
+import { DonationOptions } from '../components/DonationOptions'
 import { useSafeBalances, ETH_PRICE_USD } from '../hooks/useSafeBalances'
 import { useDonations } from '../hooks/useDonations'
 import { DonationsTimeline } from '../components/DonationsTimeline'
@@ -46,27 +46,16 @@ export function Donations() {
           donate
         </h1>
         <p className="text-xs uppercase tracking-widest text-neutral-700">
-          [help cover gateway + indexer costs]
+          [the dao fund campaign]
         </p>
         <p className="text-base leading-relaxed text-neutral-800">
-          If the registry has saved a user from a bad transaction, or if
-          you'd like to help cover the cost of running the gateway and the
-          indexers, donations are welcome on any EVM chain.
+          thatsRekt was selected for The DAO Fund, an Ethereum security
+          public good. Please support the campaign. Direct donations to
+          thatsrekt.eth still work.
         </p>
       </header>
 
-      {/* Donation address — centred, matches the About page layout */}
-      <section className="flex flex-col items-center space-y-3 text-center">
-        <p className="text-xs uppercase tracking-widest text-neutral-700">
-          [donation address]
-        </p>
-        <DonateAddress />
-        <p className="max-w-md text-xs leading-relaxed text-neutral-700">
-          Send on any EVM chain — Ethereum, Base, Arbitrum, Optimism, Polygon,
-          and so on. The ENS resolves to the same controlling address
-          everywhere.
-        </p>
-      </section>
+      <DonationOptions />
 
       {/* Yearly goal progress bar — UNTOUCHED */}
       <section className="border-2 border-black p-4 sm:p-6 space-y-4">
@@ -80,6 +69,10 @@ export function Donations() {
             {data && `${pctLabel}% covered`}
           </span>
         </div>
+        <p className="text-xs leading-relaxed text-neutral-700">
+          Tracks direct donations to the legacy address. The DAO Fund
+          campaign is separate.
+        </p>
 
         {/* Bar */}
         <div className="relative h-7 border-2 border-black bg-[#f5f4ee] overflow-hidden">

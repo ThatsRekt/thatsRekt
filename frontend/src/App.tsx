@@ -3,6 +3,7 @@ import { Routes, Route, Link, Navigate, useLocation } from 'react-router-dom'
 // Feed is the homepage first paint — keep it EAGER so there is no
 // Suspense waterfall on the critical path.
 import { Feed } from './pages/Feed'
+import { DaoFundBanner } from './components/DaoFundBanner'
 import { IS_MOCK_MODE } from './lib/queries'
 
 // All non-home routes are lazy: they become async chunks that are NOT
@@ -73,6 +74,7 @@ export function App() {
       <ScrollManager />
     <div className="mx-auto flex min-h-full max-w-3xl flex-col px-4 sm:px-6 py-6 sm:py-10">
       {IS_MOCK_MODE && <MockBanner />}
+      <DaoFundBanner />
       <Header />
       <main className="flex-1 pt-6 sm:pt-10">
         {/*

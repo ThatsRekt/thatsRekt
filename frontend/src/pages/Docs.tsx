@@ -4,6 +4,8 @@ import { CopyableText } from "../components/CopyableText";
 import { DocsTOC, slugify, type TocEntry } from "../components/DocsTOC";
 import { StackDiagram } from "../components/diagrams/StackDiagram";
 import { PostLifecycleDiagram } from "../components/diagrams/PostLifecycleDiagram";
+import { ComingInV2 } from "../components/ComingInV2";
+import { V2_TOC_ENTRY } from "../lib/v2Announcement";
 
 /**
  * Single-page docs for integrators. Plain JSX (no MDX, no syntax
@@ -22,6 +24,7 @@ const TOC_ENTRIES: ReadonlyArray<TocEntry> = [
   { id: slugify("architecture"), label: "architecture" },
   { id: slugify("integrating from Solidity"), label: "solidity" },
   { id: slugify("integrating from a dApp (GraphQL)"), label: "graphql" },
+  V2_TOC_ENTRY,
   { id: slugify("reference"), label: "reference" },
 ];
 
@@ -38,6 +41,7 @@ export function Docs() {
         <Architecture />
         <SolidityIntegration />
         <DappIntegration />
+        <ComingInV2 />
         <Reference />
       </article>
     </div>
