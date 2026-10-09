@@ -81,7 +81,7 @@ A **Guardian**'s EIP-712 typed-data signature over a **Request**'s complete cont
 _Avoid_: Report signature, auth, proof, token
 
 **Rejected**:
-The outcome of a **Request** whose signer may not make it, whose signed contents have expired or been overtaken by a newer change to the **Post** or **Vote**, whose **Guardian** is over a quota, or (for an **Edit**) that not every model confirmed still describes the same hack; a bad signature is refused by the API before it becomes a **Request**.
+The outcome of a **Request** whose signer may not make it, whose signed contents have expired or been overtaken by a newer change to the **Post** or **Vote**, whose **Guardian** is over a quota, or (for an **Edit**) that Jev did not confirm still describes the same hack; a bad signature is refused by the API before it becomes a **Request**.
 _Avoid_: Denied, unauthorized
 
 **On-chain**:
@@ -181,8 +181,8 @@ _Avoid_: freshness
 - A **Request** is carried out on-chain at most once
 - An **Incident** groups **Posts** of one **Channel** across chains but never makes a **Report** a **Duplicate**; **Duplicates** are judged per **Channel** and chain only
 - Accepting a **Report** means it was signed by a **Guardian** and is not a **Duplicate**, not that it is true; whether a **Post** is true is signalled by **Guardians**' **Votes**
-- An **Edit** is never checked for being a **Duplicate**, but every model must confirm it still describes the same hack before a **Relayer** applies it
-- A **Report** is a **Duplicate** if any model says so; a missing model answer never lets a **Request** through
+- An **Edit** is never checked for being a **Duplicate**, but Jev must say it still describes the same hack before a **Relayer** applies it
+- A **Report** is a **Duplicate** if Jev says so; a missing Jev answer never lets a **Request** through
 - A **Retraction** or relayed **Vote** is never checked beyond the **Guardian**'s signature, membership, and quota
 - A **Post** can be both retracted and purged; the two are recorded separately
 
