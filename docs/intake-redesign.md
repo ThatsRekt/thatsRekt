@@ -249,7 +249,7 @@ Contract-set: `poster`, `confirmations`/`disconfirmations` = 0, `removed`/`purge
 
 ## 6. Changes vs REWRITE-NOTES-2026-09-30
 
-- REWRITE-NOTES has the **API** validating signature + whitelist. Superseded by D5 as first written (a dumb API, the first queue consumer validating), then restored in review: the API checks the signature and **Channel** membership before enqueueing, and `intake` re-checks (D5).
+- REWRITE-NOTES has the **API** validating signature + whitelist. Superseded by D5 as first written (a dumb API, the first queue consumer validating), then restored in review: the API checks the signature and **Channel** membership before enqueueing. `intake` does not re-read the chain (D5, Bauti 2026-10-09).
 - REWRITE-NOTES says "sole relayer". Refined by D1: a **Relayer** role that allows several addresses, with DAMM's **Relayer service** as the one in use.
 - REWRITE-NOTES goal 1 (channels) was dropped by D20, then restored by D57; its open "channel array" question is answered: one **Channel** per **Report**.
 
