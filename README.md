@@ -1,3 +1,8 @@
+> [!IMPORTANT]
+> **v2 development has moved.** thatsRekt v2 (signed Requests, Channels, Relayer, Effect rewrite) is being built in a new repository, `ThatsRekt/thatsRekt-v2`. It is private until the v2 cutover and is made public then.
+>
+> Until cutover, this repository takes **v1 hotfixes only**. It will be **archived at cutover**. The deployed v1 Registry and the live site keep running unchanged until then.
+
 # thatsRekt
 
 On-chain hack alert registry — public good.
