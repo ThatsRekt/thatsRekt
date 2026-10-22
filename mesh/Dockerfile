@@ -3,7 +3,7 @@
 # Multi-stage build for the thatsRekt Mesh gateway. Mirrors the indexer's
 # Dockerfile pattern: deps → builder → proddeps → runtime, alpine-based.
 
-ARG NODE_VERSION=20-alpine
+ARG NODE_VERSION=22.23.4-alpine
 ARG PNPM_VERSION=10.33.2
 
 # --- Stage 1: full deps (incl. tsx + tsc for build) ------------------------

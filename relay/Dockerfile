@@ -5,7 +5,7 @@
 # (needed for HTTPS RPC + webhook calls). Alpine over distroless so HEALTHCHECK can
 # use wget — keeps the autoheal sidecar pattern working.
 
-ARG GO_VERSION=1.24-alpine
+ARG GO_VERSION=1.26.10-alpine
 
 # --- Stage 1: build -------------------------------------------------------------
 FROM golang:${GO_VERSION} AS builder
@@ -29,7 +29,7 @@ RUN go build \
       ./cmd/relay
 
 # --- Stage 2: runtime ----------------------------------------------------------
-FROM alpine:3.20 AS runtime
+FROM alpine:3.24 AS runtime
 
 # ca-certificates: needed for HTTPS to RPC providers + webhook callers.
 # wget: used by the HEALTHCHECK below.

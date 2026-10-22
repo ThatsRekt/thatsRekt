@@ -8,7 +8,7 @@
 # back to the nginx:alpine default config (serves /usr/share/nginx/html
 # on :80) — useful for local prod-image smoke tests.
 
-ARG NODE_VERSION=20-alpine
+ARG NODE_VERSION=22.23.4-alpine
 ARG PNPM_VERSION=10.33.2
 
 # --- Stage 1: install + tsc + vite build -----------------------------------
