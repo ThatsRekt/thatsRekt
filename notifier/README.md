@@ -55,6 +55,7 @@ State is flushed to S3 on a 15-second timer + on clean shutdown.
 | `GRAPHQL_REQUESTS_PER_SECOND` | no | `10` | shared total rate limit for GraphQL requests |
 | `POLL_INTERVAL_SECONDS` | no | `10` | how often to poll for new posts |
 | `FETCH_LIMIT` | no | `25` | how many posts to ask for per cycle |
+| `MAX_REPUBLISH_AGE_HOURS` | no | `24` | a post the channel never got (absent from state, or seeding a chain with no state) and older than this is recorded, not sent. `0` disables |
 
 ### IAM
 

@@ -108,6 +108,36 @@ type Service struct {
 	PollInterval time.Duration
 	FetchLimit   int
 	Logger       *slog.Logger
+
+	// MaxRepublishAge bounds the two paths that can send a post the channel
+	// has not seen: State 5 (not new, absent from the store) and the seed of
+	// a chain with no high-water mark (fresh or lost state). A post created
+	// longer ago than this is recorded as seen without a send. Posts from
+	// before the notifier's state enter the latest-FETCH_LIMIT window whenever
+	// the feed shifts (a recent post retracted or purged, or one chain's
+	// results briefly missing), and each shift used to repost months-old
+	// alerts. Zero disables the guard. A timestamp that does not parse fails
+	// open: the post is sent.
+	MaxRepublishAge time.Duration
+	// Now is the clock for MaxRepublishAge; nil means time.Now.
+	Now func() time.Time
+}
+
+// tooOldToRepublish reports whether a post absent from the channel is too old
+// to send now. See MaxRepublishAge.
+func (s *Service) tooOldToRepublish(p graphql.Post) bool {
+	if s.MaxRepublishAge <= 0 {
+		return false
+	}
+	created, err := time.Parse(time.RFC3339Nano, p.CreatedAtTimestamp)
+	if err != nil {
+		return false
+	}
+	now := time.Now
+	if s.Now != nil {
+		now = s.Now
+	}
+	return now().Sub(created) > s.MaxRepublishAge
 }
 
 // Run blocks until ctx is cancelled. Returns the first non-recoverable error.
@@ -121,9 +151,9 @@ func (s *Service) Run(ctx context.Context) error {
 	defer pollTicker.Stop()
 
 	// Run an initial poll so the first new post on startup doesn't wait
-	// a full PollInterval. The seed-from-empty case is harmless because
-	// LastSeen returns "" for unknown chains, and the first cycle
-	// records the latest id without spamming.
+	// a full PollInterval. With no state for a chain (LastSeen ""), every
+	// post in the window is new; MaxRepublishAge keeps the old ones from
+	// being sent.
 	go s.runPoll(ctx)
 
 	for {
@@ -200,6 +230,16 @@ func (s *Service) PollOnce(ctx context.Context) {
 	for _, p := range posts {
 		// --- State 1: brand-new post ---
 		if s.isNew(p) {
+			// Seeding a chain with no high-water mark: an old post only sets
+			// the mark. A chain that has one publishes every new id.
+			if s.Store.LastSeen(p.Chain.Slug) == "" && s.tooOldToRepublish(p) {
+				s.Logger.Info("seeding high-water mark from an old post — not sending",
+					"post_id", p.ID,
+					"created_at", p.CreatedAtTimestamp,
+				)
+				s.Store.SetLastSeen(p.Chain.Slug, p.ID)
+				continue
+			}
 			fp := contentFingerprint(p)
 			// Poison-pill guard: if we have already permanently given up on
 			// this exact content, advance the high-water mark and move on.
@@ -242,6 +282,14 @@ func (s *Service) PollOnce(ctx context.Context) {
 			// content change is NOT given up — see contentFingerprint.
 			fp := contentFingerprint(p)
 			if s.Store.IsPublishGivenUp(p.ID, fp) {
+				continue
+			}
+
+			if s.tooOldToRepublish(p) {
+				s.Logger.Debug("not-new post absent from store is too old — not sending",
+					"post_id", p.ID,
+					"created_at", p.CreatedAtTimestamp,
+				)
 				continue
 			}
 
