@@ -28,6 +28,9 @@ type Config struct {
 	// Polling
 	PollInterval time.Duration // POLL_INTERVAL — how often to query GraphQL for new posts (default 10s)
 	FetchLimit   int           // FETCH_LIMIT — how many posts to pull per cycle (default 25)
+	// MAX_REPUBLISH_AGE_HOURS — a post the channel never got and older than
+	// this is recorded, not sent (default 24; 0 disables).
+	MaxRepublishAge time.Duration
 
 	// State persistence (S3)
 	StateBucket string // STATE_S3_BUCKET — single small JSON file lives here
@@ -57,6 +60,12 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("FETCH_LIMIT: %w", err)
 	}
 	cfg.FetchLimit = limit
+
+	maxAgeHours, err := parseIntDefault("MAX_REPUBLISH_AGE_HOURS", 24)
+	if err != nil {
+		return nil, fmt.Errorf("MAX_REPUBLISH_AGE_HOURS: %w", err)
+	}
+	cfg.MaxRepublishAge = time.Duration(maxAgeHours) * time.Hour
 
 	rate, err := parsePositiveIntDefault("GRAPHQL_REQUESTS_PER_SECOND", 10)
 	if err != nil {
