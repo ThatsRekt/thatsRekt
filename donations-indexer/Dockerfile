@@ -13,7 +13,7 @@
 # falls back to its pure-JS path when they're absent. No dep in this tree
 # requires a build step at install time. Runtime is node:22-alpine.
 
-ARG NODE_VERSION=22-alpine
+ARG NODE_VERSION=22.23.4-alpine
 ARG BUN_IMAGE=oven/bun:1.1.14-alpine
 
 # --- Stage 1: install all deps (needed for build) ----------------------------
