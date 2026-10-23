@@ -9,7 +9,10 @@
 # =============================================================================
 
 # --- builder ----------------------------------------------------------------
-FROM golang:1.22-alpine AS builder
+# Go 1.26.10+ denylists the eight compromised eMudhra intermediate CA keys in
+# crypto/x509 (CVE-2026-111943). The notifier is a TLS client (Telegram, Mesh,
+# S3), so it must be built with it. Pinned by digest.
+FROM golang:1.26.10-alpine@sha256:27f2d3b83cfc5803c8078f8e730af0f7c431bf067afaec8f60a36fb763187cba AS builder
 
 WORKDIR /src
 
