@@ -298,8 +298,9 @@ function Architecture() {
         </p>
         <ul className="space-y-1 text-sm leading-relaxed text-neutral-800 list-disc list-inside marker:text-neutral-400">
           <li>
-            <Code>attackerReport(address)</Code> →{" "}
-            <Inline>(int256 score, uint256 appearances)</Inline>. Signed score
+            <Code>attackerScore(address)</Code> → <Inline>int256</Inline> and{" "}
+            <Code>attackerAppearances(address)</Code> →{" "}
+            <Inline>uint256</Inline>. Signed score
             from confirmer activity (each <Inline>Up</Inline> +1, each{" "}
             <Inline>Down</Inline> -1 across every active post that names the
             address), plus how many active posts currently list it as an
@@ -413,9 +414,9 @@ function SolidityIntegration() {
       </p>
 
       <CodeBlock>{`interface IThatsRekt {
-    function attackerReport(address a)
-        external view returns (int256 score, uint256 appearances);
-
+    // Public mappings on the registry.
+    function attackerScore(address a) external view returns (int256);
+    function attackerAppearances(address a) external view returns (uint256);
     function isVictim(address a) external view returns (bool);
 }
 
@@ -428,8 +429,7 @@ contract MyBridge {
     int256 constant ATTACKER_THRESHOLD = 3;
 
     function withdraw(address recipient, uint256 amount) external {
-        (int256 score, ) = rekt.attackerReport(recipient);
-        require(score < ATTACKER_THRESHOLD, "recipient flagged as attacker");
+        require(rekt.attackerScore(recipient) < ATTACKER_THRESHOLD, "recipient flagged as attacker");
         // ... rest of withdraw
     }
 }`}</CodeBlock>
@@ -464,8 +464,8 @@ contract MyBridge {
         <p className="mt-2">
           The threshold of <Code>3</Code> in the example means "block when at
           least three whitelisters net-confirm." Tune up for fewer false
-          positives, down for tighter safety. The second return value (
-          <Inline>appearances</Inline>) is also useful when you want a
+          positives, down for tighter safety. <Code>attackerAppearances</Code>{" "}
+          (how many live posts name the address) is also useful when you want a
           confidence floor (e.g. only block when the address has been named in
           2+ separate posts).
         </p>
