@@ -434,11 +434,18 @@ export async function fetchContributors(
   chainSlugs: readonly string[],
 ): Promise<ChainContributors[]> {
   if (USE_MOCK) {
-    return chainSlugs.map((slug) => ({
+    // Alternate the two real production detectors (see lib/contributors.ts)
+    // rather than repeating the Anvil dev address on every chain — makes
+    // mock-mode screenshots representative of the real whitelist shape.
+    const MOCK_DETECTORS = [
+      '0xe0396d6d738e726d39f96099b8f6a55d11184374', // JerryTheKid.eth's Detector
+      '0xfe6b4dff18d741e725c7c6922ccf69121b2fffdb', // DAMM Capital's Detector
+    ]
+    return chainSlugs.map((slug, i) => ({
       chainSlug: slug,
       active: [
         {
-          address: '0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266',
+          address: MOCK_DETECTORS[i % MOCK_DETECTORS.length]!,
           firstWhitelistedAt: '2026-04-27T00:00:00.000Z',
           lastChangedAt: '2026-04-27T00:00:00.000Z',
         },
