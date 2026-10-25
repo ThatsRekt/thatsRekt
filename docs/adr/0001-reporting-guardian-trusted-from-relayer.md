@@ -1,5 +1,5 @@
 ---
-status: accepted
+status: superseded by 0003-registry-verifies-request-signatures.md
 ---
 
 # The Registry trusts the Relayer about the Reporting Guardian
@@ -8,7 +8,7 @@ From the intake redesign on, only a **Relayer** writes **Posts**, **Edits**, and
 
 ## Considered Options
 
-- **Contract re-verifies the EIP-712 signature** — rejected. Every signed field (title, note, attackers, victims, `attackedAt`, optional `txHashes`, `deadline`) would have to go on-chain as calldata and be hashed in the contract, raising gas on every write and coupling the on-chain ABI to the off-chain typed-data schema, so any schema change becomes a 7-day timelocked upgrade. It would also not stop a malicious **Relayer**: it chooses which signed **Requests** to relay and when.
+- **Contract re-verifies the EIP-712 signature** — rejected. Every signed field (title, note, attackers, victims, `attackedAt`, `deadline`) would have to go on-chain as calldata and be hashed in the contract, raising gas on every write and coupling the on-chain ABI to the off-chain typed-data schema, so any schema change becomes a 7-day timelocked upgrade. It would also not stop a malicious **Relayer**: it chooses which signed **Requests** to relay and when.
 - **`isGuardian[reportingGuardian]` check in `post()`** — rejected. Membership is already checked off-chain against the same on-chain **Guardian** set. Re-checking only adds a revert path for a **Guardian** removed between the Guardian check and the mined tx, where the off-chain decision has already been made.
 
 ## Consequences
