@@ -38,7 +38,7 @@ export interface TokenBalance {
 
 export const ETH_PRICE_USD = TOKEN_PRICES['native'].priceUsd
 
-async function fetchSafeBalances(): Promise<{ tokens: TokenBalance[]; totalUsd: number }> {
+export async function fetchSafeBalances(): Promise<{ tokens: TokenBalance[]; totalUsd: number }> {
   const res = await fetch(SAFE_API)
   if (!res.ok) throw new Error(`Safe API error: ${res.status}`)
   const data: SafeApiBalance[] = await res.json()
@@ -91,6 +91,9 @@ async function fetchSafeBalances(): Promise<{ tokens: TokenBalance[]; totalUsd: 
       ...merged,
     ]
   }
+
+  // Highest USD value first; unpriced tokens ($0) sink to the bottom.
+  merged.sort((a, b) => b.usdValue - a.usdValue)
 
   const totalUsd = merged.reduce((sum, t) => sum + t.usdValue, 0)
   return { tokens: merged, totalUsd }
