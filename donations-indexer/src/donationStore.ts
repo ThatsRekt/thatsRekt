@@ -7,7 +7,7 @@
  *   statements on every processor start. Safe to re-run on redeploy.
  *
  * Upsert key: `id` (deterministic `${chainId}-${txHash}-native`).
- * ON CONFLICT DO NOTHING — same row submitted twice produces no duplicate.
+ * ON CONFLICT never duplicates a row; it only backfills a missing tx_from_address.
  * This is the processor's primary idempotency guarantee.
  */
 
@@ -23,6 +23,8 @@ type DonationQueryExecutor = Pick<ClientBase, 'query'>
  *   chain_id        — EIP-155 chain id
  *   chain_slug      — human-readable slug (e.g. 'ethereum')
  *   from_address    — donor address (lowercased)
+ *   tx_from_address — transaction signer (lowercased); null for rows indexed
+ *                     before it was recorded
  *   token_address   — null for native coin, ERC20 address otherwise
  *   token_symbol    — 'ETH', 'USDC', etc.
  *   token_decimals  — 18 for ETH
@@ -47,6 +49,7 @@ export async function ensureDonationTable(pool: PoolType): Promise<void> {
       chain_id        INTEGER      NOT NULL,
       chain_slug      VARCHAR(32)  NOT NULL,
       from_address    VARCHAR(42)  NOT NULL,
+      tx_from_address VARCHAR(42),
       token_address   VARCHAR(42),
       token_symbol    VARCHAR(32)  NOT NULL,
       token_decimals  INTEGER      NOT NULL,
@@ -58,6 +61,10 @@ export async function ensureDonationTable(pool: PoolType): Promise<void> {
       block_timestamp TIMESTAMPTZ  NOT NULL
     );
   `)
+  // Tables created before the signer column existed.
+  await pool.query(
+    `ALTER TABLE donation ADD COLUMN IF NOT EXISTS tx_from_address VARCHAR(42);`,
+  )
   await pool.query(
     `CREATE INDEX IF NOT EXISTS donation_timestamp_idx
        ON donation(block_timestamp DESC);`,
@@ -82,7 +89,8 @@ export async function ensureDonationTable(pool: PoolType): Promise<void> {
 
 /**
  * Idempotent upsert of a DonationRow.
- * ON CONFLICT (id) DO NOTHING guarantees safe re-runs.
+ * Re-runs never duplicate or alter a stored donation; they only fill a
+ * missing tx_from_address so a rewound backfill attributes older rows.
  */
 export async function upsertDonation(
   executor: DonationQueryExecutor,
@@ -90,17 +98,18 @@ export async function upsertDonation(
 ): Promise<void> {
   await executor.query(
     `INSERT INTO donation (
-       id, chain_id, chain_slug, from_address,
+       id, chain_id, chain_slug, from_address, tx_from_address,
        token_address, token_symbol, token_decimals,
        amount_raw, amount_norm, tx_hash, log_index,
        block_number, block_timestamp
      ) VALUES (
-       $1, $2, $3, $4,
+       $1, $2, $3, $4, $14,
        $5, $6, $7,
        $8, $9, $10, $11,
        $12, $13
      )
-     ON CONFLICT (id) DO NOTHING`,
+     ON CONFLICT (id) DO UPDATE
+       SET tx_from_address = COALESCE(donation.tx_from_address, EXCLUDED.tx_from_address)`,
     [
       row.id,
       row.chainId,
@@ -115,6 +124,7 @@ export async function upsertDonation(
       row.logIndex,
       row.blockNumber,
       row.blockTimestamp.toISOString(),
+      row.txFromAddress,
     ],
   )
 }

@@ -72,6 +72,7 @@ export const TRANSFER_TOPIC0 =
 // wstETH (Lido)  | 0x7f39c581f595b53c5cb19bd0b3f8da6c935e2ca0 |   18     | wstETH
 // LINK           | 0x514910771af9ca656af840dff83e8264ecf986ca |   18     | LINK
 // AAVE           | 0x7fc66500c84a76ad7e9c93437bfc5ac33e2ddae9 |   18     | AAVE
+// USDS (Sky)     | 0xdc035d45d973e3ec169d2276ddab16f1e407384f |   18     | USDS
 // ---------------------------------------------------------------------------
 
 const ETHEREUM_ERC20: Readonly<Record<string, TokenMeta>> = Object.freeze({
@@ -93,6 +94,8 @@ const ETHEREUM_ERC20: Readonly<Record<string, TokenMeta>> = Object.freeze({
   '0x514910771af9ca656af840dff83e8264ecf986ca': Object.freeze({ symbol: 'LINK', decimals: 18 }),
   // AAVE — 18 decimals (verified on-chain)
   '0x7fc66500c84a76ad7e9c93437bfc5ac33e2ddae9': Object.freeze({ symbol: 'AAVE', decimals: 18 }),
+  // USDS (Sky, DAI successor) — 18 decimals (verified on-chain via Blockscout)
+  '0xdc035d45d973e3ec169d2276ddab16f1e407384f': Object.freeze({ symbol: 'USDS', decimals: 18 }),
 })
 
 // ---------------------------------------------------------------------------

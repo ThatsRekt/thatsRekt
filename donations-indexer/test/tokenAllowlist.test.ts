@@ -35,9 +35,9 @@ describe('allowlistFor', () => {
     expect(list!.nativeFloorWei).toBeGreaterThan(0n)
   })
 
-  test('Ethereum allowlist has exactly 9 ERC20 entries', () => {
+  test('Ethereum allowlist has exactly 10 ERC20 entries', () => {
     const list = allowlistFor(1)
-    expect(Object.keys(list!.erc20)).toHaveLength(9)
+    expect(Object.keys(list!.erc20)).toHaveLength(10)
   })
 })
 
@@ -180,6 +180,11 @@ describe('tokenMeta', () => {
     expect(meta!.decimals).toBe(18)
   })
 
+  test('USDS decimals = 18 (any-case address)', () => {
+    const usds = tokenMeta(1, '0xdC035D45d973E3EC169d2276DDab16f1e407384F')
+    expect(usds).toEqual({ symbol: 'USDS', decimals: 18 })
+  })
+
   test('AAVE decimals = 18 (verified on-chain)', () => {
     const meta = tokenMeta(1, '0x7fc66500c84a76ad7e9c93437bfc5ac33e2ddae9')
     expect(meta).not.toBeNull()
@@ -189,9 +194,9 @@ describe('tokenMeta', () => {
 })
 
 describe('erc20Addresses', () => {
-  test('returns 9 addresses for Ethereum mainnet', () => {
+  test('returns 10 addresses for Ethereum mainnet', () => {
     const addrs = erc20Addresses(1)
-    expect(addrs).toHaveLength(9)
+    expect(addrs).toHaveLength(10)
   })
 
   test('all addresses are lowercased', () => {

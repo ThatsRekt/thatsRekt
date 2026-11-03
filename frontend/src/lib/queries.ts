@@ -718,6 +718,11 @@ export interface Donation {
   chainId: number
   chainSlug: string
   fromAddress: string
+  /**
+   * Transaction signer. Differs from fromAddress when the donation was sent
+   * from a contract wallet (e.g. a Safe); null for rows indexed before it was recorded.
+   */
+  txFromAddress: string | null
   /** null for native-coin donations. */
   tokenAddress: string | null
   tokenSymbol: string
@@ -741,6 +746,7 @@ const DONATIONS_QUERY = /* GraphQL */ `
       chainId
       chainSlug
       fromAddress
+      txFromAddress
       tokenAddress
       tokenSymbol
       tokenDecimals

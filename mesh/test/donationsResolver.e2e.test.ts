@@ -169,6 +169,8 @@ describe('listDonations', () => {
     expect(typeof row.chainId).toBe('number')
     expect(typeof row.chainSlug).toBe('string')
     expect(typeof row.fromAddress).toBe('string')
+    // Fixture table predates tx_from_address: the resolver must still answer.
+    expect(row.txFromAddress).toBeNull()
     expect(row.tokenAddress).toBeNull()
     expect(typeof row.tokenSymbol).toBe('string')
     expect(typeof row.tokenDecimals).toBe('number')
