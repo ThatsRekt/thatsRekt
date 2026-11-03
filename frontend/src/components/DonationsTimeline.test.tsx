@@ -29,7 +29,11 @@ import { MemoryRouter } from 'react-router-dom'
 // Only the signer below has a primary name; every other address resolves to null.
 const SAFE = '0x371b75388b95073e903648abbb205df1295f5ee3'
 const SIGNER = '0x5920ca4a51d93052f111e90c387f70bcf723ea3f'
-const ENS_NAMES: Record<string, string> = { [SIGNER]: 'netrim.eth' }
+const NAMED_SAFE = '0x00000000000000000000000000000000000000aa'
+const ENS_NAMES: Record<string, string> = {
+  [SIGNER]: 'netrim.eth',
+  [NAMED_SAFE]: 'safe.netrim.eth',
+}
 mock.module('../hooks/useEnsLookup', () => ({
   useEnsLookup: (addr?: string | null) => ({
     name: addr ? (ENS_NAMES[addr.toLowerCase()] ?? null) : null,
@@ -312,6 +316,12 @@ describe('DonationsTimeline donor attribution', () => {
   it("credits the signer's ENS name when a nameless Safe sent the tokens", () => {
     renderTimeline({ donations: [safeDonation(SIGNER)] })
     expect(screen.getAllByText('netrim.eth').length).toBeGreaterThan(0)
+  })
+
+  it("prefers the signer's ENS name even when the Safe has its own", () => {
+    renderTimeline({ donations: [{ ...safeDonation(SIGNER), fromAddress: NAMED_SAFE }] })
+    expect(screen.getAllByText('netrim.eth').length).toBeGreaterThan(0)
+    expect(screen.queryByText('safe.netrim.eth')).toBeNull()
   })
 
   it('falls back to the sender hex when no signer is recorded', () => {
