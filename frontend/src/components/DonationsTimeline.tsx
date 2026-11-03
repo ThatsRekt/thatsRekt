@@ -21,7 +21,6 @@ import { getChainBySlug, explorerTxUrl } from '../lib/chains'
 import { ChainBadge } from './ChainBadge'
 import { AddressLabel } from './AddressLabel'
 import { useEnsLookup } from '../hooks/useEnsLookup'
-import { lookupContributor } from '../lib/contributors'
 
 export type { Donation }
 
@@ -123,10 +122,10 @@ const asHexAddress = (addr: string | null | undefined): `0x${string}` | undefine
   addr && /^0x[0-9a-fA-F]{40}$/.test(addr) ? (addr as `0x${string}`) : undefined
 
 /**
- * Donor cell. Shows the token sender (fromAddress) by default. When that
- * sender is a contract wallet with no name of its own (e.g. a Safe) and the
- * transaction's signer has an ENS primary name, shows the signer instead so
- * the donation is credited to the person behind the wallet.
+ * Donor cell. When the donation was sent from a contract wallet (e.g. a Safe)
+ * and the transaction's signer has an ENS primary name, credit the signer —
+ * the person behind the wallet — even if the wallet has a name of its own.
+ * Otherwise show the token sender (fromAddress).
  */
 function DonorLabel({ donation }: { donation: Donation }) {
   const { fromAddress, txFromAddress, chainSlug } = donation
@@ -134,10 +133,8 @@ function DonorLabel({ donation }: { donation: Donation }) {
     txFromAddress && txFromAddress.toLowerCase() !== fromAddress.toLowerCase()
       ? txFromAddress
       : null
-  const { name: senderName } = useEnsLookup(asHexAddress(fromAddress))
   const { name: signerName } = useEnsLookup(asHexAddress(signer))
-  const senderHasName = Boolean(senderName) || lookupContributor(chainSlug, fromAddress) !== undefined
-  const addr = signer && signerName && !senderHasName ? signer : fromAddress
+  const addr = signer && signerName ? signer : fromAddress
   return <AddressLabel addr={addr} chainSlug={chainSlug} />
 }
 
