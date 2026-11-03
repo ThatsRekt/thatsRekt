@@ -26,8 +26,15 @@ import { MemoryRouter } from 'react-router-dom'
 
 // Stub useEnsLookup before importing DonationsTimeline so the AddressLabel it
 // now renders never boots wagmi (mirrors AddressLabel.test.tsx).
+// Only the signer below has a primary name; every other address resolves to null.
+const SAFE = '0x371b75388b95073e903648abbb205df1295f5ee3'
+const SIGNER = '0x5920ca4a51d93052f111e90c387f70bcf723ea3f'
+const ENS_NAMES: Record<string, string> = { [SIGNER]: 'netrim.eth' }
 mock.module('../hooks/useEnsLookup', () => ({
-  useEnsLookup: () => ({ name: null, isLoading: false }),
+  useEnsLookup: (addr?: string | null) => ({
+    name: addr ? (ENS_NAMES[addr.toLowerCase()] ?? null) : null,
+    isLoading: false,
+  }),
 }))
 
 const { DonationsTimeline } = await import('./DonationsTimeline')
@@ -41,6 +48,7 @@ const SAMPLE_DONATIONS: Donation[] = [
     chainId: 1,
     chainSlug: 'ethereum',
     fromAddress: '0xd8da6bf26964af9d7eed9e03e53415d37aa96045',
+    txFromAddress: '0xd8da6bf26964af9d7eed9e03e53415d37aa96045',
     tokenAddress: null,
     tokenSymbol: 'ETH',
     tokenDecimals: 18,
@@ -56,6 +64,7 @@ const SAMPLE_DONATIONS: Donation[] = [
     chainId: 1,
     chainSlug: 'ethereum',
     fromAddress: '0x1234567890abcdef1234567890abcdef12345678',
+    txFromAddress: null,
     tokenAddress: null,
     tokenSymbol: 'ETH',
     tokenDecimals: 18,
@@ -279,5 +288,35 @@ describe('DonationsTimeline — sort headers', () => {
     const [calledOrderBy, calledDirection] = fn.mock.calls[0]!
     expect(calledOrderBy).toBe('chain')
     expect(calledDirection).toBe('ASC')
+  })
+})
+
+describe('DonationsTimeline donor attribution', () => {
+  const safeDonation = (txFromAddress: string | null): Donation => ({
+    id: '1-0xccc-235',
+    chainId: 1,
+    chainSlug: 'ethereum',
+    fromAddress: SAFE,
+    txFromAddress,
+    tokenAddress: '0xdc035d45d973e3ec169d2276ddab16f1e407384f',
+    tokenSymbol: 'USDS',
+    tokenDecimals: 18,
+    amountRaw: '1000000000000000000000',
+    amountNorm: '1000',
+    txHash: '0x0cffcb1003ab4fc7ba1046bf345ed570af5d2de9b1bbc23ef298f194ecb98da7',
+    logIndex: 235,
+    blockNumber: 26_334_638,
+    blockTimestamp: new Date(Date.now() - 600_000).toISOString(),
+  })
+
+  it("credits the signer's ENS name when a nameless Safe sent the tokens", () => {
+    renderTimeline({ donations: [safeDonation(SIGNER)] })
+    expect(screen.getAllByText('netrim.eth').length).toBeGreaterThan(0)
+  })
+
+  it('falls back to the sender hex when no signer is recorded', () => {
+    renderTimeline({ donations: [safeDonation(null)] })
+    expect(screen.queryByText('netrim.eth')).toBeNull()
+    expect(screen.getAllByText(/0x371b/i).length).toBeGreaterThan(0)
   })
 })

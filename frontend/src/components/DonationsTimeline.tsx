@@ -20,6 +20,8 @@ import { sortStateReducer } from '../lib/sortState'
 import { getChainBySlug, explorerTxUrl } from '../lib/chains'
 import { ChainBadge } from './ChainBadge'
 import { AddressLabel } from './AddressLabel'
+import { useEnsLookup } from '../hooks/useEnsLookup'
+import { lookupContributor } from '../lib/contributors'
 
 export type { Donation }
 
@@ -117,6 +119,28 @@ function SortHeader({ column, label, sortState, onSort, className }: SortHeaderP
 // Row component
 // ---------------------------------------------------------------------------
 
+const asHexAddress = (addr: string | null | undefined): `0x${string}` | undefined =>
+  addr && /^0x[0-9a-fA-F]{40}$/.test(addr) ? (addr as `0x${string}`) : undefined
+
+/**
+ * Donor cell. Shows the token sender (fromAddress) by default. When that
+ * sender is a contract wallet with no name of its own (e.g. a Safe) and the
+ * transaction's signer has an ENS primary name, shows the signer instead so
+ * the donation is credited to the person behind the wallet.
+ */
+function DonorLabel({ donation }: { donation: Donation }) {
+  const { fromAddress, txFromAddress, chainSlug } = donation
+  const signer =
+    txFromAddress && txFromAddress.toLowerCase() !== fromAddress.toLowerCase()
+      ? txFromAddress
+      : null
+  const { name: senderName } = useEnsLookup(asHexAddress(fromAddress))
+  const { name: signerName } = useEnsLookup(asHexAddress(signer))
+  const senderHasName = Boolean(senderName) || lookupContributor(chainSlug, fromAddress) !== undefined
+  const addr = signer && signerName && !senderHasName ? signer : fromAddress
+  return <AddressLabel addr={addr} chainSlug={chainSlug} />
+}
+
 function DonationRow({ donation }: { donation: Donation }) {
   const chain = getChainBySlug(donation.chainSlug)
   const txUrl = chain ? explorerTxUrl(chain, donation.txHash) : null
@@ -126,10 +150,10 @@ function DonationRow({ donation }: { donation: Donation }) {
       {/* Desktop row — hidden on mobile */}
       <tr className="hidden sm:table-row border-b border-neutral-200 hover:bg-neutral-50 transition-colors">
         <td className="py-2 px-3 text-xs text-neutral-700">
-          {/* Shared AddressLabel: shows the donor's ENS primary name (or a
-              registered contributor alias) when one resolves, otherwise the
-              truncated hex. Copy + explorer link always operate on raw hex. */}
-          <AddressLabel addr={donation.fromAddress} chainSlug={donation.chainSlug} />
+          {/* DonorLabel wraps the shared AddressLabel: ENS name or contributor
+              alias when one resolves (falling back to the tx signer's ENS for
+              contract-wallet donations), otherwise truncated hex. */}
+          <DonorLabel donation={donation} />
         </td>
         <td className="py-2 px-3 font-mono text-xs text-right">
           <span className="font-black">{donation.amountNorm}</span>
@@ -162,7 +186,7 @@ function DonationRow({ donation }: { donation: Donation }) {
           <div className="flex flex-col gap-1">
             <div className="flex items-center justify-between gap-2">
               <span className="text-xs text-neutral-700 min-w-0">
-                <AddressLabel addr={donation.fromAddress} chainSlug={donation.chainSlug} />
+                <DonorLabel donation={donation} />
               </span>
               <ChainBadge slug={donation.chainSlug} />
             </div>

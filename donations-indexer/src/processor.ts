@@ -89,6 +89,9 @@ export const buildDonationPortalPlan = ({
         topic0: [filter.topic0],
         topic2: [filter.topic2],
       },
+      // Parent transaction carries the signer, so a donation sent from a
+      // contract wallet (e.g. a Safe) can still be attributed to its owner.
+      include: { transaction: true },
     })
   }
 
@@ -135,6 +138,9 @@ export const indexDonationBlocks = async ({
   readonly donee: string
 }): Promise<void> => {
   for (const block of blocks) {
+    const signerByTxHash = new Map(
+      block.transactions.map((tx) => [tx.hash.toLowerCase(), tx.from]),
+    )
     for (const transaction of block.transactions) {
       if (!transaction.to || transaction.to.toLowerCase() !== donee) continue
       if (!transaction.value || transaction.value === 0n) continue
@@ -164,6 +170,7 @@ export const indexDonationBlocks = async ({
         chainSlug,
         tokenAddress: log.address,
         fromAddress: `0x${(log.topics[1] ?? '').slice(-40)}`,
+        txFromAddress: signerByTxHash.get(log.transactionHash.toLowerCase()),
         toAddress,
         amount,
         txHash: log.transactionHash,

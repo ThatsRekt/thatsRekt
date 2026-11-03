@@ -4,6 +4,7 @@ const SAFE_ADDRESS = '0x59E4DBc95BD312A882Bb36b7f3E8298682340679'
 const SAFE_API = `https://safe-transaction-mainnet.safe.global/api/v1/safes/${SAFE_ADDRESS}/balances/`
 
 // Hardcoded prices — no RPC calls. ETH/WETH at $2,000, stablecoins at $1.
+// Keys must match the Safe API's checksummed tokenAddress exactly.
 // Add new tokens here via PR when new assets appear in the Safe.
 const TOKEN_PRICES: Record<string, { priceUsd: number; symbol: string; decimals: number }> = {
   native: { priceUsd: 2_000, symbol: 'ETH', decimals: 18 },
@@ -11,6 +12,8 @@ const TOKEN_PRICES: Record<string, { priceUsd: number; symbol: string; decimals:
   '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48': { priceUsd: 1, symbol: 'USDC', decimals: 6 },
   // WETH
   '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2': { priceUsd: 2_000, symbol: 'WETH', decimals: 18 },
+  // USDS (Sky)
+  '0xdC035D45d973E3EC169d2276DDab16f1e407384F': { priceUsd: 1, symbol: 'USDS', decimals: 18 },
 }
 
 interface SafeApiBalance {

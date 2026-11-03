@@ -23,6 +23,8 @@ export interface DonationRow {
   chainId: number
   chainSlug: string
   fromAddress: string
+  /** Transaction signer; differs from fromAddress when sent from a contract wallet. */
+  txFromAddress: string | null
   /** null for native-coin donations. */
   tokenAddress: string | null
   tokenSymbol: string
@@ -48,6 +50,7 @@ interface DbRow {
   chain_id: number
   chain_slug: string
   from_address: string
+  tx_from_address: string | null
   token_address: string | null
   token_symbol: string
   token_decimals: number
@@ -64,6 +67,7 @@ const rowToDonation = (row: DbRow): DonationRow => ({
   chainId: row.chain_id,
   chainSlug: row.chain_slug,
   fromAddress: row.from_address,
+  txFromAddress: row.tx_from_address,
   tokenAddress: row.token_address,
   tokenSymbol: row.token_symbol,
   tokenDecimals: row.token_decimals,
@@ -130,7 +134,10 @@ export const listDonations = async (opts: {
   const order = orderByClause(opts.orderBy ?? 'date', opts.direction ?? 'DESC')
   try {
     const { rows } = await donationsPool.query<DbRow>(
+      // tx_from_address is read via to_jsonb so this query still works if
+      // mesh deploys before the indexer has added the column (yields null).
       `SELECT id, chain_id, chain_slug, from_address,
+              to_jsonb(donation) ->> 'tx_from_address' AS tx_from_address,
               token_address, token_symbol, token_decimals,
               amount_raw::text AS amount_raw,
               amount_norm::text AS amount_norm,
@@ -164,6 +171,11 @@ export const donationsTypeDefs = /* GraphQL */ `
     chainId: Int!
     chainSlug: String!
     fromAddress: String!
+    """
+    Transaction signer. Differs from fromAddress when the donation was sent
+    from a contract wallet (e.g. a Safe). Null for rows indexed before it was recorded.
+    """
+    txFromAddress: String
     """null for native-coin donations."""
     tokenAddress: String
     tokenSymbol: String!

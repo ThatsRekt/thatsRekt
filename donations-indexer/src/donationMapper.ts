@@ -49,6 +49,13 @@ export interface Erc20TransferInput {
   readonly tokenAddress: string
   /** Decoded `from` field (topic1, lowercased). */
   readonly fromAddress: string
+  /**
+   * Signer (`tx.from`) of the transaction that emitted the Transfer. Differs
+   * from `fromAddress` when the tokens leave a contract such as a Safe; the
+   * UI falls back to this address's ENS name. Undefined when the Portal
+   * returned no parent transaction.
+   */
+  readonly txFromAddress?: string
   /** Decoded `to` field (topic2, lowercased) — must be the donation Safe. */
   readonly toAddress: string
   /** Decoded transfer amount (uint256). */
@@ -65,6 +72,8 @@ export interface DonationRow {
   readonly chainId: number
   readonly chainSlug: string
   readonly fromAddress: string
+  /** Transaction signer (`tx.from`); null when unknown. */
+  readonly txFromAddress: string | null
   /** null for native-coin donations. */
   readonly tokenAddress: string | null
   readonly tokenSymbol: string
@@ -117,6 +126,7 @@ export const mapNativeTransfer = (input: NativeTransferInput): DonationRow | nul
     chainId: input.chainId,
     chainSlug: input.chainSlug,
     fromAddress: input.fromAddress.toLowerCase(),
+    txFromAddress: input.fromAddress.toLowerCase(),
     tokenAddress: null,
     tokenSymbol: meta.symbol,
     tokenDecimals: meta.decimals,
@@ -151,6 +161,7 @@ export const mapErc20Transfer = (input: Erc20TransferInput): DonationRow | null 
     chainId: input.chainId,
     chainSlug: input.chainSlug,
     fromAddress: input.fromAddress.toLowerCase(),
+    txFromAddress: input.txFromAddress?.toLowerCase() ?? null,
     tokenAddress: input.tokenAddress.toLowerCase(),
     tokenSymbol: meta.symbol,
     tokenDecimals: meta.decimals,
